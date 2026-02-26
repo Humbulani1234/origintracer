@@ -1,0 +1,43 @@
+# config/probes.yaml
+# StackTracer probe configuration
+#
+# probes: list of probe names to activate.
+# Available built-in probes: django, asyncio, kernel, nginx, flask
+#
+# For kernel probe: requires Linux + root/CAP_BPF + bcc installed
+# For nginx probe:  requires JSON-formatted nginx access log
+
+probes:
+  - django
+  - asyncio
+  # - nginx        # uncomment if using nginx with JSON logging
+  # - kernel       # uncomment on Linux with root privileges
+
+# Semantic aliases: map business concepts to graph nodes/services.
+# These are used in DSL queries:
+#   SHOW latency WHERE system = "export"
+#   BLAME WHERE system = "auth"
+semantic:
+  - label: export
+    description: "The full export pipeline (Exporter service + all dependencies)"
+    services:
+      - exporter
+    node_patterns:
+      - "django::handle_export"
+      - "django::flags_client.*"
+    tags:
+      - revenue-critical
+
+  - label: auth
+    description: "Authentication and authorisation"
+    services:
+      - auth
+    node_patterns:
+      - "django::authenticate"
+      - "django::check_permissions"
+
+  - label: api
+    description: "Public-facing API views"
+    node_patterns:
+      - "django::/api/.*"
+    services: []
