@@ -41,3 +41,26 @@ semantic:
     node_patterns:
       - "django::/api/.*"
     services: []
+
+robes:
+  - django
+  - asyncio
+  - myapp.probes.celery_probe:CeleryProbe     # their custom probe
+  - myapp.probes.psycopg2_probe:Psycopg2Probe
+
+semantic:
+  - label: worker
+    description: Celery worker pipeline
+    services:
+      - celery
+      - postgres
+    node_patterns:
+      - "celery::.*"
+
+  - label: api
+    description: Django API surface
+    services:
+      - django
+    node_patterns:
+      - "django::.*export.*"
+      - "django::.*api.*"

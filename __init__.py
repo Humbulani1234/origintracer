@@ -116,6 +116,21 @@ def init(
     if not _config.enabled:
         logger.info("StackTracer disabled (not initialised)")
         return
+    
+    from .core.semantic import merge_yaml_configs, load_from_dict
+    from .sdk.base_probe import ProbeRegistry
+
+    # Resolve user config — explicit path, or auto-discover in cwd
+    user_config = config or _find_user_config()
+
+    # Merge: package defaults first, user config second (user wins)
+    merged = merge_yaml_configs(_DEFAULT_CONFIG, user_config)
+
+    # Build semantic layer from merged aliases
+    semantic = load_from_dict(merged.get("semantic", []))
+
+    # Probe list: CLI argument overrides YAML if provided
+    probe_names = probes or merged.get("probes", ["django", "asyncio"])
 
     _setup_engine(repository, semantic_config, snapshot_interval)
     _setup_probes(_config.probes)
@@ -127,6 +142,22 @@ def init(
         _config.probes,
     )
 
+def _find_user_config() -> Optional[str]:
+    """
+    Auto-discover stacktracer.yaml walking up from cwd.
+    Stops at filesystem root or when found.
+    Covers: running from project root, from a subdirectory, etc.
+    """
+    current = os.getcwd()
+    for _ in range(5):   # max 5 levels up
+        candidate = os.path.join(current, "stacktracer.yaml")
+        if os.path.exists(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return None
 
 def _setup_engine(repository: Optional[Any], semantic_config: Optional[List[Dict]], snapshot_interval: float) -> None:
     global _engine

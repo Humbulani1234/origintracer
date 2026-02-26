@@ -77,44 +77,39 @@ def _format_fut_waiter(task: asyncio.Task) -> Optional[str]:
         return None
 
 
-def _traced_task_step(self: asyncio.Task, exc: Optional[BaseException] = None) -> None:
+def _make_traced_step(original):
     """
-    Replacement for Task.__step.
-    Emits probe events before and after the coroutine step.
+    Returns a patched __step that closes over the real original.
+    Safe against stop() setting _original_step = None mid-execution.
     """
-    global _original_step
+    def _traced_task_step(self, exc=None):
+        trace_id = get_trace_id()
+        if trace_id:
+            try:
+                coro = self.get_coro()
+                coro_name = getattr(coro, "__qualname__", type(coro).__name__)
+                loop = asyncio.get_event_loop()
+                ready_count = len(getattr(loop, "_ready", []))
+                scheduled_count = len(getattr(loop, "_scheduled", []))
 
-    trace_id = get_trace_id()
+                emit(NormalizedEvent.now(
+                    probe="asyncio.loop.tick",
+                    trace_id=trace_id,
+                    service="asyncio",
+                    name=coro_name,
+                    parent_span_id=get_span_id(),
+                    task_name=self.get_name(),
+                    fut_waiter=_format_fut_waiter(self),
+                    ready_queue_depth=ready_count,
+                    scheduled_count=scheduled_count,
+                    had_exception=exc is not None,
+                ))
+            except Exception as probe_exc:
+                logger.debug("asyncio probe error in __step: %s", probe_exc)
 
-    if trace_id:
-        try:
-            coro = self.get_coro()
-            coro_name = getattr(coro, "__qualname__", type(coro).__name__)
-            task_name = self.get_name()
-            fut_waiter = _format_fut_waiter(self)
+        return original(self, exc)   # ← closed over, never None
 
-            # Snapshot the ready queue depth (bounded, no deep copy)
-            loop = asyncio.get_event_loop()
-            ready_count = len(getattr(loop, "_ready", []))
-            scheduled_count = len(getattr(loop, "_scheduled", []))
-
-            emit(NormalizedEvent.now(
-                probe="asyncio.loop.tick",
-                trace_id=trace_id,
-                service="asyncio",
-                name=coro_name,
-                parent_span_id=get_span_id(),
-                task_name=task_name,
-                fut_waiter=fut_waiter,
-                ready_queue_depth=ready_count,
-                scheduled_count=scheduled_count,
-                had_exception=exc is not None,
-            ))
-        except Exception as probe_exc:
-            logger.debug("asyncio probe error in __step: %s", probe_exc)
-
-    # Always call the original — probe must never interfere with execution
-    return _original_step(self, exc)
+    return _traced_task_step
 
 
 def _patch_create_task() -> None:
@@ -151,33 +146,21 @@ class AsyncioProbe(BaseProbe):
     def __init__(self) -> None:
         self._original_create_task = None
 
-    def start(self) -> None:
+    def start(self):
         global _original_step, _patched
 
         if not _check_python_version():
             return
-
         if _patched:
             logger.warning("asyncio probe already patched — skipping")
             return
 
         if _has_step_attr():
-            # Python 3.11 pure-Python Task — full __step patch available
             _original_step = getattr(tasks.Task, _STEP_ATTR)
-            setattr(tasks.Task, _STEP_ATTR, _traced_task_step)
-            logger.info("asyncio probe installed via __step patch (Python %d.%d)", *sys.version_info[:2])
-        else:
-            # Python 3.12+ uses a C-extension Task (_asyncio.Task).
-            # __step is not accessible. Fall back to create_task tracing only.
-            # For deeper visibility on 3.12+, consider asyncio.get_event_loop().set_debug(True)
-            # or a custom EventLoopPolicy that wraps the scheduler.
-            logger.info(
-                "asyncio probe: Task.__step not accessible on Python %d.%d "
-                "(C-extension Task). Using create_task tracing only.",
-                *sys.version_info[:2],
-            )
+            traced = _make_traced_step(_original_step)   # closure captures it
+            setattr(tasks.Task, _STEP_ATTR, traced)
+            logger.info("asyncio probe installed via __step patch")
 
-        # create_task patch works on all Python versions
         self._original_create_task = _patch_create_task()
         _patched = True
 

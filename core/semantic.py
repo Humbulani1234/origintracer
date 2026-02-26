@@ -128,3 +128,39 @@ def load_from_dict(data: List[Dict[str, Any]]) -> SemanticLayer:
             tags=entry.get("tags", []),
         ))
     return layer
+
+def load_from_yaml(path: str) -> SemanticLayer:
+    """Load a single YAML file."""
+    import yaml
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return load_from_dict(data.get("semantic", []))
+
+
+def merge_yaml_configs(*paths: str) -> dict:
+    """
+    Load and merge multiple YAML config files.
+    Later paths win on conflicts.
+    Missing files are silently skipped.
+    """
+    import yaml
+    merged = {"probes": [], "semantic": []}
+
+    for path in paths:
+        if not path or not os.path.exists(path):
+            continue
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        # Probes: extend the list (union, deduplicated later)
+        merged["probes"].extend(data.get("probes", []))
+        # Semantic: extend — user aliases simply add to built-ins
+        merged["semantic"].extend(data.get("semantic", []))
+
+    # Deduplicate probes by name (last wins)
+    seen = {}
+    for p in merged["probes"]:
+        key = p if isinstance(p, str) else p.get("name", p)
+        seen[key] = p
+    merged["probes"] = list(seen.values())
+
+    return merged
