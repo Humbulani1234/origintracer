@@ -1,0 +1,28 @@
+# stacktracer.yaml
+# StackTracer configuration for the Celery demo application.
+
+probes:
+  - asyncio    # event loop monitoring (if using async tasks)
+
+# Custom probes and rules are auto-discovered from:
+#   stacktracer/probes/*_probe.py
+#   stacktracer/rules/*_rules.py
+# No YAML entry required for files following the naming convention.
+
+semantic:
+  - label: worker
+    description: Celery worker and database layer
+    services:
+      - celery
+      - postgres
+      - sqlite
+    node_patterns:
+      - "celery::.*"
+      - ".*::db\\.query.*"
+
+  - label: celery
+    description: Celery tasks only
+    services:
+      - celery
+    node_patterns:
+      - "celery::.*"
