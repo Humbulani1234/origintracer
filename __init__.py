@@ -119,7 +119,8 @@ def init(
     
     from .core.semantic import merge_yaml_configs, load_from_dict
     from .sdk.base_probe import ProbeRegistry
-
+    
+    _import_probe_modules()
     # Resolve user config — explicit path, or auto-discover in cwd
     user_config = config or _find_user_config()
 
