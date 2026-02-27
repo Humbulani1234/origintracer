@@ -1,0 +1,38 @@
+# stacktracer.yaml
+# StackTracer configuration for the Django demo application.
+# Place this file in the project root (same directory as manage.py).
+
+probes:
+  - django
+  - asyncio
+  - uvicorn
+  - gunicorn
+  - nginx          # auto-selects eBPF if root, log-tail otherwise
+
+semantic:
+  - label: http
+    description: Full HTTP request lifecycle across all layers
+    services:
+      - nginx
+      - uvicorn
+      - gunicorn
+    node_patterns:
+      - ".*::request\\.entry"
+      - ".*::request\\.exit"
+
+  - label: django
+    description: Django application layer
+    services:
+      - django
+      - asyncio
+    node_patterns:
+      - "django::.*"
+      - "asyncio::.*"
+
+  - label: database
+    description: Database queries from Django ORM
+    services:
+      - postgres
+      - sqlite
+    node_patterns:
+      - ".*::db\\.query.*"
