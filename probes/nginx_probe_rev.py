@@ -79,6 +79,7 @@ import os
 import re
 import socket
 import struct
+import sys
 import threading
 import time
 from typing import List, Optional
@@ -651,6 +652,3 @@ class NginxProbe(BaseProbe):
         if self._log:
             self._log.stop()
             self._log = None
-
-
-import sys
