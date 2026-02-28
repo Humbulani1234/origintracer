@@ -20,7 +20,7 @@ The solution — a shared BPF hash map:
 
     Structure:
         BPF_HASH(trace_context, u64, struct trace_entry)
-        key   = (pid << 32) | tid   — unique per thread
+        key   = tid — unique per thread
         value = { trace_id: char[36], start_ns: u64, service: char[32] }
 
 Usage (Python side):
@@ -52,7 +52,8 @@ Usage (BPF program side) — include in every kprobe that needs Python context:
     BPF_HASH(trace_context, u64, struct trace_entry);
 
     // In any kprobe handler:
-    u64 tid = bpf_get_current_pid_tgid();
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u32 tid = pid_tid; // Lower 32 bits is TID
     struct trace_entry *entry = trace_context.lookup(&tid);
     if (!entry) return 0;   // not a traced request, skip
     // entry->trace_id is now the Python trace ID for attribution
@@ -109,12 +110,14 @@ struct trace_entry_t {
     u32  tid;
 };
 
-BPF_HASH(trace_context, u64, struct trace_entry_t, 65536);
+// Map pinned to /sys/fs/bpf/trace_context for sharing across processes
+BPF_HASH(trace_context, u32, struct trace_entry_t, 65536);
 
 // Convenience macro: look up current thread's trace context
 // Usage: LOOKUP_TRACE(entry);  if (!entry) return 0;
 #define LOOKUP_TRACE(entry_var) \
-    u64 _tid = bpf_get_current_pid_tgid(); \
+    u64 _pid_tid = bpf_get_current_pid_tgid(); \
+    u32 _tid = _pid_tid; \
     struct trace_entry_t *entry_var = trace_context.lookup(&_tid);
 
 // ── Shared output events ──────────────────────────────────────────────
@@ -204,8 +207,17 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
         try:
             self._bpf = BPF(text=bridge_program)
             self._map = self._bpf["trace_context"]
+            
+            # PINNING: Pin the map to a shared filesystem location
+            pin_path = "/sys/fs/bpf/trace_context"
+            try:
+                self._map.pin(pin_path)
+            except Exception:
+                # If already pinned, just load it
+                self._map = BPF.get_table("trace_context", path=pin_path)
+
             self._available = True
-            logger.info("kprobe bridge loaded — trace_context map ready")
+            logger.info("kprobe bridge loaded — trace_context map ready and pinned")
             return True
         except Exception as exc:
             logger.warning("kprobe bridge failed to load: %s", exc)
@@ -242,8 +254,14 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
         try:
             import ctypes
 
-            tid = threading.get_ident()
-            key = ctypes.c_uint64(tid)
+            # Robustness: Get actual OS Thread ID to match BPF bpf_get_current_pid_tgid()
+            if hasattr(os, "gettid"):
+                tid = os.gettid()
+            else:
+                libc = ctypes.CDLL("libc.so.6")
+                tid = libc.syscall(186) # __NR_gettid
+
+            key = ctypes.c_uint32(tid)
 
             # Build the C struct layout matching struct trace_entry_t
             class TraceEntry(ctypes.Structure):
@@ -261,7 +279,7 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
                 start_ns=int(time.perf_counter() * 1e9),
                 service=service.encode("ascii")[:31],
                 pid=os.getpid(),
-                tid=tid & 0xFFFFFFFF,
+                tid=tid,
             )
 
             self._map[key] = entry
@@ -278,11 +296,17 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
             return
 
         try:
-            tid = threading.get_ident()
-            key = ctypes.c_uint64(tid)
+            # Robustness: Get actual OS Thread ID to match BPF bpf_get_current_pid_tgid()
+            if hasattr(os, "gettid"):
+                tid = os.gettid()
+            else:
+                libc = ctypes.CDLL("libc.so.6")
+                tid = libc.syscall(186) # __NR_gettid
+
+            key = ctypes.c_uint32(tid)
             self._map.__delitem__(key)
         except Exception:
-            pass   # key already gone — fine
+            pass  # key already gone — fine
 
 
 # Global singleton — created by Engine, used by all kprobe probes
