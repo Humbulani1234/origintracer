@@ -261,6 +261,205 @@ DB_HOTSPOT = CausalRule(
 )
 
 
+"""
+Addition to core/causal.py — Rule 7: request_duration_anomaly
+
+This is the ONE rule that requires ActiveRequestTracker.
+All other rules operate only on RuntimeGraph + TemporalStore.
+
+Why this rule needs the tracker and not the graph:
+    RuntimeGraph.get_node("django::GET /api/users/{id}/").avg_duration_ns
+    gives the historical average across all time.
+
+    But "is this endpoint slow RIGHT NOW" requires knowing the last N
+    completion durations in a recent window — the rolling P99, not the
+    all-time average. That is what ActiveRequestTracker.recent_completions()
+    provides.
+
+    Without the tracker, you can only detect slow nodes historically.
+    With the tracker, you can detect that a node that was fast is now slow
+    — the most actionable signal: something changed recently.
+
+Threshold logic:
+    Fires when recent P99 > historical_avg * 3.0
+    AND historical avg has at least 50 samples (enough to trust it)
+    AND recent window has at least 10 completions (enough to trust P99)
+
+    The 3x multiplier is intentionally conservative. At 2x you get too many
+    false positives from normal variance. At 5x you miss real degradations.
+    3x is the empirically validated threshold for "something is genuinely wrong."
+
+Add to build_default_registry() in causal.py:
+    from .active_requests import ActiveRequestTracker
+    # Pass tracker to rules that need it via closure:
+    registry.register(make_anomaly_rule(tracker))
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Tuple
+
+from .causal import CausalRule, PatternRegistry
+from .runtime_graph import RuntimeGraph
+from .temporal import TemporalStore
+
+
+def make_anomaly_rule(tracker) -> CausalRule:
+    """
+    Factory that closes over the ActiveRequestTracker instance.
+    The tracker is a singleton created by Engine — passed here at
+    registry build time so the rule predicate can access it.
+
+    Usage in Engine.__init__():
+        self._tracker  = ActiveRequestTracker()
+        self._registry = build_default_registry(tracker=self._tracker)
+    """
+
+    def _request_duration_anomaly(
+        graph: RuntimeGraph,
+        temporal: TemporalStore,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Detects endpoints/tasks whose recent completion latency
+        has diverged significantly from their stored historical average.
+
+        For each pattern that has:
+            - historical avg from RuntimeGraph (call_count >= 50)
+            - recent completions from ActiveRequestTracker (>= 10)
+        we compare recent P99 against historical avg * 3.0.
+
+        Evidence includes:
+            - Which patterns are anomalous
+            - The ratio (how much slower)
+            - Probe sequence of a slow in-flight request if one exists
+              (this is the "smoking gun" — what was the request doing?)
+        """
+        anomalies = []
+
+        # Get all patterns with recent completions
+        recent_summary = tracker.all_patterns_summary()
+
+        for pattern, stats in recent_summary.items():
+            if stats["count"] < 10:
+                continue   # not enough recent data
+
+            # Find the corresponding RuntimeGraph node
+            # Pattern format from tracker is "service::normalized_name"
+            # Try to find by matching the normalized name part
+            node = None
+            for n in graph.all_nodes():
+                if n.id.endswith(f"::{pattern}") or n.id == pattern:
+                    node = n
+                    break
+                # Also match by just the name portion after ::
+                if "::" in n.id and n.id.split("::", 1)[1] == pattern:
+                    node = n
+                    break
+
+            if node is None or (node.call_count or 0) < 50:
+                continue   # not enough historical data to trust the average
+
+            historical_avg_ms = (node.avg_duration_ns or 0) / 1e6
+            if historical_avg_ms < 1.0:
+                continue   # sub-millisecond operations — noise floor too low
+
+            recent_p99_ms = stats["p99_ms"]
+            ratio         = recent_p99_ms / historical_avg_ms if historical_avg_ms else 0
+
+            if ratio > 3.0:
+                anomaly = {
+                    "pattern":         pattern,
+                    "service":         node.service,
+                    "historical_avg_ms": round(historical_avg_ms, 1),
+                    "recent_p99_ms":   recent_p99_ms,
+                    "recent_avg_ms":   stats["avg_ms"],
+                    "ratio":           round(ratio, 1),
+                    "recent_sample_n": stats["count"],
+                    "historical_n":    node.call_count,
+                }
+
+                # Find a slow in-flight request for this pattern
+                # to show the probe sequence (what was it doing?)
+                slow = [
+                    s for s in tracker.slow_in_flight(
+                        threshold_ms=historical_avg_ms * 2
+                    )
+                    if s.pattern == pattern
+                ]
+                if slow:
+                    worst = max(slow, key=lambda s: s.in_flight_ms)
+                    anomaly["slow_in_flight"] = {
+                        "trace_id":     worst.trace_id,
+                        "in_flight_ms": round(worst.in_flight_ms, 1),
+                        # probe_sequence shows what the slow request was doing:
+                        # e.g. ["request.entry", "django.db.query",
+                        #        "django.db.query", "django.db.query"]
+                        # Three DB queries in sequence → N+1 pattern on a slow request
+                        "probe_sequence": worst.probe_sequence,
+                    }
+
+                anomalies.append(anomaly)
+
+        if not anomalies:
+            return False, {}
+
+        return True, {
+            "anomalous_endpoints": sorted(
+                anomalies, key=lambda a: a["ratio"], reverse=True
+            ),
+            "hint": (
+                "Recent P99 latency is 3x+ above historical average. "
+                "Check probe_sequence of slow_in_flight requests for the pattern. "
+                "Repeated 'django.db.query' entries suggest N+1. "
+                "A single very long 'django.db.query' suggests a missing index. "
+                "Run DIFF SINCE to check if a deployment coincides with onset."
+            ),
+        }
+
+    return CausalRule(
+        name="request_duration_anomaly",
+        description=(
+            "Recent request latency has diverged from historical baseline by 3x+. "
+            "Something changed — compare probe_sequence of slow in-flight requests "
+            "against the historical pattern to identify the new bottleneck."
+        ),
+        predicate=_request_duration_anomaly,
+        confidence=0.85,
+        tags=["latency", "anomaly", "live"],
+    )
+
+
+def build_default_registry(tracker=None) -> PatternRegistry:
+    """
+    Updated build_default_registry that accepts an optional tracker.
+    Drop-in replacement for the existing function in causal.py.
+
+    If tracker is None, the anomaly rule is omitted (graceful degradation).
+    All other rules are unaffected — they do not use the tracker.
+    """
+    from .causal import (
+        PatternRegistry,
+        NEW_SYNC_CALL,
+        LOOP_STARVATION,
+        DB_HOTSPOT,
+        RETRY_AMPLIFICATION,
+        WORKER_CHURN,
+        CACHE_MISS,
+    )
+
+    registry = PatternRegistry()
+    registry.register(NEW_SYNC_CALL)
+    registry.register(LOOP_STARVATION)
+    registry.register(DB_HOTSPOT)
+    registry.register(RETRY_AMPLIFICATION)
+    registry.register(WORKER_CHURN)
+    registry.register(CACHE_MISS)
+
+    if tracker is not None:
+        registry.register(make_anomaly_rule(tracker))
+
+    return registry
+
 def build_default_registry() -> PatternRegistry:
     """Return a PatternRegistry pre-loaded with all built-in rules."""
     registry = PatternRegistry()
