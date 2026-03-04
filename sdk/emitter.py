@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from time import time
 from collections import deque
 from typing import List, Optional
 
@@ -92,7 +93,7 @@ class _DrainThread(threading.Thread):
                             logger.debug("drain: process error: %s", exc)
             except Exception as exc:
                 logger.debug("drain: loop error: %s", exc)
-            threading.Event().wait(self._interval)
+            time.sleep(self._interval)
 
 # ------------------------------------------------------------------ #
 # Module-level state
