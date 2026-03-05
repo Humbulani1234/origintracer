@@ -146,8 +146,12 @@ class RuntimeGraph:
         Translate one NormalizedEvent into graph mutations.
         If parent_event is provided, an edge is drawn from parent → this event.
         """
-        node_id = self._node_id(event.service, event.name)
-        # Derive a coarse type category from probe string
+        # Normalise name before it enters the graph
+        name = event.name
+        if hasattr(self, "normalizer") and self.normalizer is not None:
+            name = self.normalizer.normalize(event.service, name)
+
+        node_id  = self._node_id(event.service, name)
         node_type = event.probe.split(".")[0]   # e.g. "asyncio", "django", "syscall"
 
         self.upsert_node(
@@ -159,7 +163,10 @@ class RuntimeGraph:
         )
 
         if parent_event:
-            parent_id = self._node_id(parent_event.service, parent_event.name)
+            parent_name = parent_event.name
+            if hasattr(self, "normalizer") and self.normalizer is not None:
+                parent_name = self.normalizer.normalize(parent_event.service, parent_name)
+            parent_id = self._node_id(parent_event.service, parent_name)
             self.upsert_edge(
                 source=parent_id,
                 target=node_id,

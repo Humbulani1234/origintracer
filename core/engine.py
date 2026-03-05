@@ -96,7 +96,11 @@ class Engine:
             self._event_log.append(event)
             if len(self._event_log) > self._event_log_max:
                 self._event_log = self._event_log[-self._event_log_max:]
-
+        
+        # Update tracker so it knows which probe last fired for this trace
+        if hasattr(self, "tracker") and self.tracker is not None:
+            self.tracker.event(event.trace_id, event.probe)
+            
     # ------------------------------------------------------------------ #
     # Snapshot (called periodically or on deployment events)
     # ------------------------------------------------------------------ #
@@ -229,13 +233,17 @@ class Engine:
         if self._snapshot_thread:
             self._snapshot_thread.join(timeout=5)
 
-    def _snapshot_loop(self) -> None:
+    def _snapshot_loop(self):
         while self._running:
             time.sleep(self._snapshot_interval)
             try:
                 self.snapshot()
+                # Compact after snapshot — snapshot already serialised the
+                # current state so eviction does not lose anything
+                if hasattr(self, "compactor") and self.compactor is not None:
+                    self.compactor.compact(self.graph)
             except Exception as exc:
-                logger.warning("Snapshot failed: %s", exc)
+                logger.warning("Snapshot/compact failed: %s", exc)
 
     # ------------------------------------------------------------------ #
     # State
