@@ -391,7 +391,7 @@ def _init_pattern_registry(tracker: Any) -> Any:
     Build PatternRegistry with all built-in rules.
     The anomaly rule closes over the tracker instance.
     """
-    from .request_anomaly_rule import build_default_registry
+    from .core.causal import build_default_registry
     return build_default_registry(tracker=tracker)
 
 

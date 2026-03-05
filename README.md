@@ -525,7 +525,7 @@ stacktracer/
 | Component | Cost |
 |---|---|
 | ContextVar lookup | ~5 ns |
-| `emit()` (direct mode) | ~1–2 µs |
+| `emit()` (EventBuffer push) | ~0.5 µs (one lock + deque.append — graph work off-thread) |
 | GraphNormalizer (cache hit) | ~200 ns |
 | GraphNormalizer (cache miss, regex) | ~5–15 µs |
 | Graph upsert (lock) | ~2–5 µs |
@@ -554,6 +554,22 @@ At 1–5% sample rate, total overhead is under 1% on typical Django workloads. T
 **Why user config lives outside the package.** Editing files inside `site-packages/stacktracer/` breaks on every `pip install --upgrade`. The user's `stacktracer.yaml` lives in their repo, survives upgrades, and is auto-discovered from the working directory. Package defaults merge underneath — user settings win.
 
 **Why ProbeType is a registry, not a Literal.** A closed `Literal` requires editing the core to add a new probe type. An open registry accepts contributions from probe files, rules files, and YAML without touching core. Unknown strings are warned, never rejected. The registry is for tooling, not enforcement.
+
+**Why nine daemon threads.** Each thread owns exactly one blocking concern. None of them touch the application thread after `init()` returns.
+
+| Thread name | Owned by | What it does | Wakes every |
+|---|---|---|---|
+| `stacktracer-drain` | `sdk/emitter.py` `_DrainThread` | Drains `EventBuffer` into `Engine.process()` — builds the graph and event log off the application thread | 50 ms |
+| `stacktracer-snapshot` | `core/engine.py` | Calls `engine.snapshot()` — diffs the graph against the previous snapshot and appends to `TemporalStore` | 15 s (configurable) |
+| `stacktracer-uploader` | `buffer/uploader.py` | Batches raw events and POSTs to FastAPI backend. Only started when `api_key` is set | 10 s (configurable) |
+| `stacktracer-active-req-evict` | `core/active_requests.py` | TTL-evicts in-flight request entries that exceed 30 s — safety valve against leaked trace IDs from crashed workers | 5 s |
+| `stacktracer-nginx-kprobe` | `probes/nginx_probe.py` | Polls the BPF perf buffer for `accept4`, `epoll_wait`, `sendmsg`, `recvmsg` kprobe events from the nginx kernel path | Blocking poll |
+| `stacktracer-nginx-lua-udp` | `probes/nginx_probe.py` | UDP server blocking on port 9119 — receives JSON events from `log_by_lua_block` enriched with HTTP semantics | Blocking recv |
+| `stacktracer-nginx-correlator-evict` | `probes/nginx_probe.py` `_NginxCorrelator` | Evicts stale `(client_ip, client_port)` correlation entries for connections that closed without a Lua event | 30 s |
+| `stacktracer-asyncio-epoll` | `probes/asyncio_probe.py` | Polls the BPF perf buffer for `sys_epoll_wait` events — classifies ready file descriptors by destination port (postgres/redis/tcp/pipe) | Blocking poll |
+| `stacktracer-local-server` | `core/local_server.py` | Unix socket server at `/tmp/stacktracer.sock` — accepts DSL queries from the REPL or CLI connecting to a running agent | Blocking accept |
+
+All nine are `daemon=True`. The OS reaps them with the process — no `join()` calls required at shutdown except the uploader, which calls `_flush()` then `join(timeout=5)` from `stacktracer.shutdown()` to guarantee the final batch is sent before the process exits. The application thread's only cost after `init()` is `EventBuffer.push()` — one lock acquisition and one `deque.append()`, which is the 0.5 µs figure in the overhead table above.
 
 ---
 
