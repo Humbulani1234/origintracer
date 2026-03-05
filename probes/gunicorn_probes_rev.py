@@ -126,32 +126,28 @@ def st_on_starting(server: Any) -> None:
 
 
 def st_post_fork(server: Any, worker: Any) -> None:
-    """
-    Fires in the WORKER process after fork, before the worker starts
-    accepting requests. This is the correct place to re-initialise
-    StackTracer because:
-        1. We are now in the worker's own process (correct pid)
-        2. The worker has a fresh event loop (for UvicornWorker)
-        3. ContextVars from the parent are not inherited across fork
-
-    `server` = Arbiter instance (master's copy — read-only after fork)
-    `worker` = Worker instance in this process
-    """
-    import stacktracer
-
     worker_pid   = os.getpid()
     master_pid   = os.getppid()
     worker_class = type(worker).__name__
     trace_id     = f"gunicorn-worker-{worker_pid}"
 
-    # Re-init StackTracer so each worker has its own engine instance.
-    # The config path must be set before workers fork — pass via environment
-    # variable or hard-code in gunicorn.conf.py.
     config_path = os.environ.get("STACKTRACER_CONFIG", "stacktracer.yaml")
     try:
         stacktracer.init(config=config_path)
+        # ↑ this calls bind_engine() which starts a fresh _DrainThread
+        # correctly in this worker process. No manual thread management needed.
     except Exception as exc:
         logger.warning("gunicorn probe: StackTracer re-init failed in worker: %s", exc)
+        return
+
+    # Reset the tracker AFTER init so it runs on the new engine instance.
+    # The parent's tracker state must not survive fork.
+    from stacktracer.sdk.emitter import get_engine
+    from stacktracer.core.active_requests import ActiveRequestTracker
+    engine = get_engine()
+    if engine is not None:
+        engine.tracker.stop()
+        engine.tracker = ActiveRequestTracker()
 
     emit(NormalizedEvent.now(
         probe="gunicorn.worker.fork",

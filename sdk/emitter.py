@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from time import time
 from collections import deque
 from typing import List, Optional
 
@@ -59,21 +60,59 @@ class _EventBuffer:
         return self._dropped
 
 
+class _DrainThread(threading.Thread):
+    """
+    Background thread that drains the EventBuffer into the Engine.
+    Runs independently of the application thread.
+    The application thread only ever calls _buffer.push() — one lock,
+    one deque.append(), done. Cost: ~0.5 microseconds per emit().
+    """
+
+    def __init__(self, buffer: _EventBuffer, interval_s: float = 0.05) -> None:
+        super().__init__(daemon=True, name="stacktracer-drain")
+        self._buffer   = buffer
+        self._interval = interval_s   # drain every 50ms
+        self._running  = False
+
+    def start_draining(self) -> None:
+        self._running = True
+        self.start()
+
+    def stop(self) -> None:
+        self._running = False
+
+    def run(self) -> None:
+        while self._running:
+            try:
+                events = self._buffer.drain(max_batch=500)
+                if events and _engine is not None:
+                    for event in events:
+                        try:
+                            _engine.process(event)
+                        except Exception as exc:
+                            logger.debug("drain: process error: %s", exc)
+            except Exception as exc:
+                logger.debug("drain: loop error: %s", exc)
+            time.sleep(self._interval)
+
 # ------------------------------------------------------------------ #
 # Module-level state
 # ------------------------------------------------------------------ #
 
 _engine = None          # Set by bind_engine()
 _buffer = _EventBuffer()
-_direct_mode = True     # True = emit directly into Engine (MVP default)
+_direct_mode = False     # True = emit directly into Engine (MVP default)
                         # False = buffer + drain thread (high-throughput)
 
 
+_drain_thread: Optional[_DrainThread] = None   # add to module-level state
+
 def bind_engine(engine: object) -> None:
-    """Call once at startup with the Engine instance."""
-    global _engine
+    global _engine, _drain_thread
     _engine = engine
-    logger.info("StackTracer emitter bound to engine: %r", engine)
+    _drain_thread = _DrainThread(_buffer, interval_s=0.05)
+    _drain_thread.start_draining()
+    logger.info("StackTracer emitter bound, drain thread started")
 
 
 def emit(event: NormalizedEvent) -> None:
@@ -83,15 +122,7 @@ def emit(event: NormalizedEvent) -> None:
     """
     if _engine is None:
         return  # Silent drop if not initialised — probes must be safe to import early
-
-    if _direct_mode:
-        try:
-            _engine.process(event)
-        except Exception as exc:
-            # NEVER let tracer errors crash the host application
-            logger.debug("Engine.process error: %s", exc)
-    else:
-        _buffer.push(event)
+    _buffer.push(event)
 
 
 def flush() -> None:
