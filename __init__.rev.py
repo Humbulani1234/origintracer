@@ -255,6 +255,7 @@ class ResolvedConfig:
     nginx:            Dict[str, Any]
     gunicorn:         Dict[str, Any]
     active_requests:  Dict[str, Any]
+    observe:          Dict[str, Any]   # observe.modules — app module prefixes for sys.monitoring
     debug:            bool
     enabled:          bool
     config_path:      Optional[str]   # path of the user yaml that was loaded
@@ -307,6 +308,7 @@ def _build_resolved_config(
     normalize: Optional[List[Dict]],
     compactor: Optional[Dict],
     active_requests: Optional[Dict],
+    observe: Optional[Dict],
 ) -> ResolvedConfig:
     """
     Build the final ResolvedConfig by applying init() kwargs as the last
@@ -354,6 +356,7 @@ def _build_resolved_config(
         nginx             = merged_yaml.get("nginx",    {}),
         gunicorn          = merged_yaml.get("gunicorn", {}),
         active_requests   = _deep_merge(merged_yaml.get("active_requests", {}), active_requests or {}),
+        observe           = _deep_merge(merged_yaml.get("observe", {}), observe or {}),
         debug             = debug,
         enabled           = True,
         config_path       = config_path,
@@ -481,12 +484,12 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
     Import all built-in probe modules (side-effect: registers with ProbeRegistry).
     Discover user probe files from <app_root>/stacktracer/probes/.
     Then load and start probes named in cfg.probes.
+
+    Each probe's start() is called with probe-specific kwargs where needed.
+    Currently only DjangoProbe.start() takes a kwarg (observe_modules).
     """
     from .sdk.base_probe import ProbeRegistry
 
-    # Force-import all built-in probe modules so they register themselves.
-    # Order matters — db_kprobe should come after asyncio so BPF programs
-    # don't race during initialisation on very fast machines.
     _builtin_probe_modules = [
         ".probes.asyncio_probe",
         ".probes.django_probe",
@@ -501,19 +504,34 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
             import importlib
             importlib.import_module(module_path, package=__name__)
         except ImportError as exc:
-            # Not every probe's dependencies will be installed — that is fine.
-            # django_probe requires Django, celery_probe requires Celery, etc.
             logger.debug("Probe module not available: %s — %s", module_path, exc)
 
-    # Auto-discover user probe files using the config-derived app root
     _discover_user_probes(app_root)
 
-    # Load and start each named probe
+    # Per-probe kwargs — keyed by probe name.
+    # DjangoProbe needs observe_modules so sys.monitoring knows which
+    # module prefixes to watch for view function entry/return events.
+    observe_modules: List[str] = cfg.observe.get("modules", [])
+    _probe_kwargs = {
+        "django": {"observe_modules": observe_modules},
+    }
+
+    if observe_modules:
+        logger.info("django probe: will observe modules via sys.monitoring: %s", observe_modules)
+    else:
+        logger.info(
+            "django probe: observe.modules not configured — "
+            "django.view.enter / django.view.exit events disabled. "
+            "Add to stacktracer.yaml:\n"
+            "  observe:\n    modules:\n      - myapp\n      - myapp.views"
+        )
+
     probes = ProbeRegistry.load_from_config({"probes": cfg.probes})
     started = []
     for probe in probes:
+        kwargs = _probe_kwargs.get(probe.name, {})
         try:
-            probe.start()
+            probe.start(**kwargs)
             started.append(probe)
             logger.info("Probe started: %s", probe.name)
         except Exception as exc:
@@ -705,6 +723,7 @@ def init(
     normalize:         Optional[List[Dict]]  = None,
     compactor:         Optional[Dict]        = None,
     active_requests:   Optional[Dict]        = None,
+    observe:           Optional[Dict]        = None,
 ) -> None:
     """
     Initialise StackTracer.
@@ -837,6 +856,7 @@ def init(
         normalize         = normalize,
         compactor         = compactor,
         active_requests   = active_requests,
+        observe           = observe,
     )
 
     if not _config.enabled:

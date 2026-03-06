@@ -117,3 +117,25 @@ nginx:
 gunicorn:
   worker_class: uvicorn.workers.UvicornWorker
   # Used by gunicorn probe to understand worker type for correct observation
+
+# ── View function observation (sys.monitoring / sys.setprofile) ───────────
+# Controls which Python modules are observed for django.view.enter /
+# django.view.exit events via sys.monitoring (3.12+) or sys.setprofile (3.11).
+#
+# Without this list, view-level tracing is disabled — the django probe still
+# gives you request.entry / request.exit (middleware) and django.db.query
+# (execute_wrapper), but not per-function granularity inside views.
+#
+# Set this to your application's top-level package name(s).
+# Matching is by filename substring — "myapp" matches any file whose path
+# contains "myapp", so it covers myapp/views.py, myapp/api/orders.py, etc.
+#
+# Narrower is better: observing "myapp" rather than all Python code keeps
+# overhead low and the graph focused on your code, not framework internals.
+#
+# Uncomment and fill in your app name:
+# observe:
+#   modules:
+#     - myapp
+#     - myapp.api
+#     - myapp.tasks
