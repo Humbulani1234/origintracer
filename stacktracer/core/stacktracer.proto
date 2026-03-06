@@ -1,0 +1,119 @@
+// stacktracer/core/stacktracer.proto
+//
+// Protobuf schema for RuntimeGraph serialization.
+//
+// Compile with:
+//   pip install grpcio-tools
+//   python -m grpc_tools.protoc \
+//       -I stacktracer/core \
+//       --python_out=stacktracer/core \
+//       stacktracer/core/stacktracer.proto
+//
+// This generates stacktracer_pb2.py in the same directory.
+// Import it as: from stacktracer.core import stacktracer_pb2
+//
+// Why protobuf:
+//   - Strongly typed schema — graph structure is enforced
+//   - ~5-10x smaller than JSON for numeric-heavy data
+//   - Fast serialization (~10-50x faster than JSON for large graphs)
+//   - Schema evolution: adding fields with new field numbers is backward compatible
+//   - Works well for both local file storage and network transport
+//
+// Alternatives considered:
+//   MessagePack: simpler, no schema, ~3-5x smaller than JSON, good for simple structs
+//   Apache Arrow: excellent for columnar analytics, overkill here
+//   Pickle: fast but Python-only and a security risk if loading untrusted data
+//   JSON: human readable, 10-50x larger than protobuf for this data shape
+
+syntax = "proto3";
+
+package stacktracer;
+
+// ── GraphNode ────────────────────────────────────────────────────────────
+
+message GraphNode {
+  string id                = 1;   // "django::handle_export"
+  string node_type         = 2;   // "django", "asyncio", "celery", etc.
+  string service           = 3;   // "django", "postgres", "celery"
+
+  double first_seen        = 4;   // Unix timestamp (time.time())
+  double last_seen         = 5;   // Unix timestamp
+  int64  call_count        = 6;
+  int64  total_duration_ns = 7;
+
+  // Probe-specific metadata as key-value pairs.
+  // Only scalar values — complex nested structures are not stored here.
+  map<string, string> metadata = 8;
+}
+
+// ── GraphEdge ────────────────────────────────────────────────────────────
+
+message GraphEdge {
+  string source            = 1;   // source node ID
+  string target            = 2;   // target node ID
+  string edge_type         = 3;   // "calls", "awaits", "sends_to"
+
+  int64  call_count        = 4;
+  int64  total_duration_ns = 5;
+  double first_seen        = 6;
+  double last_seen         = 7;
+
+  map<string, string> metadata = 8;
+}
+
+// ── SerializedGraph ───────────────────────────────────────────────────────
+
+message SerializedGraph {
+  double serialized_at     = 1;   // Unix timestamp when this was written
+  double graph_last_updated = 2;  // RuntimeGraph.last_updated at snapshot time
+  string schema_version    = 3;   // "1.0" — bump when breaking changes made
+
+  repeated GraphNode nodes = 4;
+  repeated GraphEdge edges = 5;
+
+  // Optional: compaction metadata for debugging
+  int64  node_count_before_compact = 6;
+  int64  evicted_nodes             = 7;
+}
+
+// ── GraphDiff (for temporal storage) ────────────────────────────────────
+
+message SerializedGraphDiff {
+  double timestamp         = 1;
+  string label             = 2;   // "deployment", "restart", etc. — empty if unlabelled
+
+  repeated string added_node_ids    = 3;
+  repeated string removed_node_ids  = 4;
+  repeated string added_edge_keys   = 5;
+  repeated string removed_edge_keys = 6;
+}
+
+// ── NormalizedEvent (for event log persistence) ───────────────────────────
+
+message SerializedEvent {
+  string probe           = 1;
+  string service         = 2;
+  string name            = 3;
+  string trace_id        = 4;
+
+  double timestamp       = 5;   // perf_counter()
+  double wall_time       = 6;   // time.time()
+
+  int64  duration_ns     = 7;   // 0 if not measured
+  string span_id         = 8;
+  string parent_span_id  = 9;
+
+  int32  pid             = 10;
+  int32  tid             = 11;
+
+  map<string, string> metadata = 12;
+}
+
+// ── Full snapshot (graph + recent events) ────────────────────────────────
+
+message StackTracerSnapshot {
+  SerializedGraph        graph  = 1;
+  repeated SerializedGraphDiff diffs  = 2;
+  repeated SerializedEvent     events = 3;   // recent event log (bounded)
+  string                 engine_version = 4;
+}

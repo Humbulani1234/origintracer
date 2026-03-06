@@ -1,2 +1,4 @@
 stack-tracer.code-workspace
 /env
+applications/django/config/__pycache__/
+stacktracer.egg-info/
