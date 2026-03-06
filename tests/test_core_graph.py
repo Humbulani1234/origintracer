@@ -213,3 +213,44 @@ class TestEngineCompactorIntegration:
             f"Graph has {len(engine.graph)} nodes after compaction — "
             f"expected <= 5 (the configured cap)"
         )
+
+    def test_stale_trace_ids_evicted_from_last_event_dict(self):
+        """
+        trace_ids not updated within _trace_ttl_s must be removed from
+        _last_event_per_trace by _evict_stale_traces().
+
+        Verifies the fix for the unbounded dict growth bug:
+        at 100 req/s without eviction the dict accumulates 360k entries/hour.
+        """
+        from stacktracer.core.engine import Engine
+
+        engine = Engine(snapshot_interval_s=9999)
+        engine._trace_ttl_s = 0.05   # 50ms TTL so the test does not need to sleep long
+
+        # Simulate 5 completed traces by writing directly to the dict
+        # with a timestamp already past the TTL threshold
+        import time as _time
+        stale_ts = _time.monotonic() - 1.0   # 1 second ago — well past 50ms TTL
+        for i in range(5):
+            from conftest import evt
+            engine._last_event_per_trace[f"old-trace-{i}"] = (
+                evt(trace_id=f"old-trace-{i}"), stale_ts
+            )
+
+        # One active trace — updated just now, must survive eviction
+        engine._last_event_per_trace["live-trace"] = (
+            evt(trace_id="live-trace"), _time.monotonic()
+        )
+
+        assert len(engine._last_event_per_trace) == 6
+
+        engine._evict_stale_traces()
+
+        assert len(engine._last_event_per_trace) == 1, (
+            "Expected only the live trace to survive eviction"
+        )
+        assert "live-trace" in engine._last_event_per_trace
+        assert all(
+            k.startswith("old-trace") is False
+            for k in engine._last_event_per_trace
+        )

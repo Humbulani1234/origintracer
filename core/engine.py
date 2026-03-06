@@ -59,8 +59,13 @@ class Engine:
         self._snapshot_thread: Optional[threading.Thread] = None
         self._running = False
 
-        # Last event per trace — used to build graph edges between consecutive events
-        self._last_event_per_trace: Dict[str, NormalizedEvent] = {}
+        # Last event per trace — used to build graph edges between consecutive events.
+        # Stored as (event, last_updated_timestamp) so stale entries can be evicted.
+        # A trace_id not updated in _trace_ttl_s seconds is considered complete or
+        # abandoned and is removed by _evict_stale_traces() in the snapshot loop.
+        self._trace_ttl_s: float = 60.0
+        self._last_event_per_trace: Dict[str, tuple] = {}   # trace_id → (NormalizedEvent, float)
+        self._last_event_lock = threading.Lock()
 
         # In-order event log (bounded ring buffer for replay / timeline)
         self._event_log: List[NormalizedEvent] = []
@@ -87,20 +92,18 @@ class Engine:
                 logger.debug("Repository insert failed: %s", exc)
 
         # 2. Update runtime graph — build edges between consecutive events in same trace
-        parent = self._last_event_per_trace.get(event.trace_id)
+        with self._last_event_lock:
+            entry = self._last_event_per_trace.get(event.trace_id)
+            parent = entry[0] if entry else None
+            self._last_event_per_trace[event.trace_id] = (event, time.monotonic())
         self.graph.add_from_event(event, parent_event=parent)
-        self._last_event_per_trace[event.trace_id] = event
 
         # 3. Append to in-memory event log (bounded)
         with self._event_log_lock:
             self._event_log.append(event)
             if len(self._event_log) > self._event_log_max:
                 self._event_log = self._event_log[-self._event_log_max:]
-        
-        # Update tracker so it knows which probe last fired for this trace
-        if hasattr(self, "tracker") and self.tracker is not None:
-            self.tracker.event(event.trace_id, event.probe)
-            
+
     # ------------------------------------------------------------------ #
     # Snapshot (called periodically or on deployment events)
     # ------------------------------------------------------------------ #
@@ -233,17 +236,39 @@ class Engine:
         if self._snapshot_thread:
             self._snapshot_thread.join(timeout=5)
 
-    def _snapshot_loop(self):
+    def _snapshot_loop(self) -> None:
         while self._running:
             time.sleep(self._snapshot_interval)
             try:
                 self.snapshot()
-                # Compact after snapshot — snapshot already serialised the
-                # current state so eviction does not lose anything
+                self._evict_stale_traces()
                 if hasattr(self, "compactor") and self.compactor is not None:
                     self.compactor.compact(self.graph)
             except Exception as exc:
                 logger.warning("Snapshot/compact failed: %s", exc)
+
+    def _evict_stale_traces(self) -> None:
+        """
+        Remove trace_ids from _last_event_per_trace that have not received
+        an event in _trace_ttl_s seconds (default 60s).
+
+        Why this matters: every unique trace_id that ever passes through
+        process() is inserted into this dict. Without eviction it grows
+        forever — one entry per request for the lifetime of the process.
+        At 100 req/s that is 360,000 entries per hour, each holding a
+        reference to a NormalizedEvent object.
+
+        Called from _snapshot_loop so it runs every snapshot_interval seconds
+        (default 15s), which is well within the 60s TTL threshold.
+        """
+        now = time.monotonic()
+        cutoff = now - self._trace_ttl_s
+        with self._last_event_lock:
+            stale = [tid for tid, (_, ts) in self._last_event_per_trace.items() if ts < cutoff]
+            for tid in stale:
+                del self._last_event_per_trace[tid]
+        if stale:
+            logger.debug("Evicted %d stale trace_ids from _last_event_per_trace", len(stale))
 
     # ------------------------------------------------------------------ #
     # State
