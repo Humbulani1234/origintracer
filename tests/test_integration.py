@@ -340,6 +340,7 @@ class TestConfigMergePipeline:
             normalize         = kwargs.pop("normalize", None),
             compactor         = kwargs.pop("compactor", None),
             active_requests   = kwargs.pop("active_requests", None),
+            observe           = kwargs.pop("observe", None),   # required — added with django probe revision
         )
 
     def test_defaults_applied_when_no_user_config(self):
@@ -390,6 +391,55 @@ class TestConfigMergePipeline:
         api_entries = [s for s in cfg.semantic if s["label"] == "api"]
         assert len(api_entries) == 1
         assert api_entries[0]["description"] == "from kwarg"
+
+    def test_normalize_kwarg_extends_not_replaces(self):
+        """
+        init(normalize=[my_rule]) must ADD to the defaults.yaml rules,
+        not wipe them.  The old bug was replace — this test would have
+        caught it.
+        """
+        my_rule = {"service": "django", "pattern": r"/debug/.*", "replacement": "/debug/{path}"}
+        cfg = self._merge({}, normalize=[my_rule])
+        # User rule present
+        assert any(r.get("replacement") == "/debug/{path}" for r in cfg.normalize)
+        # Built-in defaults.yaml rules preserved (DRF version pattern)
+        assert any("/api/{version}/" in r.get("replacement", "") for r in cfg.normalize)
+
+    def test_normalize_yaml_cleared_then_kwarg_appended(self):
+        """
+        User setting normalize: [] in their yaml wipes the list,
+        then init() kwarg appends on top of the empty base — clean slate.
+        """
+        my_rule = {"service": "django", "pattern": r"/foo/", "replacement": "/foo/{id}"}
+        cfg = self._merge({"normalize": []}, normalize=[my_rule])
+        assert cfg.normalize == [my_rule]
+
+    def test_observe_defaults_to_empty_modules(self):
+        """
+        Without observe.modules configured, cfg.observe should exist
+        and observe.modules should be an empty list — not a KeyError.
+        """
+        cfg = self._merge({})
+        assert isinstance(cfg.observe, dict)
+        assert cfg.observe.get("modules", []) == []
+
+    def test_observe_modules_from_yaml(self):
+        cfg = self._merge({"observe": {"modules": ["myapp", "myapp.api"]}})
+        assert cfg.observe["modules"] == ["myapp", "myapp.api"]
+
+    def test_observe_dict_merged_key_by_key(self):
+        """
+        init(observe={"modules": ["myapp"]}) with a user yaml that set
+        a different observe key should keep both keys.
+        """
+        cfg = self._merge(
+            {"observe": {"modules": ["myapp"], "max_depth": 5}},
+            observe={"modules": ["myapp", "myapp.tasks"]},
+        )
+        # kwarg wins on modules
+        assert cfg.observe["modules"] == ["myapp", "myapp.tasks"]
+        # yaml-only key preserved by deep merge
+        assert cfg.observe.get("max_depth") == 5
 
     def test_sample_rate_clamped_to_valid_range(self):
         cfg_over  = self._merge({}, sample_rate=2.0)
