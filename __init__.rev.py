@@ -476,11 +476,11 @@ def _init_engine(
     return engine
 
 
-def _init_probes(cfg: ResolvedConfig, engine: Any) -> List[Any]:
+def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
     """
     Import all built-in probe modules (side-effect: registers with ProbeRegistry).
+    Discover user probe files from <app_root>/stacktracer/probes/.
     Then load and start probes named in cfg.probes.
-    User probes discovered from stacktracer/probes/ directory convention.
     """
     from .sdk.base_probe import ProbeRegistry
 
@@ -505,8 +505,8 @@ def _init_probes(cfg: ResolvedConfig, engine: Any) -> List[Any]:
             # django_probe requires Django, celery_probe requires Celery, etc.
             logger.debug("Probe module not available: %s — %s", module_path, exc)
 
-    # Auto-discover user probe files from convention directory
-    _discover_user_probes()
+    # Auto-discover user probe files using the config-derived app root
+    _discover_user_probes(app_root)
 
     # Load and start each named probe
     probes = ProbeRegistry.load_from_config({"probes": cfg.probes})
@@ -521,89 +521,100 @@ def _init_probes(cfg: ResolvedConfig, engine: Any) -> List[Any]:
 
     return started
 
-def _app_root_from_config() -> str:
-    """
-    Return the application root directory.
 
-    This is the directory that contains the user's stacktracer.yaml.
-    If no config file was found, falls back to cwd.
-
-    Examples:
-        /home/user/myproject/stacktracer.yaml  → /home/user/myproject/
-        /srv/apps/django_app/stacktracer.yaml  → /srv/apps/django_app/
-        (no config found)                      → os.getcwd()
+def _app_root_from_config(config_path: Optional[str]) -> str:
     """
-    if _config is not None and _config.config_path:
-        return os.path.dirname(os.path.abspath(_config.config_path))
+    Return the application root directory for user probe/rule discovery.
+
+    If a stacktracer.yaml was found, the app root is its parent directory —
+    that is where the user's stacktracer/probes/ and stacktracer/rules/
+    convention directories live.
+
+    If no config was found we fall back to cwd, which is the right answer
+    when the user hasn't created a config file yet but is running from their
+    project root.
+
+    Example layout:
+        myapp/                   ← app root (parent of stacktracer.yaml)
+          stacktracer.yaml
+          stacktracer/
+            probes/
+              payment_probe.py
+            rules/
+              payment_rules.py
+    """
+    if config_path and os.path.isfile(config_path):
+        return os.path.dirname(os.path.abspath(config_path))
     return os.getcwd()
 
-def _discover_user_probes() -> None:
+
+def _discover_user_probes(app_root: str) -> None:
     """
-    Auto-discover user probe files following the convention:
+    Auto-discover probe files from <app_root>/stacktracer/probes/*_probe.py.
+    Importing them is sufficient — each file registers its BaseProbe subclass
+    with ProbeRegistry as a side-effect of the class definition.
 
-        <app_root>/stacktracer/probes/*_probe.py
-
-    Where <app_root> is the directory containing the user's stacktracer.yaml
-    (the config_path the system found), or cwd if no config was found.
-
-    Users never modify the package — their probes live in their application
-    directory under stacktracer/probes/. The package's own probes/ directory
-    is separate and already imported via _builtin_probe_modules above.
-
-    Convention: file must be named *_probe.py to be discovered.
-    The file self-registers by subclassing BaseProbe — no yaml entry needed.
+    Convention:
+        Any file named *_probe.py that contains a class inheriting BaseProbe
+        is automatically available as a named probe in cfg.probes.
     """
     import importlib.util
 
-    # Derive the app root from the config path that was found,
-    # or fall back to cwd if no config file was located.
-    app_root  = _app_root_from_config()
     probes_dir = os.path.join(app_root, "stacktracer", "probes")
-
     if not os.path.isdir(probes_dir):
-        logger.debug("No user probes directory at %s — skipping", probes_dir)
         return
 
-    for fname in sorted(os.listdir(probes_dir)):
+    for fname in sorted(os.listdir(probes_dir)):   # sorted for deterministic load order
         if not fname.endswith("_probe.py") or fname.startswith("__"):
             continue
         full_path = os.path.join(probes_dir, fname)
         try:
             spec   = importlib.util.spec_from_file_location(fname[:-3], full_path)
-            module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+            module = importlib.util.module_from_spec(spec)   # type: ignore[arg-type]
             spec.loader.exec_module(module)                  # type: ignore[union-attr]
-            logger.info("User probe loaded: %s", fname)
+            logger.info("User probe discovered: %s", fname)
         except Exception as exc:
             logger.warning("User probe %s failed to load: %s", fname, exc)
 
 
-def _discover_user_rules(registry: Any) -> None:
+def _discover_user_rules(registry: Any, app_root: str) -> None:
     """
-    Auto-discover user rule files following the convention:
+    Auto-discover rule files from <app_root>/stacktracer/rules/*_rules.py
+    and register them into the already-built PatternRegistry.
 
-        <app_root>/stacktracer/rules/*_rules.py
+    Convention:
+        Each *_rules.py file must expose a top-level function:
 
-    Each rules file must expose a top-level function:
+            def register(registry: PatternRegistry) -> None:
+                registry.register(CausalRule(...))
+                registry.register(CausalRule(...))
 
-        def register(registry: PatternRegistry) -> None:
-            registry.register(CausalRule(...))
-            registry.register(CausalRule(...))
+        stacktracer.init() calls register(registry) on every discovered file.
+        The function receives the live registry — the same object the engine
+        will call .evaluate() on — so rules are immediately active.
 
-    StackTracer calls register(registry) after the file is imported,
-    passing the live PatternRegistry so rules are registered into the
-    same registry as built-in rules and fire during CAUSAL queries.
+    Must be called AFTER _init_pattern_registry() so the registry exists,
+    and BEFORE _init_engine() starts the snapshot/evaluation loop —
+    though in practice it is safe either way since the engine holds a
+    reference to the registry, not a copy.
 
-    Convention: file must be named *_rules.py to be discovered.
-    Users never modify the package — their rules live in their
-    application directory under stacktracer/rules/.
+    Example:
+        # myapp/stacktracer/rules/payment_rules.py
+        from stacktracer.core.causal import CausalRule
+
+        def register(registry):
+            registry.register(CausalRule(
+                name        = "payment_retry_storm",
+                description = "Payment service retrying rapidly",
+                predicate   = lambda g, t: _check(g, t),
+                tags        = ["payment", "latency"],
+                confidence  = 0.85,
+            ))
     """
     import importlib.util
 
-    app_root  = _app_root_from_config()
     rules_dir = os.path.join(app_root, "stacktracer", "rules")
-
     if not os.path.isdir(rules_dir):
-        logger.debug("No user rules directory at %s — skipping", rules_dir)
         return
 
     for fname in sorted(os.listdir(rules_dir)):
@@ -612,19 +623,21 @@ def _discover_user_rules(registry: Any) -> None:
         full_path = os.path.join(rules_dir, fname)
         try:
             spec   = importlib.util.spec_from_file_location(fname[:-3], full_path)
-            module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+            module = importlib.util.module_from_spec(spec)   # type: ignore[arg-type]
             spec.loader.exec_module(module)                  # type: ignore[union-attr]
 
-            # Call register(registry) if present
-            if hasattr(module, "register") and callable(module.register):
-                module.register(registry)
-                logger.info("User rules loaded: %s", fname)
-            else:
+            register_fn = getattr(module, "register", None)
+            if register_fn is None:
                 logger.warning(
-                    "User rules file %s has no register(registry) function — skipped. "
-                    "Add: def register(registry): registry.register(CausalRule(...))",
+                    "User rules file %s has no register(registry) function — skipped",
                     fname,
                 )
+                continue
+
+            register_fn(registry)
+            rule_count = len(registry.rule_names())
+            logger.info("User rules loaded from %s (registry now has %d rules)", fname, rule_count)
+
         except Exception as exc:
             logger.warning("User rules %s failed to load: %s", fname, exc)
 
@@ -805,6 +818,10 @@ def init(
     user_yaml        = _load_user_config(user_config_path)
     merged_yaml      = _deep_merge(package_defaults, user_yaml)
 
+    # Derive app root from where the config was found (or cwd).
+    # Both probe and rule discovery use this as their base directory.
+    app_root = _app_root_from_config(user_config_path)
+
     # ── 2. Build ResolvedConfig ───────────────────────────────────────
     _config = _build_resolved_config(
         merged_yaml       = merged_yaml,
@@ -841,6 +858,11 @@ def init(
     # Pattern registry — closes over tracker
     registry = _init_pattern_registry(tracker)
 
+    # User rules — discovered and registered into the registry before the
+    # engine starts its evaluation loop.  The engine holds a reference to
+    # registry (not a copy) so rules added here are immediately live.
+    _discover_user_rules(registry, app_root)
+
     # Engine — wires everything together, starts drain thread + snapshot thread
     _engine = _init_engine(
         cfg        = _config,
@@ -855,8 +877,9 @@ def init(
     # Local Unix socket server — REPL connects here
     _init_local_server(_engine)
 
-    # Probes — started after engine so emit() has a bound engine
-    _active_probes = _init_probes(_config, _engine)
+    # Probes — started after engine so emit() has a bound engine.
+    # User probes are discovered inside _init_probes via _discover_user_probes.
+    _active_probes = _init_probes(_config, _engine, app_root)
 
     # Uploader — started last, after probes are running
     # Only if no explicit repository passed (repository takes precedence)
@@ -865,10 +888,11 @@ def init(
 
     # ── 4. Log summary ───────────────────────────────────────────────
     logger.info(
-        "StackTracer ready | probes=%s sample_rate=%.1f%% config=%s",
+        "StackTracer ready | probes=%s sample_rate=%.1f%% config=%s app_root=%s",
         [p.name for p in _active_probes],
         _config.sample_rate * 100,
         user_config_path or "defaults only",
+        app_root,
     )
 
 
