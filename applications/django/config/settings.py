@@ -20,6 +20,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "stacktracer.probes.django_probe.TracerMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
 

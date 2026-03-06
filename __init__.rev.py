@@ -272,6 +272,27 @@ class ResolvedConfig:
         self.sample_rate = max(0.0, min(1.0, self.sample_rate))
 
 
+def _extend_normalize(
+    merged_yaml_rules: List[Dict],
+    init_kwarg_rules: Optional[List[Dict]],
+) -> List[Dict]:
+    """
+    Normalize rules are ADDITIVE — init() kwarg rules extend the merged yaml
+    list rather than replacing it.  There is no dedup key (unlike semantic
+    aliases), so duplicates are the caller's responsibility.
+
+    Why additive and not replacement like probes?
+    Because a user adding one app-specific rule almost never wants to lose
+    the built-in DRF version-collapse or the UUID rules already in defaults.
+    If they genuinely want a clean slate they set normalize: [] in their yaml
+    which wipes the merged list before their init() kwarg is appended.
+    """
+    base = list(merged_yaml_rules)          # copy — never mutate merged_yaml
+    if init_kwarg_rules:
+        base.extend(init_kwarg_rules)
+    return base
+
+
 def _build_resolved_config(
     merged_yaml: Dict[str, Any],
     api_key: str,
@@ -288,31 +309,50 @@ def _build_resolved_config(
     active_requests: Optional[Dict],
 ) -> ResolvedConfig:
     """
-    Build the final ResolvedConfig.
-    init() kwargs are the last override — they win over everything.
-    Only kwargs that are explicitly passed (not None) override the merged yaml.
+    Build the final ResolvedConfig by applying init() kwargs as the last
+    override layer on top of the already-merged yaml.
+
+    Merge semantics per field type:
+        scalar   (sample_rate, flush_interval …) — kwarg wins if not None,
+                 else merged_yaml value, which always exists because
+                 _deep_merge(package_defaults, user_yaml) ran first.
+        list     (probes) — kwarg REPLACES merged_yaml list entirely.
+                 User saying probes=["django"] means exactly ["django"].
+        semantic (list of dicts keyed by label) — three-way label-keyed merge
+                 so adding a new label is additive, overriding an existing
+                 label replaces just that entry.
+        normalize (list of dicts, no dedup key) — kwarg EXTENDS merged_yaml
+                 list.  Replacement would silently drop built-in rules.
+        dict     (compactor, active_requests) — _deep_merge so user can
+                 override one key without repeating all others.
     """
-    # Semantic merging is special — three-way label-keyed merge
+    # merged_yaml already contains package_defaults merged with user yaml,
+    # so .get() always finds a value — no hardcoded fallback needed here.
     resolved_semantic = _merge_semantic(
         defaults   = _hardcoded_defaults().get("semantic", []),
         user_yaml  = merged_yaml.get("semantic", []),
         init_kwarg = semantic,
     )
 
+    resolved_normalize = _extend_normalize(
+        merged_yaml_rules = merged_yaml.get("normalize", []),
+        init_kwarg_rules  = normalize,
+    )
+
     return ResolvedConfig(
         api_key           = api_key,
         endpoint          = endpoint,
-        sample_rate       = sample_rate      if sample_rate      is not None else merged_yaml.get("sample_rate",       0.01),
-        buffer_size       = merged_yaml.get("buffer_size",       10_000),
-        flush_interval    = flush_interval   if flush_interval   is not None else merged_yaml.get("flush_interval",    10),
-        snapshot_interval = snapshot_interval if snapshot_interval is not None else merged_yaml.get("snapshot_interval", 15.0),
-        redact_fields     = merged_yaml.get("redact_fields",     ["password", "token", "secret", "authorization"]),
-        probes            = probes           if probes           is not None else merged_yaml.get("probes",            ["django", "asyncio"]),
+        sample_rate       = sample_rate       if sample_rate       is not None else merged_yaml["sample_rate"],
+        buffer_size       = merged_yaml["buffer_size"],
+        flush_interval    = flush_interval    if flush_interval    is not None else merged_yaml["flush_interval"],
+        snapshot_interval = snapshot_interval if snapshot_interval is not None else merged_yaml["snapshot_interval"],
+        redact_fields     = merged_yaml["redact_fields"],
+        probes            = probes            if probes            is not None else merged_yaml["probes"],
         semantic          = resolved_semantic,
-        normalize         = normalize        if normalize         is not None else merged_yaml.get("normalize",        []),
+        normalize         = resolved_normalize,
         compactor         = _deep_merge(merged_yaml.get("compactor", {}), compactor or {}),
-        nginx             = merged_yaml.get("nginx",             {}),
-        gunicorn          = merged_yaml.get("gunicorn",          {}),
+        nginx             = merged_yaml.get("nginx",    {}),
+        gunicorn          = merged_yaml.get("gunicorn", {}),
         active_requests   = _deep_merge(merged_yaml.get("active_requests", {}), active_requests or {}),
         debug             = debug,
         enabled           = True,
@@ -328,12 +368,11 @@ def _build_resolved_config(
 def _init_normalizer(cfg: ResolvedConfig) -> Any:
     """
     Build GraphNormalizer with:
-        - built-in patterns always on
-        - user normalize rules from merged config
+        - built-in patterns always on (UUID, numeric ID, SQL literals, etc.)
+        - user normalize rules from merged config (defaults.yaml + stacktracer.yaml + init kwarg)
     """
-    from .core.graph_normalizer import GraphNormalizer, NormalizationRule
+    from .core.graph_normalizer import GraphNormalizer
 
-    compactor_cfg = cfg.compactor
     normalizer = GraphNormalizer(
         enable_builtins             = True,
         max_name_length             = 200,
@@ -437,7 +476,7 @@ def _init_engine(
     return engine
 
 
-def _init_probes(cfg: ResolvedConfig, engine: Any, registry: Any) -> List[Any]:
+def _init_probes(cfg: ResolvedConfig, engine: Any) -> List[Any]:
     """
     Import all built-in probe modules (side-effect: registers with ProbeRegistry).
     Then load and start probes named in cfg.probes.
@@ -468,8 +507,6 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, registry: Any) -> List[Any]:
 
     # Auto-discover user probe files from convention directory
     _discover_user_probes()
-    # Auto-discover user rule files from convention directory
-    _discover_user_rules(registry)
 
     # Load and start each named probe
     probes = ProbeRegistry.load_from_config({"probes": cfg.probes})
@@ -591,6 +628,7 @@ def _discover_user_rules(registry: Any) -> None:
         except Exception as exc:
             logger.warning("User rules %s failed to load: %s", fname, exc)
 
+
 def _init_local_server(engine: Any) -> Any:
     """Start the Unix socket server for REPL → agent queries."""
     try:
@@ -658,65 +696,106 @@ def init(
     """
     Initialise StackTracer.
 
-    All parameters are optional except api_key for remote upload.
-    Call with no arguments to get full-stack defaults:
+    Minimal usage — all defaults apply:
 
-        stacktracer.init()
+        # settings.py
+        MIDDLEWARE = [
+            "stacktracer.probes.django_probe.TracerMiddleware",  # REQUIRED — must be first
+            "django.middleware.security.SecurityMiddleware",
+            ...
+        ]
+
+        # apps.py  (AppConfig.ready() — runs once after Django is fully loaded)
+        import stacktracer
+        stacktracer.init(api_key=os.getenv("STACKTRACER_API_KEY"))
+
+    TracerMiddleware is NOT optional.
+    It is the only place where a trace_id is generated and written into the
+    ContextVar.  Without it every downstream probe (URL resolver, view dispatch,
+    DB kprobe, asyncio probe) sees get_trace_id() == None and silently drops
+    its events.  The middleware must be the FIRST entry in MIDDLEWARE so it
+    wraps the entire request before any other middleware can call get_response.
+
+    Django probe internals (NOT sys.monitoring):
+        The django probe uses three hooks — all installed via stacktracer.init():
+          1. TracerMiddleware      — HTTP request.entry / request.exit
+          2. Patched URLResolver   — django.url.resolve event per request
+          3. Patched BaseHandler   — django.view.enter event per request
+        sys.monitoring (Python 3.12 event system) is used ONLY by the asyncio
+        probe for coroutine scheduling events.  It is never used in the django
+        probe.  No defaults.yaml "views:" section exists or is needed — every
+        view dispatch is already observed through BaseHandler._get_response.
+
+    Config merge order (last wins):
+        1. defaults.yaml  (package-shipped — full production stack)
+        2. stacktracer.yaml (searched from cwd upward, or explicit config= path)
+        3. init() kwargs  (highest priority)
+
+    Merge semantics per field type:
+        scalar     sample_rate, flush_interval, snapshot_interval
+                   → kwarg wins if provided, else yaml value
+        list       probes
+                   → kwarg REPLACES yaml list entirely
+        semantic   list of label-keyed dicts
+                   → three-way label merge — later source wins per label,
+                     distinct labels from all sources are kept
+        normalize  list of rule dicts (no dedup key)
+                   → kwarg EXTENDS yaml list — rules accumulate
+        dict       compactor, active_requests
+                   → key-by-key deep merge — kwarg keys win, rest from yaml
 
     Parameters
     ----------
     api_key
         API key for remote upload to StackTracer backend.
-        Omit or set "" to run in local-only mode (no upload).
+        Omit or pass "" to run in local-only mode (no upload).
 
     endpoint
         Backend URL. Default: https://api.stacktracer.io
 
     config
         Explicit path to user stacktracer.yaml.
-        If omitted, searches from cwd upward automatically.
+        If omitted, searched automatically from cwd upward (max 5 levels).
 
     probes
         List of probe names to activate.
-        REPLACES the default list (not merged).
+        REPLACES the default list entirely.
         Default: ["django", "asyncio", "uvicorn", "gunicorn", "nginx"]
 
     semantic
-        List of semantic alias dicts.
-        MERGED with defaults by label — user aliases win on same label.
+        Extra semantic alias dicts to add or override.
+        MERGED with defaults by label — your label wins on same key.
 
     sample_rate
-        Fraction of requests to trace (0.0–1.0).
-        Default: 0.01 (1%)
+        Fraction of requests to trace (0.0–1.0). Default: 0.01 (1%)
 
     snapshot_interval
-        Seconds between temporal graph snapshots.
-        Default: 15.0
+        Seconds between temporal graph snapshots. Default: 15.0
 
     flush_interval
-        Seconds between uploader batch flushes.
-        Default: 10
+        Seconds between uploader event batch flushes. Default: 10
 
     debug
         If True, enables StackTracer even when DJANGO_DEBUG=True.
         Default: False (auto-disables in Django debug environments)
 
     repository
-        Pre-built storage repository (EventRepository, ClickHouseRepository).
-        Overrides the uploader as the event sink.
+        Pre-built storage backend (EventRepository, ClickHouseRepository).
+        Overrides the remote uploader as the event sink.
 
     normalize
-        Extra normalization rules beyond built-in patterns.
-        Each: {"service": "django", "pattern": "...", "replacement": "..."}
+        Additional normalization rules beyond built-in patterns and yaml rules.
+        EXTENDS — does not replace — the merged yaml normalize list.
+        Each rule: {"service": "django", "pattern": "...", "replacement": "..."}
 
     compactor
-        Override compactor settings.
-        Keys: max_nodes, evict_to_ratio, node_ttl_s, min_call_count.
-        Only specified keys are overridden — others keep defaults.
+        Override specific compactor settings.
+        MERGES key-by-key — unspecified keys keep their yaml / default values.
+        Keys: max_nodes, evict_to_ratio, node_ttl_s, min_call_count
 
     active_requests
         Override ActiveRequestTracker settings.
-        Keys: ttl_s, max_size.
+        MERGES key-by-key.  Keys: ttl_s, max_size
     """
     global _config, _engine, _active_probes
 
@@ -777,7 +856,7 @@ def init(
     _init_local_server(_engine)
 
     # Probes — started after engine so emit() has a bound engine
-    _active_probes = _init_probes(_config, _engine, registry)
+    _active_probes = _init_probes(_config, _engine)
 
     # Uploader — started last, after probes are running
     # Only if no explicit repository passed (repository takes precedence)
