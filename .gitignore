@@ -1,4 +1,42 @@
 stack-tracer.code-workspace
 /env
-applications/django/config/__pycache__/
-stacktracer.egg-info/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+env/
+env2/
+venv/
+.venv/
+saim/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# StackTracer specific
+*.db
+*.sqlite3
