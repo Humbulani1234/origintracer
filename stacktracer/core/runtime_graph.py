@@ -147,12 +147,16 @@ class RuntimeGraph:
         If parent_event is provided, an edge is drawn from parent → this event.
         """
         # Normalise name before it enters the graph
+
+        # import pdb
+        # pdb.set_trace()
+
         name = event.name
         if hasattr(self, "normalizer") and self.normalizer is not None:
             name = self.normalizer.normalize(event.service, name)
 
         node_id  = self._node_id(event.service, name)
-        node_type = event.probe.split(".")[0]   # e.g. "asyncio", "django", "syscall"
+        node_type = event.service   # e.g. "asyncio", "django", "syscall"
 
         self.upsert_node(
             node_id=node_id,
@@ -167,12 +171,13 @@ class RuntimeGraph:
             if hasattr(self, "normalizer") and self.normalizer is not None:
                 parent_name = self.normalizer.normalize(parent_event.service, parent_name)
             parent_id = self._node_id(parent_event.service, parent_name)
-            self.upsert_edge(
-                source=parent_id,
-                target=node_id,
-                edge_type="calls",
-                duration_ns=event.duration_ns,
-            )
+            if parent_id != node_id:
+                self.upsert_edge(
+                    source=parent_id,
+                    target=node_id,
+                    edge_type="calls",
+                    duration_ns=event.duration_ns,
+                )
 
     # ------------------------------------------------------------------ #
     # Queries

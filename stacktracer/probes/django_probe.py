@@ -131,6 +131,7 @@ class TracerMiddleware:
             or str(uuid.uuid4())
         )
         token = set_trace(trace_id)
+        request._st_t0 = time.perf_counter()   # stamp start time for duration calc in _end
         emit(NormalizedEvent.now(
             probe    = "request.entry",
             trace_id = trace_id,
@@ -142,6 +143,7 @@ class TracerMiddleware:
         return trace_id, token
 
     def _end(self, request: Any, response: Any, trace_id: str) -> None:
+        duration_ns = int((time.perf_counter() - request._st_t0) * 1e9) if hasattr(request, "_st_t0") else None
         emit(NormalizedEvent.now(
             probe       = "request.exit",
             trace_id    = trace_id,
@@ -149,6 +151,7 @@ class TracerMiddleware:
             name        = request.path,
             method      = request.method,
             status_code = response.status_code,
+            duration_ns = duration_ns,
         ))
 
     def _error(self, request: Any, exc: Exception, trace_id: str) -> None:
@@ -257,8 +260,10 @@ def _uninstall_db_wrapper() -> None:
 # (e.g. exceptions raised inside Django's own request handling machinery
 # before the middleware's finally block runs in certain edge cases).
 
-def _on_unhandled_exception(sender: Any, request: Any, exception: Any, **kwargs) -> None:
+def _on_unhandled_exception(sender: Any, request: Any = None, exception: Any = None, **kwargs) -> None:
     trace_id = get_trace_id()
+    t0 = time.perf_counter()
+    duration_ns = int((time.perf_counter() - t0) * 1e9)
     if trace_id:
         emit(NormalizedEvent.now(
             probe          = "django.exception",
@@ -268,6 +273,7 @@ def _on_unhandled_exception(sender: Any, request: Any, exception: Any, **kwargs)
             exception_type = type(exception).__name__,
             exception_msg  = str(exception)[:200],
             source         = "got_request_exception_signal",
+            duration_ns = duration_ns
         ))
 
 
@@ -346,6 +352,8 @@ def _setup_monitoring_312(observe_modules: List[str]) -> None:
             # callback for this specific code object — zero recurring overhead
             return sys.monitoring.DISABLE
         trace_id = get_trace_id()
+        t0 = time.perf_counter()
+        duration_ns = int((time.perf_counter() - t0) * 1e9)
         if trace_id:
             emit(NormalizedEvent.now(
                 probe    = "django.view.enter",
@@ -353,12 +361,15 @@ def _setup_monitoring_312(observe_modules: List[str]) -> None:
                 service  = "django",
                 name     = code.co_qualname,
                 source   = "sys.monitoring",
+                duration_ns = duration_ns
             ))
 
     def on_return(code: Any, offset: int, retval: Any) -> Any:
         if not is_app_code(code):
             return sys.monitoring.DISABLE
         trace_id = get_trace_id()
+        t0 = time.perf_counter()
+        duration_ns = int((time.perf_counter() - t0) * 1e9)
         if trace_id:
             emit(NormalizedEvent.now(
                 probe    = "django.view.exit",
@@ -366,6 +377,7 @@ def _setup_monitoring_312(observe_modules: List[str]) -> None:
                 service  = "django",
                 name     = code.co_qualname,
                 source   = "sys.monitoring",
+                duration_ns = duration_ns
             ))
 
     try:
@@ -385,6 +397,8 @@ def _setup_setprofile_311(observe_modules: List[str]) -> None:
     def _profile(frame: Any, event: str, arg: Any) -> None:
         if event in ("call", "return") and is_app_code(frame.f_code):
             trace_id = get_trace_id()
+            t0 = time.perf_counter()
+            duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
                 probe = "django.view.enter" if event == "call" else "django.view.exit"
                 emit(NormalizedEvent.now(
@@ -393,6 +407,7 @@ def _setup_setprofile_311(observe_modules: List[str]) -> None:
                     service  = "django",
                     name     = frame.f_code.co_qualname,
                     source   = "sys.setprofile",
+                    duration_ns = duration_ns
                 ))
         # Always chain to the previous profiler if one existed
         if original_profile:

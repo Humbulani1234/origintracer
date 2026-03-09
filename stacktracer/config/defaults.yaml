@@ -134,8 +134,6 @@ gunicorn:
 # overhead low and the graph focused on your code, not framework internals.
 #
 # Uncomment and fill in your app name:
-# observe:
-#   modules:
-#     - myapp
-#     - myapp.api
-#     - myapp.tasks
+observe:
+  modules:
+    - django_tracer

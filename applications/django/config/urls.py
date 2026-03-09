@@ -3,5 +3,5 @@
 from django.urls import path, include
 
 urlpatterns = [
-    path("", include("mysite.urls")),
+    path("", include("django_tracer.urls")),
 ]

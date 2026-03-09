@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from time import time
+import time
 from collections import deque
 from typing import List, Optional
 
@@ -82,6 +82,10 @@ class _DrainThread(threading.Thread):
         self._running = False
 
     def run(self) -> None:
+
+        import pdb
+        pdb.set_trace()
+        
         while self._running:
             try:
                 events = self._buffer.drain(max_batch=500)

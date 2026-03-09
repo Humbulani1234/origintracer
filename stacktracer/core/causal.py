@@ -295,11 +295,11 @@ Add to build_default_registry() in causal.py:
     registry.register(make_anomaly_rule(tracker))
 """
 
-from __future__ import annotations
+# from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from .causal import CausalRule, PatternRegistry
+# from .causal import CausalRule, PatternRegistry
 from .runtime_graph import RuntimeGraph
 from .temporal import TemporalStore
 
@@ -437,34 +437,25 @@ def build_default_registry(tracker=None) -> PatternRegistry:
     If tracker is None, the anomaly rule is omitted (graceful degradation).
     All other rules are unaffected — they do not use the tracker.
     """
-    from .causal import (
-        PatternRegistry,
-        NEW_SYNC_CALL,
-        LOOP_STARVATION,
-        DB_HOTSPOT,
-        RETRY_AMPLIFICATION,
-        WORKER_CHURN,
-        CACHE_MISS,
-    )
+    # from .causal import (
+    #     PatternRegistry,
+    #     NEW_SYNC_CALL,
+    #     LOOP_STARVATION,
+    #     DB_HOTSPOT,
+    #     RETRY_AMPLIFICATION,
+    #     WORKER_CHURN,
+    #     CACHE_MISS,
+    # )
 
     registry = PatternRegistry()
     registry.register(NEW_SYNC_CALL)
     registry.register(LOOP_STARVATION)
     registry.register(DB_HOTSPOT)
     registry.register(RETRY_AMPLIFICATION)
-    registry.register(WORKER_CHURN)
-    registry.register(CACHE_MISS)
+    # registry.register(WORKER_CHURN)
+    # registry.register(CACHE_MISS)
 
     if tracker is not None:
         registry.register(make_anomaly_rule(tracker))
 
-    return registry
-
-def build_default_registry() -> PatternRegistry:
-    """Return a PatternRegistry pre-loaded with all built-in rules."""
-    registry = PatternRegistry()
-    registry.register(RETRY_AMPLIFICATION)
-    registry.register(NEW_SYNC_CALL)
-    registry.register(LOOP_STARVATION)
-    registry.register(DB_HOTSPOT)
     return registry

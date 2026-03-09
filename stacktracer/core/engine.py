@@ -85,6 +85,10 @@ class Engine:
         Must be fast — this runs on the hot path.
         """
         # 1. Persist (async fire-and-forget; repository handles its own buffering)
+        
+        import pdb
+        pdb.set_trace()
+        
         if self.repository:
             try:
                 self.repository.insert_event(event)

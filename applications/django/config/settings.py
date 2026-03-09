@@ -16,7 +16,7 @@ ALLOWED_HOSTS = ["*"]
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
-    "mysite",
+    "django_tracer",
 ]
 
 MIDDLEWARE = [
@@ -37,7 +37,7 @@ DATABASES = {
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "mysite" / "templates"],
+        "DIRS": [BASE_DIR / "django" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -55,5 +55,5 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # In production with gunicorn, re-init in gunicorn's post_fork hook
 # so each worker gets its own engine instance.
 
-import stacktracer
-stacktracer.init(config=str(BASE_DIR / "stacktracer.yaml"))
+# import stacktracer
+# stacktracer.init(config=str(BASE_DIR / "stacktracer.yaml"))
