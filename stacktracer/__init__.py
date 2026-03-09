@@ -514,6 +514,7 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
     observe_modules: List[str] = cfg.observe.get("modules", [])
     _probe_kwargs = {
         "django": {"observe_modules": observe_modules},
+        "asyncio": {"observe_modules": observe_modules}
     }
 
     if observe_modules:

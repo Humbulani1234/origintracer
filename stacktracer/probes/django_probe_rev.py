@@ -131,6 +131,7 @@ class TracerMiddleware:
             or str(uuid.uuid4())
         )
         token = set_trace(trace_id)
+        request._st_t0 = time.perf_counter()   # stamp start time for duration calc in _end
         emit(NormalizedEvent.now(
             probe    = "request.entry",
             trace_id = trace_id,
@@ -142,6 +143,7 @@ class TracerMiddleware:
         return trace_id, token
 
     def _end(self, request: Any, response: Any, trace_id: str) -> None:
+        duration_ns = int((time.perf_counter() - request._st_t0) * 1e9) if hasattr(request, "_st_t0") else None
         emit(NormalizedEvent.now(
             probe       = "request.exit",
             trace_id    = trace_id,
@@ -149,6 +151,7 @@ class TracerMiddleware:
             name        = request.path,
             method      = request.method,
             status_code = response.status_code,
+            duration_ns = duration_ns,
         ))
 
     def _error(self, request: Any, exc: Exception, trace_id: str) -> None:
@@ -257,7 +260,7 @@ def _uninstall_db_wrapper() -> None:
 # (e.g. exceptions raised inside Django's own request handling machinery
 # before the middleware's finally block runs in certain edge cases).
 
-def _on_unhandled_exception(sender: Any, request: Any, exception: Any, **kwargs) -> None:
+def _on_unhandled_exception(sender: Any, request: Any = None, exception: Any = None, **kwargs) -> None:
     trace_id = get_trace_id()
     if trace_id:
         emit(NormalizedEvent.now(
@@ -319,62 +322,96 @@ def _make_module_filter(observe_modules: List[str]) -> Callable:
     return is_app_code
 
 
-def _setup_monitoring_312(observe_modules: List[str]) -> None:
-    """Install sys.monitoring callbacks for Python 3.12+."""
-    global _MONITORING_TOOL_ID
+def _setup_monitoring_312(observe_modules: List[str] = None) -> bool:
+    from ..core.monitoring_coordinator import get_coordinator
 
-    if not hasattr(sys, "monitoring"):
-        logger.warning("django probe: sys.monitoring not available (Python < 3.12)")
-        return
+    # App module coroutines are already handled by django probe.
+    # Asyncio probe covers framework-level coroutines only.
+    app_fragments = tuple(
+        m.replace(".", "/") for m in (observe_modules or [])
+    )
+    print(f"APP FRAGMENTS: {app_fragments}")
+    def _is_app_code(code) -> bool:
+        if not app_fragments:
+            return False
+        return any(f in code.co_filename for f in app_fragments)
 
-    TOOL_ID = sys.monitoring.PROFILER_ID
-    _MONITORING_TOOL_ID = TOOL_ID
-    is_app_code = _make_module_filter(observe_modules)
+    # Django internals that add no diagnostic value
+    _DJANGO_NOISE = {
+        "AsyncToSync.main_wrap",
+        "SyncToAsync.__call__",
+        "convert_exception_to_response.<locals>.inner",
+        "MiddlewareMixin.__acall__",
+        "BaseHandler._get_response_async",
+        "BaseHandler._get_response",
+        "sleep",
+    }
 
-    try:
-        sys.monitoring.set_events(
-            TOOL_ID,
-            sys.monitoring.events.CALL | sys.monitoring.events.PY_RETURN,
-        )
-    except Exception as exc:
-        logger.warning("django probe: sys.monitoring set_events failed: %s", exc)
-        return
+    _active_coros: set = set()
+    CO_OPTIMIZED = 0x1
+    import inspect
 
-    def on_call(code: Any, offset: int, callable_: Any, arg0: Any) -> Any:
-        if not is_app_code(code):
-            # Returning DISABLE tells sys.monitoring to stop calling this
-            # callback for this specific code object — zero recurring overhead
+    def on_call(code, offset: int, callable_: Any, arg0: Any):
+        if code.co_name == "<module>":
             return sys.monitoring.DISABLE
-        trace_id = get_trace_id()
-        if trace_id:
-            emit(NormalizedEvent.now(
-                probe    = "django.view.enter",
-                trace_id = trace_id,
-                service  = "django",
-                name     = code.co_qualname,
-                source   = "sys.monitoring",
-            ))
-
-    def on_return(code: Any, offset: int, retval: Any) -> Any:
-        if not is_app_code(code):
+        if not (code.co_flags & CO_OPTIMIZED):
             return sys.monitoring.DISABLE
+        if not (code.co_flags & inspect.CO_COROUTINE):
+            return sys.monitoring.DISABLE
+        if _is_app_code(code):
+            return sys.monitoring.DISABLE    # django probe handles these
+        print(f"ASYNCIO QUALNAME: {code.co_qualname!r}")
+        if any(f in code.co_qualname for f in _DJANGO_NOISE):
+            return sys.monitoring.DISABLE
+
         trace_id = get_trace_id()
-        if trace_id:
-            emit(NormalizedEvent.now(
-                probe    = "django.view.exit",
-                trace_id = trace_id,
-                service  = "django",
-                name     = code.co_qualname,
-                source   = "sys.monitoring",
-            ))
+        if not trace_id:
+            return
 
-    try:
-        sys.monitoring.register_callback(TOOL_ID, sys.monitoring.events.CALL,      on_call)
-        sys.monitoring.register_callback(TOOL_ID, sys.monitoring.events.PY_RETURN, on_return)
-        logger.info("django probe: sys.monitoring installed for modules: %s", observe_modules)
-    except Exception as exc:
-        logger.warning("django probe: sys.monitoring register_callback failed: %s", exc)
+        key = (trace_id, code.co_qualname)
+        if key in _active_coros:
+            return
+        _active_coros.add(key)
 
+        emit(NormalizedEvent.now(
+            probe          = "asyncio.loop.coro_call",
+            trace_id       = trace_id,
+            service        = "asyncio",
+            name           = code.co_qualname,
+            parent_span_id = get_span_id(),
+            source         = "sys.monitoring",
+        ))
+
+    def on_return(code, offset: int, retval: Any):
+        if code.co_name == "<module>":
+            return sys.monitoring.DISABLE
+        if not (code.co_flags & CO_OPTIMIZED):
+            return sys.monitoring.DISABLE
+        if not (code.co_flags & inspect.CO_COROUTINE):
+            return sys.monitoring.DISABLE
+        if _is_app_code(code):
+            return sys.monitoring.DISABLE
+        if any(f in code.co_qualname for f in _DJANGO_NOISE):
+            return sys.monitoring.DISABLE
+
+        trace_id = get_trace_id()
+        if not trace_id:
+            return
+
+        _active_coros.discard((trace_id, code.co_qualname))
+
+        emit(NormalizedEvent.now(
+            probe          = "asyncio.loop.coro_return",
+            trace_id       = trace_id,
+            service        = "asyncio",
+            name           = code.co_qualname,
+            parent_span_id = get_span_id(),
+            source         = "sys.monitoring",
+        ))
+
+    get_coordinator().register("asyncio", on_call=on_call, on_return=on_return)
+    logger.info("asyncio probe: registered sys.monitoring handlers via coordinator")
+    return True
 
 def _setup_setprofile_311(observe_modules: List[str]) -> None:
     """Install sys.setprofile for Python 3.11 (fallback from sys.monitoring)."""
@@ -403,22 +440,10 @@ def _setup_setprofile_311(observe_modules: List[str]) -> None:
 
 
 def _teardown_function_observation() -> None:
-    global _MONITORING_TOOL_ID
     minor = sys.version_info.minor
-
-    if minor >= 12 and _MONITORING_TOOL_ID is not None:
-        if hasattr(sys, "monitoring"):
-            sys.monitoring.set_events(
-                _MONITORING_TOOL_ID,
-                sys.monitoring.events.NO_EVENTS,
-            )
-            sys.monitoring.register_callback(
-                _MONITORING_TOOL_ID, sys.monitoring.events.CALL, None,
-            )
-            sys.monitoring.register_callback(
-                _MONITORING_TOOL_ID, sys.monitoring.events.PY_RETURN, None,
-            )
-        _MONITORING_TOOL_ID = None
+    if minor >= 12:
+        from ..core.monitoring_coordinator import get_coordinator
+        get_coordinator().unregister("django")
     elif minor == 11:
         original = _originals.pop("sys_profile", None)
         sys.setprofile(original)
@@ -441,6 +466,10 @@ class DjangoProbe(BaseProbe):
     name = "django"
 
     def start(self, observe_modules: Optional[List[str]] = None) -> None:
+
+        import pdb
+        pdb.set_trace()
+
         global _patched, _observe_modules
 
         if _patched:
@@ -456,19 +485,19 @@ class DjangoProbe(BaseProbe):
         # View-function observation requires the user to name their modules.
         # Without that list we cannot filter the firehose of Python calls
         # down to just application code.
-        if _observe_modules:
-            minor = sys.version_info.minor
-            if minor >= 12:
-                _setup_monitoring_312(_observe_modules)
-            else:
-                _setup_setprofile_311(_observe_modules)
-        else:
-            logger.info(
-                "django probe: observe.modules not configured — "
-                "django.view.enter / django.view.exit disabled. "
-                "To enable view tracing, add to stacktracer.yaml:\n"
-                "  observe:\n    modules:\n      - myapp"
-            )
+        # if _observe_modules:
+        #     minor = sys.version_info.minor
+        #     if minor >= 12:
+        #         _setup_monitoring_312(_observe_modules)
+        #     else:
+        #         _setup_setprofile_311(_observe_modules)
+        # else:
+        #     logger.info(
+        #         "django probe: observe.modules not configured — "
+        #         "django.view.enter / django.view.exit disabled. "
+        #         "To enable view tracing, add to stacktracer.yaml:\n"
+        #         "  observe:\n    modules:\n      - myapp"
+        #     )
 
         _patched = True
         logger.info("django probe: installed (view_tracing=%s)", bool(_observe_modules))
