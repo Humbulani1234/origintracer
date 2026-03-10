@@ -130,6 +130,9 @@ def _restart_drain_thread() -> None:
         _drain_thread.start()
         logger.info("emitter: drain thread restarted after fork")
 
+def _get_engine():
+    return _engine
+
 def emit(event: NormalizedEvent) -> None:
     """
     Emit one probe event.

@@ -107,9 +107,9 @@ active_requests:
 
 # ── nginx probe config ────────────────────────────────────────────────────
 nginx:
-  mode: auto               # auto | kprobe | lua | log
+  mode: log              # auto | kprobe | lua | log
                            # auto: try kprobe, try lua, fall back to log
-  log_path: /var/log/nginx/access.log
+  log_path: /mnt/c/Users/humbulani/nginx-1.24.0/logs/access.log
   lua_host: 127.0.0.1
   lua_port: 9119           # UDP port nginx.lua sends events to
 

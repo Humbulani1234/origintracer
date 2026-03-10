@@ -150,6 +150,7 @@ class RuntimeGraph:
 
         # import pdb
         # pdb.set_trace()
+
         print(f">>> graph after add: {list(self._nodes.keys())}")
         name = event.name
         if hasattr(self, "normalizer") and self.normalizer is not None:

@@ -1,596 +1,547 @@
 """
-probes/nginx_probe.py
+probes/nginx_probe.py  (final — kprobe + Lua UDP, correlated)
 
-Nginx probe with two modes:
+Three layers. Two correlate with each other. One is the fallback.
 
-Mode A — eBPF uprobes (preferred, requires bcc + root + Linux)
-    Attaches directly to nginx worker process symbols.
-    Gives sub-millisecond visibility into the nginx request lifecycle
-    without touching nginx config or adding log overhead.
+Layer A — kprobe (accept4, epoll_wait, sendmsg, recvmsg):
+    Knows: fd, client_ip, client_port, kernel duration, bytes, epoll state.
+    Does NOT know: URI, method, status, upstream timing.
 
-    Symbols probed:
-        ngx_http_wait_request_handler   connection accepted, waiting for first byte
-        ngx_http_init_request           first byte received, request parsing begins
-        ngx_http_handler                request parsed, routing to location block
-        ngx_recv                        reading client socket data
-        ngx_add_event                   registering upstream write with epoll
-        ngx_epoll_process_events        nginx epoll tick — events per loop iteration
+Layer B — Lua UDP receiver (log_by_lua → UDP port 9119):
+    Knows: URI, method, status, upstream timing, request_id, remote_addr.
+    Does NOT know: fd numbers, accept latency, epoll state.
 
-Mode B — JSON access log tail (fallback, no privileges needed)
-    Tails /var/log/nginx/access.log expecting JSON format.
-    Gives per-request visibility with no kernel access required.
-    Coarser than Mode A — one event per request, not per lifecycle stage.
+Correlation: (client_ip, client_port) == (remote_addr, remote_port).
+When both fire for the same connection, they are merged into
+nginx.request.enriched — one event with kernel + HTTP fields combined.
 
-    Enable JSON logging in nginx:
-        log_format json_combined escape=json '{'
-            '"time":"$time_iso8601",'
-            '"method":"$request_method",'
-            '"uri":"$uri",'
-            '"status":$status,'
-            '"request_time":$request_time,'
-            '"upstream_response_time":"$upstream_response_time"'
-        '}';
-        access_log /var/log/nginx/access.log json_combined;
-
-New ProbeTypes introduced (add to core/event_schema.py):
-    nginx.connection.accept     — connection accepted by worker, waiting first byte
-    nginx.request.parse         — HTTP request parsing started
-    nginx.request.route         — request routed to location block
-    nginx.recv                  — nginx reading bytes from client socket
-    nginx.upstream.dispatch     — nginx dispatching to upstream (your Django/FastAPI)
-    nginx.epoll.tick            — nginx epoll loop iteration
+Layer C — access log tail: zero-privilege fallback.
 """
 
 from __future__ import annotations
-
-import json
-import logging
-import os
-import threading
-import time
-from typing import Any, Optional
+import json, logging, os, socket, socketserver, struct, sys
+import threading, time
+from typing import Dict, List, Optional, Tuple
 
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
-from ..core.event_schema import NormalizedEvent
+from ..core.event_schema import NormalizedEvent, ProbeTypes
+from ..core.kprobe_bridge import get_bridge
 
 logger = logging.getLogger("stacktracer.probes.nginx")
 
-_SYNTHETIC_TRACE_PREFIX = "nginx-"
+ProbeTypes.register_many({
+    "nginx.connection.accept":   "accept4 — new connection, client addr captured",
+    "nginx.connection.data_in":  "recvmsg — bytes received from client",
+    "nginx.connection.data_out": "sendmsg — bytes sent to client",
+    "nginx.epoll.tick":          "epoll_wait — nginx loop tick with n_events",
+    "nginx.request.complete":    "log_by_lua — full HTTP request completed",
+    "nginx.request.enriched":    "kprobe+lua merged — kernel+HTTP in one event",
+})
 
+_NGINX_TRACE_PREFIX = "nginx-"
 
-# ====================================================================== #
-# Mode A — eBPF uprobes on nginx worker symbols
-# ====================================================================== #
+# ── pid discovery ─────────────────────────────────────────────────────
 
-_BPF_PROGRAM = r"""
+def _find_nginx_pids() -> List[int]:
+    pids = []
+    for pid_file in ["/var/run/nginx.pid", "/run/nginx.pid"]:
+        if os.path.exists(pid_file):
+            try:
+                with open(pid_file) as f:
+                    master = int(f.read().strip())
+                workers = _children_of(master)
+                return workers or [master]
+            except (ValueError, OSError):
+                pass
+    try:
+        for e in os.scandir("/proc"):
+            if not e.name.isdigit(): continue
+            try:
+                with open(f"/proc/{e.name}/comm") as f:
+                    if f.read().strip() == "nginx":
+                        pids.append(int(e.name))
+            except (OSError, ValueError):
+                pass
+    except OSError:
+        pass
+    return pids
+
+def _children_of(ppid: int) -> List[int]:
+    kids = []
+    try:
+        for e in os.scandir("/proc"):
+            if not e.name.isdigit(): continue
+            try:
+                with open(f"/proc/{e.name}/status") as f:
+                    for line in f:
+                        if line.startswith("PPid:"):
+                            if int(line.split()[1]) == ppid:
+                                kids.append(int(e.name))
+                            break
+            except (OSError, ValueError):
+                pass
+    except OSError:
+        pass
+    return kids
+
+def _ip_str(ip_be: int) -> str:
+    return socket.inet_ntoa(struct.pack("!I", socket.ntohl(ip_be)))
+
+# ── BPF program (identical to previous version — no changes needed) ───
+
+_NGINX_BPF = r"""
 #include <uapi/linux/ptrace.h>
+#include <linux/in.h>
+#include <linux/socket.h>
 
-// ---------------------------------------------------------------------------
-// Shared timing infrastructure
-// ---------------------------------------------------------------------------
+BPF_HASH(nginx_pids, u32, u8);
+static inline int is_nginx() {
+    u32 p = bpf_get_current_pid_tgid() >> 32;
+    return nginx_pids.lookup(&p) != NULL;
+}
 
-BPF_HASH(ts_wait_request,   u64, u64);
-BPF_HASH(ts_init_request,   u64, u64);
-BPF_HASH(ts_handler,        u64, u64);
-BPF_HASH(ts_recv,           u64, u64);
-BPF_HASH(ts_epoll,          u64, u64);
-
+struct nginx_ev_t {
+    u64 ts_ns; u32 pid; u32 tid;
+    char etype[24];
+    s64 v1; s64 v2; u64 dur_ns;
+    u32 client_ip; u16 client_port; u16 _pad;
+};
 BPF_PERF_OUTPUT(nginx_events);
 
-#define EV_WAIT_REQUEST     1
-#define EV_INIT_REQUEST     2
-#define EV_HANDLER          3
-#define EV_RECV             4
-#define EV_ADD_EVENT        5
-#define EV_EPOLL_TICK       6
-
-struct nginx_event_t {
-    u32  pid;
-    u32  tid;
-    u64  duration_ns;
-    u8   ev_type;
-    u32  extra;
-};
-
-// ---------------------------------------------------------------------------
-// ngx_http_wait_request_handler
-// Connection accepted. nginx is blocked in epoll_wait waiting for the client
-// to send the first byte. Duration = client network RTT + connection setup.
-// High duration here = slow clients or high-latency client networks.
-// ---------------------------------------------------------------------------
-
-int probe_wait_request_enter(struct pt_regs *ctx) {
-    u64 tid = bpf_get_current_pid_tgid();
-    u64 ts  = bpf_ktime_get_ns();
-    ts_wait_request.update(&tid, &ts);
-    return 0;
+BPF_HASH(accept_ts, u64, u64);
+TRACEPOINT_PROBE(syscalls, sys_enter_accept4) {
+    if (!is_nginx()) return 0;
+    u64 t = bpf_get_current_pid_tgid();
+    u64 n = bpf_ktime_get_ns();
+    accept_ts.update(&t, &n); return 0;
+}
+TRACEPOINT_PROBE(syscalls, sys_exit_accept4) {
+    if (!is_nginx()) return 0;
+    if (args->ret < 0) return 0;
+    u64 t = bpf_get_current_pid_tgid();
+    u64 *s = accept_ts.lookup(&t); if (!s) return 0;
+    accept_ts.delete(&t);
+    struct nginx_ev_t ev = {};
+    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
+    ev.dur_ns = ev.ts_ns - *s; ev.v1 = args->ret;
+    __builtin_memcpy(ev.etype, "accept", 7);
+    struct sockaddr_in a = {};
+    if (args->upeer_sockaddr) {
+        bpf_probe_read_user(&a, sizeof(a), args->upeer_sockaddr);
+        if (a.sin_family == AF_INET) {
+            ev.client_ip = a.sin_addr.s_addr;
+            ev.client_port = a.sin_port;
+        }
+    }
+    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
 }
 
-int probe_wait_request_return(struct pt_regs *ctx) {
-    u64 tid    = bpf_get_current_pid_tgid();
-    u64 *start = ts_wait_request.lookup(&tid);
-    if (!start) return 0;
-    struct nginx_event_t evt = {};
-    evt.pid         = tid >> 32;
-    evt.tid         = (u32)tid;
-    evt.duration_ns = bpf_ktime_get_ns() - *start;
-    evt.ev_type     = EV_WAIT_REQUEST;
-    ts_wait_request.delete(&tid);
-    nginx_events.perf_submit(ctx, &evt, sizeof(evt));
-    return 0;
+BPF_HASH(epoll_ts, u64, u64);
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait) {
+    if (!is_nginx()) return 0;
+    u64 t = bpf_get_current_pid_tgid();
+    u64 n = bpf_ktime_get_ns();
+    epoll_ts.update(&t, &n); return 0;
+}
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
+    if (!is_nginx()) return 0;
+    if (args->ret <= 0) return 0;
+    u64 t = bpf_get_current_pid_tgid();
+    u64 *s = epoll_ts.lookup(&t); if (!s) return 0;
+    epoll_ts.delete(&t);
+    struct nginx_ev_t ev = {};
+    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
+    ev.dur_ns = ev.ts_ns - *s; ev.v1 = args->ret;
+    __builtin_memcpy(ev.etype, "epoll", 6);
+    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
 }
 
-// ---------------------------------------------------------------------------
-// ngx_http_init_request
-// First byte arrived. nginx allocates the ngx_http_request_t struct and
-// begins parsing the HTTP request line and headers.
-// Duration = HTTP parse time. High here = very large headers or slow parsers.
-// ---------------------------------------------------------------------------
-
-int probe_init_request_enter(struct pt_regs *ctx) {
-    u64 tid = bpf_get_current_pid_tgid();
-    u64 ts  = bpf_ktime_get_ns();
-    ts_init_request.update(&tid, &ts);
-    return 0;
+TRACEPOINT_PROBE(syscalls, sys_enter_sendmsg) {
+    if (!is_nginx()) return 0;
+    u64 t = bpf_get_current_pid_tgid();
+    struct nginx_ev_t ev = {};
+    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
+    ev.v2 = args->fd;
+    struct iovec iov = {}; struct msghdr msg = {};
+    if (args->msg) {
+        bpf_probe_read_user(&msg, sizeof(msg), args->msg);
+        if (msg.msg_iov && msg.msg_iovlen > 0) {
+            bpf_probe_read_user(&iov, sizeof(iov), msg.msg_iov);
+            ev.v1 = iov.iov_len;
+        }
+    }
+    __builtin_memcpy(ev.etype, "data_out", 9);
+    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
 }
-
-int probe_init_request_return(struct pt_regs *ctx) {
-    u64 tid    = bpf_get_current_pid_tgid();
-    u64 *start = ts_init_request.lookup(&tid);
-    if (!start) return 0;
-    struct nginx_event_t evt = {};
-    evt.pid         = tid >> 32;
-    evt.tid         = (u32)tid;
-    evt.duration_ns = bpf_ktime_get_ns() - *start;
-    evt.ev_type     = EV_INIT_REQUEST;
-    ts_init_request.delete(&tid);
-    nginx_events.perf_submit(ctx, &evt, sizeof(evt));
-    return 0;
-}
-
-// ---------------------------------------------------------------------------
-// ngx_http_handler
-// Request parsed. nginx matches URI against location blocks and invokes
-// the handler (proxy_pass, try_files, etc).
-// Duration = location matching + handler setup, before upstream I/O.
-// ---------------------------------------------------------------------------
-
-int probe_handler_enter(struct pt_regs *ctx) {
-    u64 tid = bpf_get_current_pid_tgid();
-    u64 ts  = bpf_ktime_get_ns();
-    ts_handler.update(&tid, &ts);
-    return 0;
-}
-
-int probe_handler_return(struct pt_regs *ctx) {
-    u64 tid    = bpf_get_current_pid_tgid();
-    u64 *start = ts_handler.lookup(&tid);
-    if (!start) return 0;
-    struct nginx_event_t evt = {};
-    evt.pid         = tid >> 32;
-    evt.tid         = (u32)tid;
-    evt.duration_ns = bpf_ktime_get_ns() - *start;
-    evt.ev_type     = EV_HANDLER;
-    ts_handler.delete(&tid);
-    nginx_events.perf_submit(ctx, &evt, sizeof(evt));
-    return 0;
-}
-
-// ---------------------------------------------------------------------------
-// ngx_recv
-// nginx reading bytes from a client or upstream socket.
-// Called multiple times per request for chunked or large bodies.
-// extra = bytes returned by this read.
-// High duration = network I/O wait, not nginx CPU time.
-// ---------------------------------------------------------------------------
-
-int probe_recv_enter(struct pt_regs *ctx) {
-    u64 tid = bpf_get_current_pid_tgid();
-    u64 ts  = bpf_ktime_get_ns();
-    ts_recv.update(&tid, &ts);
-    return 0;
-}
-
-int probe_recv_return(struct pt_regs *ctx) {
-    u64 tid    = bpf_get_current_pid_tgid();
-    u64 *start = ts_recv.lookup(&tid);
-    if (!start) return 0;
-    struct nginx_event_t evt = {};
-    evt.pid         = tid >> 32;
-    evt.tid         = (u32)tid;
-    evt.duration_ns = bpf_ktime_get_ns() - *start;
-    evt.ev_type     = EV_RECV;
-    evt.extra       = (u32)PT_REGS_RC(ctx);
-    ts_recv.delete(&tid);
-    nginx_events.perf_submit(ctx, &evt, sizeof(evt));
-    return 0;
-}
-
-// ---------------------------------------------------------------------------
-// ngx_add_event
-// nginx registering a file descriptor with epoll — the exact moment nginx
-// has dispatched to upstream and is yielding control back to the event loop.
-// This is the upstream handoff point. No duration — point-in-time event.
-// ---------------------------------------------------------------------------
-
-int probe_add_event(struct pt_regs *ctx) {
-    struct nginx_event_t evt = {};
-    u64 tid  = bpf_get_current_pid_tgid();
-    evt.pid  = tid >> 32;
-    evt.tid  = (u32)tid;
-    evt.ev_type = EV_ADD_EVENT;
-    nginx_events.perf_submit(ctx, &evt, sizeof(evt));
-    return 0;
-}
-
-// ---------------------------------------------------------------------------
-// ngx_epoll_process_events
-// One iteration of the nginx event loop — one epoll_wait() call.
-// Duration = total time nginx spent processing events in this tick.
-// extra = number of events returned by epoll_wait (event backlog).
-// High duration + high extra = nginx event loop is saturated.
-// ---------------------------------------------------------------------------
-
-int probe_epoll_enter(struct pt_regs *ctx) {
-    u64 tid = bpf_get_current_pid_tgid();
-    u64 ts  = bpf_ktime_get_ns();
-    ts_epoll.update(&tid, &ts);
-    return 0;
-}
-
-int probe_epoll_return(struct pt_regs *ctx) {
-    u64 tid    = bpf_get_current_pid_tgid();
-    u64 *start = ts_epoll.lookup(&tid);
-    if (!start) return 0;
-    struct nginx_event_t evt = {};
-    evt.pid         = tid >> 32;
-    evt.tid         = (u32)tid;
-    evt.duration_ns = bpf_ktime_get_ns() - *start;
-    evt.ev_type     = EV_EPOLL_TICK;
-    ts_epoll.delete(&tid);
-    nginx_events.perf_submit(ctx, &evt, sizeof(evt));
-    return 0;
+TRACEPOINT_PROBE(syscalls, sys_exit_recvmsg) {
+    if (!is_nginx()) return 0;
+    if (args->ret <= 0) return 0;
+    u64 t = bpf_get_current_pid_tgid();
+    struct nginx_ev_t ev = {};
+    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
+    ev.v1 = args->ret;
+    __builtin_memcpy(ev.etype, "data_in", 8);
+    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
 }
 """
 
-# Maps BPF event type integer → (ProbeType string, name label)
-_EV_MAP = {
-    1: ("nginx.connection.accept",  "wait_request"),
-    2: ("nginx.request.parse",      "init_request"),
-    3: ("nginx.request.route",      "handler"),
-    4: ("nginx.recv",               "recv"),
-    5: ("nginx.upstream.dispatch",  "add_event"),
-    6: ("nginx.epoll.tick",         "epoll"),
-}
+# ── Correlator ────────────────────────────────────────────────────────
 
+class _NginxCorrelator:
+    _TTL = 60.0
 
-def _find_nginx_binary() -> Optional[str]:
-    """Locate the nginx worker binary for uprobe attachment."""
-    candidates = [
-        "/usr/sbin/nginx",
-        "/usr/local/sbin/nginx",
-        "/opt/nginx/sbin/nginx",
-        "/usr/local/nginx/sbin/nginx",
-    ]
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["which", "nginx"], capture_output=True, text=True, timeout=2
-        )
-        path = result.stdout.strip()
-        if path and os.path.isfile(path):
-            return path
-    except Exception:
-        pass
-    return None
+    def __init__(self):
+        self._table: Dict[Tuple[str,int], dict] = {}
+        self._lock  = threading.Lock()
+        self._alive = True
+        t = threading.Thread(target=self._evict, daemon=True,
+                             name="stacktracer-nginx-evict")
+        t.start()
 
+    def stop(self):
+        self._alive = False
 
-class NginxEBPFProbe(BaseProbe):
-    """
-    Mode A: eBPF uprobes on nginx worker process symbols.
-
-    What each attached symbol reveals:
-        ngx_http_wait_request_handler  client RTT + connection overhead
-        ngx_http_init_request          HTTP parse time
-        ngx_http_handler               location routing time
-        ngx_recv                       socket read time + bytes per call
-        ngx_add_event                  exact moment of upstream handoff
-        ngx_epoll_process_events       event loop utilisation per tick
-
-    Together these reconstruct the nginx critical path:
-        [accept] → [parse] → [route] → [upstream dispatch]
-                                              ↓
-                                   [upstream response time]  ← your Django probe covers this
-    """
-    name = "nginx_ebpf"
-
-    def __init__(self, nginx_binary: Optional[str] = None) -> None:
-        self._nginx_binary = nginx_binary or _find_nginx_binary()
-        self._bpf: Optional[Any] = None
-        self._thread: Optional[threading.Thread] = None
-        self._running = False
-
-    def start(self) -> None:
-        if not self._nginx_binary:
-            logger.warning(
-                "nginx binary not found — nginx eBPF probe inactive. "
-                "Pass nginx_binary='/path/to/nginx' if non-standard location."
-            )
+    def register_connection(self, conn_key, client_ip, client_port,
+                            accept_ns, accept_dur_ns, pid, fd):
+        if not client_ip or not client_port:
             return
+        with self._lock:
+            self._table[(client_ip, client_port)] = {
+                "conn_key": conn_key, "client_ip": client_ip,
+                "client_port": client_port, "accept_ns": accept_ns,
+                "accept_dur_ns": accept_dur_ns, "pid": pid, "fd": fd,
+                "_at": time.monotonic(),
+            }
 
+    def on_lua_event(self, d: dict):
+        addr = d.get("remote_addr", "")
+        port = int(d.get("remote_port", 0))
+        with self._lock:
+            conn = self._table.pop((addr, port), None)
+        if conn:
+            self._emit_enriched(d, conn)
+        else:
+            self._emit_lua_only(d)
+
+    def _emit_enriched(self, lua, conn):
+        trace_id = lua.get("trace_id") or conn["conn_key"]
+        dur_ms   = lua.get("duration_ms", 0)
+        up_ms    = lua.get("upstream_ms", -1)
+        own_ms   = lua.get("nginx_own_ms", -1)
+        from stacktracer.sdk.emitter import emit_direct
+        emit_direct(NormalizedEvent.now(
+            probe="nginx.request.enriched",
+            trace_id=trace_id,
+            service="nginx",
+            name=lua.get("uri", "unknown"),
+            method=lua.get("method", ""),
+            status_code=lua.get("status", 0),
+            bytes_sent=lua.get("bytes_sent", 0),
+            upstream_addr=lua.get("upstream_addr", ""),
+            # Timing: full decomposition only possible with both layers
+            duration_ns=int(dur_ms * 1e6),
+            upstream_duration_ns=int(up_ms*1e6) if up_ms > 0 else None,
+            nginx_own_duration_ns=int(own_ms*1e6) if own_ms > 0 else None,
+            # Kernel fields from kprobe:
+            accept_duration_ns=conn["accept_dur_ns"],
+            client_ip=conn["client_ip"],
+            client_port=conn["client_port"],
+            worker_pid=conn["pid"],
+            fd=conn["fd"],
+            source="kprobe+lua",
+        ))
+
+    def _emit_lua_only(self, lua):
+        trace_id = lua.get("trace_id") or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
+        dur_ms   = lua.get("duration_ms", 0)
+        up_ms    = lua.get("upstream_ms", -1)
+        from stacktracer.sdk.emitter import emit_direct
+        emit_direct(NormalizedEvent.now(
+            probe="nginx.request.complete",
+            trace_id=trace_id, service="nginx",
+            name=lua.get("uri", "unknown"),
+            method=lua.get("method", ""), status_code=lua.get("status", 0),
+            duration_ns=int(dur_ms * 1e6),
+            upstream_duration_ns=int(up_ms*1e6) if up_ms > 0 else None,
+            client_ip=lua.get("remote_addr", ""),
+            source="lua",
+        ))
+
+    def _evict(self):
+        while self._alive:
+            time.sleep(30)
+            cutoff = time.monotonic() - self._TTL
+            with self._lock:
+                stale = [k for k,v in self._table.items() if v["_at"] < cutoff]
+                for k in stale:
+                    del self._table[k]
+
+# ── kprobe layer ─────────────────────────────────────────────────────
+
+class _NginxKprobeMode:
+    def __init__(self, correlator: _NginxCorrelator):
+        self._corr   = correlator
+        self._bpf    = None
+        self._thread = None
+        self._running= False
+
+    def start(self) -> bool:
         try:
             from bcc import BPF
         except ImportError:
-            logger.warning("bcc not installed — nginx eBPF probe inactive.")
-            return
-
+            return False
         if os.geteuid() != 0:
-            logger.warning("nginx eBPF probe requires root or CAP_BPF.")
-            return
-
+            return False
+        pids = _find_nginx_pids()
+        if not pids:
+            logger.warning("nginx kprobe: nginx not found")
+            return False
         try:
-            self._bpf = BPF(text=_BPF_PROGRAM)
+            self._bpf = BPF(text=_NGINX_BPF)
+        except Exception as e:
+            logger.warning("nginx BPF compile: %s", e)
+            return False
+        pm = self._bpf["nginx_pids"]
+        for p in pids:
+            pm[pm.Key(p)] = pm.Leaf(1)
+        self._bpf["nginx_events"].open_perf_buffer(self._on_event)
+        self._running = True
+        self._thread  = threading.Thread(target=self._poll, daemon=True,
+                                          name="stacktracer-nginx-kprobe")
+        self._thread.start()
+        logger.info("nginx kprobe active pids=%s", pids)
+        return True
 
-            # Each symbol gets an entry uprobe and a return uretprobe
-            # so we can measure duration between them
-            symbol_pairs = [
-                ("ngx_http_wait_request_handler", "probe_wait_request_enter", "probe_wait_request_return"),
-                ("ngx_http_init_request",         "probe_init_request_enter", "probe_init_request_return"),
-                ("ngx_http_handler",              "probe_handler_enter",      "probe_handler_return"),
-                ("ngx_recv",                      "probe_recv_enter",         "probe_recv_return"),
-                ("ngx_epoll_process_events",      "probe_epoll_enter",        "probe_epoll_return"),
-            ]
-
-            for symbol, entry_fn, return_fn in symbol_pairs:
-                try:
-                    self._bpf.attach_uprobe(
-                        name=self._nginx_binary, sym=symbol, fn_name=entry_fn
-                    )
-                    self._bpf.attach_uretprobe(
-                        name=self._nginx_binary, sym=symbol, fn_name=return_fn
-                    )
-                    logger.debug("attached uprobe: %s", symbol)
-                except Exception as exc:
-                    logger.warning("uprobe attach failed for %s: %s", symbol, exc)
-
-            # ngx_add_event is a point-in-time event — entry only, no duration
-            try:
-                self._bpf.attach_uprobe(
-                    name=self._nginx_binary, sym="ngx_add_event", fn_name="probe_add_event"
-                )
-                logger.debug("attached uprobe: ngx_add_event")
-            except Exception as exc:
-                logger.warning("uprobe attach failed for ngx_add_event: %s", exc)
-
-            self._bpf["nginx_events"].open_perf_buffer(self._handle_event)
-
-            self._running = True
-            self._thread = threading.Thread(
-                target=self._poll_loop, daemon=True, name="stacktracer-nginx-ebpf"
-            )
-            self._thread.start()
-            logger.info("nginx eBPF probe attached to %s", self._nginx_binary)
-
-        except Exception as exc:
-            logger.error("nginx eBPF probe failed to start: %s", exc)
-
-    def stop(self) -> None:
+    def stop(self):
         self._running = False
-        if self._thread:
-            self._thread.join(timeout=2)
+        if self._thread: self._thread.join(timeout=2)
         self._bpf = None
 
-    def _poll_loop(self) -> None:
+    def _poll(self):
         while self._running and self._bpf:
+            try: self._bpf.perf_buffer_poll(timeout=100)
+            except Exception: pass
+
+    def _on_event(self, cpu, data, size):
+        if not self._bpf: return
+        from stacktracer.sdk.emitter import emit_direct
+        try:
+            ev    = self._bpf["nginx_events"].event(data)
+            etype = ev.etype.decode("ascii", errors="replace").rstrip("\x00")
+            ckey  = f"{_NGINX_TRACE_PREFIX}{ev.pid}-{ev.tid}"
+
+            if etype == "accept":
+                cip   = _ip_str(ev.client_ip) if ev.client_ip else ""
+                cport = socket.ntohs(ev.client_port) if ev.client_port else 0
+                # Register for potential Lua correlation
+                self._corr.register_connection(
+                    conn_key=ckey, client_ip=cip, client_port=cport,
+                    accept_ns=ev.ts_ns, accept_dur_ns=ev.dur_ns,
+                    pid=ev.pid, fd=int(ev.v1),
+                )
+                emit_direct(NormalizedEvent.now(
+                    probe="nginx.connection.accept", trace_id=ckey,
+                    service="nginx", name="accept", pid=ev.pid,
+                    fd=int(ev.v1), client_ip=cip, client_port=cport,
+                    duration_ns=ev.dur_ns, source="kprobe",
+                ))
+            elif etype == "epoll":
+                emit_direct(NormalizedEvent.now(
+                    probe="nginx.epoll.tick", trace_id=ckey,
+                    service="nginx", name="epoll_wait", pid=ev.pid,
+                    n_events=int(ev.v1), duration_ns=ev.dur_ns, source="kprobe",
+                ))
+            elif etype == "data_out":
+                emit_direct(NormalizedEvent.now(
+                    probe="nginx.connection.data_out", trace_id=ckey,
+                    service="nginx", name="sendmsg", pid=ev.pid,
+                    fd=int(ev.v2), bytes_sent=int(ev.v1), source="kprobe",
+                ))
+            elif etype == "data_in":
+                emit_direct(NormalizedEvent.now(
+                    probe="nginx.connection.data_in", trace_id=ckey,
+                    service="nginx", name="recvmsg", pid=ev.pid,
+                    bytes_received=int(ev.v1), source="kprobe",
+                ))
+        except Exception as e:
+            logger.debug("nginx kprobe event: %s", e)
+
+# ── Lua UDP receiver ──────────────────────────────────────────────────
+
+class _LuaHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        try:
+            d = json.loads(self.request[0].decode("utf-8", errors="replace"))
+            self.server.corr.on_lua_event(d)
+        except Exception:
+            pass
+
+class _LuaServer(socketserver.UDPServer):
+    allow_reuse_address = True
+    def __init__(self, corr, host, port):
+        self.corr = corr
+        super().__init__((host, port), _LuaHandler)
+
+class _NginxLuaMode:
+    def __init__(self, corr: _NginxCorrelator, host="127.0.0.1", port=9119):
+        self._corr = corr
+        self._host = host
+        self._port = port
+        self._srv  = None
+
+    def start(self) -> bool:
+        try:
+            self._srv = _LuaServer(self._corr, self._host, self._port)
+        except OSError as e:
+            logger.warning("nginx Lua UDP bind %s:%d failed: %s", self._host, self._port, e)
+            return False
+        t = threading.Thread(target=self._srv.serve_forever, daemon=True,
+                             name="stacktracer-nginx-lua-udp")
+        t.start()
+        logger.info("nginx Lua UDP receiver on %s:%d", self._host, self._port)
+        return True
+
+    def stop(self):
+        if self._srv: self._srv.shutdown()
+
+# ── Log tail fallback (unchanged) ────────────────────────────────────
+
+class _NginxLogMode:
+    def __init__(self, log_path: str):
+        self._path   = log_path
+        self._thread = None
+        self._alive  = False
+
+    def start(self) -> bool:
+       # Create file if it doesn't exist so nginx can write to it
+        if not os.path.exists(self._path):
             try:
-                self._bpf.perf_buffer_poll(timeout=100)
-            except Exception as exc:
-                logger.debug("nginx eBPF poll error: %s", exc)
-
-    def _handle_event(self, cpu: int, data: Any, size: int) -> None:
-        if self._bpf is None:
-            return
-        try:
-            event  = self._bpf["nginx_events"].event(data)
-            ev_type = event.ev_type
-            probe_str, name = _EV_MAP.get(ev_type, ("custom", "unknown"))
-
-            # nginx does not propagate trace IDs natively.
-            # Synthetic ID per connection tid — correlate with Django via
-            # X-Request-ID header if you add it in nginx and forward it.
-            trace_id = f"{_SYNTHETIC_TRACE_PREFIX}{event.tid}"
-
-            kwargs: dict = dict(
-                probe=probe_str,
-                trace_id=trace_id,
-                service="nginx",
-                name=name,
-                pid=event.pid,
-                tid=event.tid,
-            )
-            if event.duration_ns:
-                kwargs["duration_ns"] = event.duration_ns
-            if ev_type == 4:    # recv — attach byte count
-                kwargs["bytes_read"] = event.extra
-            if ev_type == 6:    # epoll tick — attach event backlog count
-                kwargs["events_processed"] = event.extra
-
-            emit(NormalizedEvent.now(**kwargs))
-
-        except Exception as exc:
-            logger.debug("nginx eBPF event handling error: %s", exc)
-
-
-# ====================================================================== #
-# Mode B — JSON access log tail
-# ====================================================================== #
-
-class NginxLogProbe(BaseProbe):
-    """
-    Mode B: tail the nginx JSON access log.
-
-    Per-request visibility only — one request.entry + nginx.upstream.dispatch
-    + request.exit per request. No intra-request lifecycle stages.
-
-    Use when:
-      - No root access for eBPF
-      - macOS / non-Linux development
-      - Production with restricted permissions
-    """
-    name = "nginx_log"
-
-    def __init__(self, log_path: str = "/var/log/nginx/access.log") -> None:
-        self._log_path = log_path
-        self._thread: Optional[threading.Thread] = None
-        self._running = False
-
-    def start(self) -> None:
-        if not os.path.exists(self._log_path):
-            logger.warning(
-                "nginx log not found at %s — nginx log probe inactive.",
-                self._log_path,
-            )
-            return
-
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._tail_loop, daemon=True, name="stacktracer-nginx-log"
-        )
+                os.makedirs(os.path.dirname(self._path), exist_ok=True)
+                open(self._path, 'a').close()
+                logger.info("nginx log probe: created %s", self._path)
+            except OSError:
+                logger.warning("nginx log probe: cannot create %s", self._path)
+                return False
+        self._alive  = True
+        self._thread = threading.Thread(target=self._tail, daemon=True,
+                                        name="stacktracer-nginx-log")
         self._thread.start()
-        logger.info("nginx log probe tailing %s", self._log_path)
+        logger.info("nginx log tail: %s", self._path)
+        return True
 
-    def stop(self) -> None:
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=2)
+    def stop(self):
+        self._alive = False
 
-    def _tail_loop(self) -> None:
+    def _tail(self):
         try:
-            with open(self._log_path, "r") as f:
+            with open(self._path) as f:
                 f.seek(0, 2)
-                while self._running:
+                while self._alive:
                     line = f.readline()
-                    if line:
-                        self._handle_line(line.strip())
-                    else:
-                        time.sleep(0.05)
-        except Exception as exc:
-            logger.error("nginx log probe tail error: %s", exc)
+                    if line: self._line(line.strip())
+                    else:    time.sleep(0.05)
+        except Exception as e:
+            logger.error("nginx log tail: %s", e)
 
-    def _handle_line(self, line: str) -> None:
+    def _line(self, line: str):
+        print(f">>> nginx log line: {line[:100]}")
         try:
-            record = json.loads(line)
+            r = json.loads(line)
         except json.JSONDecodeError:
-            record = self._parse_common_log(line)
-            if not record:
+            try:
+                parts = line.split('"')
+                req   = parts[1]
+                sp    = parts[2].strip().split()
+                m, u  = (req.split()[:2] if " " in req else ("", req))
+                r     = {"uri": u, "method": m, "status": sp[0] if sp else "0"}
+            except Exception:
                 return
 
-        uri            = record.get("uri", record.get("request", "unknown"))
-        method         = record.get("method", "")
-        status         = int(record.get("status", 0))
-        request_time_s = float(record.get("request_time", 0))
-        upstream_raw   = record.get("upstream_response_time", "")
-        trace_id       = f"{_SYNTHETIC_TRACE_PREFIX}{time.time_ns()}"
-
-        emit(NormalizedEvent.now(
-            probe="request.entry",
-            trace_id=trace_id,
-            service="nginx",
-            name=uri,
-            method=method,
-            status_code=status,
-            duration_ns=int(request_time_s * 1e9),
+        trace_id = (r.get("request_id") or r.get("x_request_id")
+                    or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}")
+        rt = float(r.get("request_time", 0))
+        ut = r.get("upstream_response_time", "-")
+        from stacktracer.sdk.emitter import _get_engine
+        print(f">>> nginx about to emit trace_id={trace_id} engine_id={id(_get_engine())}")
+        from stacktracer.sdk.emitter import emit_direct
+        emit_direct(NormalizedEvent.now(
+            probe="nginx.request.complete", trace_id=trace_id,
+            service="nginx", name=r.get("uri","unknown"),
+            status_code=int(r.get("status",0)),
+            duration_ns=int(rt*1e9),
+            upstream_duration_ns=(int(float(ut)*1e9)
+                                  if ut not in ("-","","None") else None),
+            client_ip=r.get("remote_addr",""), source="log",
         ))
 
-        if upstream_raw and upstream_raw not in ("-", ""):
-            try:
-                upstream_s = float(upstream_raw)
-                emit(NormalizedEvent.now(
-                    probe="nginx.upstream.dispatch",
-                    trace_id=trace_id,
-                    service="nginx",
-                    name=uri,
-                    upstream_duration_ns=int(upstream_s * 1e9),
-                    # nginx overhead = total - upstream = time nginx spent on its own
-                    nginx_overhead_ns=int((request_time_s - upstream_s) * 1e9),
-                ))
-            except ValueError:
-                pass
-
-        emit(NormalizedEvent.now(
-            probe="request.exit",
-            trace_id=trace_id,
-            service="nginx",
-            name=uri,
-            status_code=status,
-        ))
-
-    @staticmethod
-    def _parse_common_log(line: str) -> Optional[dict]:
-        try:
-            parts = line.split('"')
-            if len(parts) < 5:
-                return None
-            request    = parts[1]
-            status_raw = parts[2].strip().split()
-            method, uri = request.split()[:2] if " " in request else ("", request)
-            return {"uri": uri, "method": method, "status": status_raw[0] if status_raw else "0"}
-        except Exception:
-            return None
-
-
-# ====================================================================== #
-# NginxProbe — unified entry point, auto-selects mode
-# ====================================================================== #
+# ── NginxProbe ────────────────────────────────────────────────────────
 
 class NginxProbe(BaseProbe):
     """
-    Unified nginx probe — selects the best available mode automatically.
+    nginx observation — three complementary layers:
 
-    auto (default):
-        Tries eBPF first. Falls back to log tail if bcc unavailable or not root.
+    kprobe  → kernel timing, connection identity, epoll state
+    Lua     → HTTP semantics, upstream timing, request_id
+    merged  → nginx.request.enriched when both fire for same connection
 
-    force mode:
-        NginxProbe(mode="ebpf")   — eBPF only, fail if unavailable
-        NginxProbe(mode="log")    — log tail only
+    Configure:
+        nginx:
+          mode: auto       # auto | kprobe | lua | log | combined
+          log_path: /var/log/nginx/access.log
+          lua_host: 127.0.0.1
+          lua_port: 9119
     """
     name = "nginx"
 
-    def __init__(
-        self,
-        log_path: str = "/var/log/nginx/access.log",
-        nginx_binary: Optional[str] = None,
-        mode: str = "auto",
-    ) -> None:
-        self._log_path     = log_path
-        self._nginx_binary = nginx_binary
-        self._mode         = mode
-        self._active: Optional[BaseProbe] = None
+    def __init__(self, log_path="/mnt/c/Users/humbulani/nginx-1.24.0/logs/access.log",
+                 mode="log", lua_host="127.0.0.1", lua_port=9119):
+        self._log_path = log_path
+        self._mode     = mode
+        self._lua_host = lua_host
+        self._lua_port = lua_port
+        self._corr: Optional[_NginxCorrelator] = None
+        self._kp:   Optional[_NginxKprobeMode] = None
+        self._lua:  Optional[_NginxLuaMode]    = None
+        self._log:  Optional[_NginxLogMode]    = None
 
-    def start(self) -> None:
-        if self._mode == "ebpf":
-            self._active = NginxEBPFProbe(self._nginx_binary)
-        elif self._mode == "log":
-            self._active = NginxLogProbe(self._log_path)
+    def start(self):
+
+        import pdb
+        pdb.set_trace()
+
+        self._corr = _NginxCorrelator()
+        wk = self._mode in ("auto", "kprobe", "combined")
+        wl = self._mode in ("auto", "lua",    "combined")
+
+        kp_ok = lu_ok = False
+        if wk and sys.platform == "linux":
+            self._kp  = _NginxKprobeMode(self._corr)
+            kp_ok     = self._kp.start()
+            if not kp_ok: self._kp = None
+        if wl:
+            self._lua = _NginxLuaMode(self._corr, self._lua_host, self._lua_port)
+            lu_ok     = self._lua.start()
+            if not lu_ok: self._lua = None
+        if not kp_ok and not lu_ok:
+            self._log = _NginxLogMode(self._log_path)
+            if not self._log.start(): self._log = None
+
+        active = (["kprobe"] if kp_ok else []) + (["lua"] if lu_ok else []) + \
+                 (["log"] if self._log else [])
+        if active:
+            logger.info("nginx probe: %s", "+".join(active))
+            if kp_ok and lu_ok:
+                logger.info("nginx: kprobe+lua combined — emitting "
+                            "nginx.request.enriched on correlated connections")
         else:
-            # auto: try eBPF, degrade gracefully
-            try:
-                import bcc  # noqa: F401
-                if os.geteuid() == 0 and _find_nginx_binary():
-                    self._active = NginxEBPFProbe(self._nginx_binary)
-                    logger.info("nginx probe: eBPF mode selected")
-                else:
-                    raise RuntimeError("not root or nginx not found")
-            except Exception:
-                self._active = NginxLogProbe(self._log_path)
-                logger.info("nginx probe: log mode selected (eBPF unavailable)")
+            logger.warning("nginx probe: no layer started")
 
-        self._active.start()
+        print(f">>> nginx probe active modes: {active}")
+        print(f">>> nginx log path configured: {self._log_path}")
+        print(f">>> nginx log file exists: {os.path.exists(self._log_path)}")
 
-    def stop(self) -> None:
-        if self._active:
-            self._active.stop()
+    def stop(self):
+        for x in (self._kp, self._lua, self._log, self._corr):
+            if x: x.stop()
+        self._kp = self._lua = self._log = self._corr = None
