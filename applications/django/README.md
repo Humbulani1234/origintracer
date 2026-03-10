@@ -188,6 +188,70 @@ server {
     }
 }
 ```
+or
+```
+#user  nobody;
+worker_processes  1;
+
+#error_log  logs/error.log;
+#error_log  logs/error.log  notice;
+#error_log  logs/error.log  info;
+
+#pid        logs/nginx.pid;
+daemon off;
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    # ── StackTracer JSON log format ──────────────────────────────────
+    # Parsed by nginx_probe._NginxLogMode._line()
+    # request_id is the correlation key that ties nginx events to
+    # django/uvicorn events under the same trace_id.
+    log_format stacktracer escape=json '{'
+        '"remote_addr":"$remote_addr",'
+        '"remote_port":"$remote_port",'
+        '"request_id":"$request_id",'
+        '"method":"$request_method",'
+        '"uri":"$request_uri",'
+        '"status":"$status",'
+        '"bytes_sent":"$bytes_sent",'
+        '"request_time":"$request_time",'
+        '"upstream_response_time":"$upstream_response_time",'
+        '"upstream_addr":"$upstream_addr"'
+        '}';
+
+    access_log  /mnt/c/Users/humbulani/nginx-1.24.0/logs/access.log  stacktracer;
+    # error_log  /mnt/c/Users/humbulani/nginx-1.24.0/logs/error.log;
+    sendfile        on;
+    keepalive_timeout  65;
+
+    server {
+        listen       80;
+        server_name  localhost;
+
+        location / {
+            # Forward request_id to gunicorn/uvicorn/django.
+            # uvicorn_probe reads X-Request-ID from ASGI scope headers.
+            # Django middleware reads HTTP_X_REQUEST_ID from request.META.
+            # All three services share one trace_id for the same request.
+            proxy_set_header X-Request-ID  $request_id;
+            proxy_set_header Host          $host;
+            proxy_set_header X-Real-IP     $remote_addr;
+            proxy_pass http://127.0.0.1:8000;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   html;
+        }
+    }
+}
+
+```
 
 If you have eBPF access (Linux, root), enable the nginx probe in
 `stacktracer.yaml` to get sub-millisecond nginx lifecycle events.
