@@ -83,12 +83,16 @@ class _DrainThread(threading.Thread):
 
     def run(self) -> None:
 
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
         
         while self._running:
+            import pdb
+            pdb.set_trace()
+            
             try:
                 events = self._buffer.drain(max_batch=500)
+                # print(">>>MY EVENTS", events)
                 if events and _engine is not None:
                     for event in events:
                         try:
