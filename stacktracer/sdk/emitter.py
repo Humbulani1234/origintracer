@@ -118,16 +118,38 @@ def bind_engine(engine: object) -> None:
     _drain_thread.start_draining()
     logger.info("StackTracer emitter bound, drain thread started")
 
+def _restart_drain_thread() -> None:
+    """
+    Restart the drain thread after os.fork().
+    Threads do not survive fork — the child process has the parent's
+    buffer but no running drain thread. Call this in post_fork hooks.
+    """
+    global _drain_thread
+    if _drain_thread is not None and not _drain_thread.is_alive():
+        _drain_thread = _DrainThread(_buffer, interval=0.05)
+        _drain_thread.start()
+        logger.info("emitter: drain thread restarted after fork")
 
 def emit(event: NormalizedEvent) -> None:
     """
     Emit one probe event.
     This is the ONLY function probes should call.
     """
+    # import pdb
+    # pdb.set_trace()
+
     if _engine is None:
         return  # Silent drop if not initialised — probes must be safe to import early
     _buffer.push(event)
 
+# in sdk/emitter.py
+def emit_direct(event: NormalizedEvent) -> None:
+    """Bypass buffer — process immediately. For lifecycle events."""
+    import stacktracer
+    engine = stacktracer.get_engine()
+    print(f">>> emit_direct engine id={id(engine)} event={event.probe}")
+    if _engine is not None:
+        _engine.process(event)
 
 def flush() -> None:
     """Drain buffer into engine (used in non-direct mode)."""

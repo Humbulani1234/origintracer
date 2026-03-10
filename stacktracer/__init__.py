@@ -59,6 +59,18 @@ _uploader: Optional[Any] = None
 # Step 1 — Raw config loading and merging
 # ====================================================================== #
 
+# in stacktracer/__init__.py
+
+_post_init_callbacks: List[Callable] = []
+
+def _register_post_init_callback(fn: Callable) -> None:
+    """Register a function to call once after init() completes."""
+    global _post_init_callbacks
+    if _engine is not None:
+        fn()   # already initialised — call immediately
+    else:
+        _post_init_callbacks.append(fn)
+
 def _load_package_defaults() -> Dict[str, Any]:
     """
     Load the package-shipped defaults.yaml.
@@ -910,6 +922,14 @@ def init(
     # Only if no explicit repository passed (repository takes precedence)
     if repository is None:
         _init_uploader(_config, _engine)
+
+    # at the END of init(), after all components start:
+    for cb in _post_init_callbacks:
+        try:
+            cb()
+        except Exception as exc:
+            logger.warning("post-init callback failed: %s", exc)
+    _post_init_callbacks.clear()
 
     # ── 4. Log summary ───────────────────────────────────────────────
     logger.info(

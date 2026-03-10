@@ -86,6 +86,9 @@ class Engine:
         """
         # 1. Persist (async fire-and-forget; repository handles its own buffering)
         
+        # add temporarily at the top of process()
+        print(f">>> process() engine id={id(self)} graph id={id(self.graph)} event={event.probe}")
+
         import pdb
         pdb.set_trace()
         

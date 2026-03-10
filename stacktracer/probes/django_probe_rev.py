@@ -345,6 +345,8 @@ def _setup_monitoring_312(observe_modules: List[str] = None) -> bool:
         "BaseHandler._get_response_async",
         "BaseHandler._get_response",
         "sleep",
+        "ASGIHandler.handle",
+        "ASGIHandler.listen_for_disconnect",
     }
 
     _active_coros: set = set()

@@ -106,6 +106,7 @@ class TracerMiddleware:
     def _begin(self, request: Any):
         trace_id = (
             request.META.get("HTTP_X_REQUEST_ID")
+            or get_trace_id()
             or str(uuid.uuid4())
         )
         token = set_trace(trace_id)
@@ -219,9 +220,6 @@ def _unpatch_view_dispatch() -> None:
 # ====================================================================== #
 
 def _make_db_wrapper():
-    from contextlib import contextmanager
-
-    @contextmanager
     def _wrapper(execute, sql, params, many, context):
         trace_id = get_trace_id()
         t0 = time.perf_counter()
@@ -288,7 +286,9 @@ def _uninstall_db_wrapper() -> None:
 # Django signals
 # ====================================================================== #
 
-def _on_unhandled_exception(sender: Any, request: Any, exception: Any, **kwargs) -> None:
+def _on_unhandled_exception(sender: Any, request: Any = None, exception: Any = None, **kwargs) -> None:
+    if exception is None:
+        return
     trace_id = get_trace_id()
     if trace_id:
         emit(NormalizedEvent.now(
@@ -342,7 +342,7 @@ class DjangoProbe(BaseProbe):
 
         import pdb
         pdb.set_trace()
-        
+
         global _patched
 
         if _patched:
