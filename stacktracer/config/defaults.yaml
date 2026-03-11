@@ -134,6 +134,9 @@ gunicorn:
 # overhead low and the graph focused on your code, not framework internals.
 #
 # Uncomment and fill in your app name:
+# stacktracer.yaml
 observe:
   modules:
-    - django_tracer
+    - django_tracer.views      # IndexView, AsyncView, SlowView, DbView + any FBVs
+    - django_tracer.tasks      # if you have a tasks.py, else remove this line
+  functions: []                # leave empty unless you want to add specific helpers later

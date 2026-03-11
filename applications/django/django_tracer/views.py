@@ -128,3 +128,61 @@ class DbView(View):
                 "Run: SHOW latency WHERE system = 'database'"
             ),
         })
+    
+# django_tracer/views.py
+
+class NPlusOneView(View):
+    """
+    Simulates the N+1 query problem.
+
+    The bug: fetch all authors, then for each author fire a separate
+    query to get their books. 10 authors = 11 queries (1 + 10).
+
+    The fix (commented out below): use select_related() or
+    prefetch_related() to fetch everything in 1-2 queries.
+
+    StackTracer will show N+1 django.db.query events all sharing
+    the same trace_id — the signature of this problem in the graph.
+
+    # run once in django shell: python manage.py shell to seed some data
+    from django_tracer.models import Author, Book
+
+    for i in range(10):
+        a = Author.objects.create(name=f"Author {i}")
+        for j in range(5):
+            Book.objects.create(title=f"Book {i}-{j}", author=a)
+
+    request.entry        django::/n1/
+    django.view.enter    django::NPlusOneView
+    django.db.query      SELECT * FROM author              ← query 1
+    django.db.query      SELECT * FROM book WHERE author=1 ← query 2
+    django.db.query      SELECT * FROM book WHERE author=2 ← query 3
+    django.db.query      SELECT * FROM book WHERE author=3 ← query 4
+    ...                  (10 more identical queries)
+    django.view.exit     django::NPlusOneView
+    request.exit         django::/n1/
+    """
+
+    def get(self, request):
+        from django_tracer.models import Author  # adjust to your app
+
+        # Query 1 — fetch all authors
+        from stacktracer.context.vars import get_trace_id
+        print(f">>> trace_id in view: {get_trace_id()}")
+        authors = list(Author.objects.all())
+
+        results = []
+        for author in authors:
+            # Query 2..N — one per author, fetching their books separately
+            # This is the bug. Django does NOT batch these automatically.
+            books = list(author.book_set.all())
+            results.append({
+                "author": author.name,
+                "book_count": len(books),
+            })
+
+        # The fix — replace the two lines above with:
+        # authors = Author.objects.prefetch_related("book_set").all()
+        # then the loop does zero extra queries
+
+        return JsonResponse({"authors": results, "query_count": len(authors) + 1})

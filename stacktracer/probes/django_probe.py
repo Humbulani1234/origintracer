@@ -258,18 +258,35 @@ def _make_db_wrapper():
 
 
 def _install_db_wrapper() -> None:
-    try:
-        from django.db import connections
-        wrapper = _make_db_wrapper()
-        for conn in connections.all():
-            conn.execute_wrappers.append(wrapper)
-        _originals["db_wrapper"] = wrapper
-        logger.info("django probe: database execute_wrapper installed")
-    except Exception as exc:
-        logger.warning("django probe: database wrapper failed: %s", exc)
+    """
+    Install via connection_created signal — fires the first time each
+    database connection is opened, which is after AppConfig.ready().
+    This avoids the empty connections.all() problem at startup.
+    """
+    from django.db.backends.signals import connection_created
+
+    wrapper = _make_db_wrapper()
+    _originals["db_wrapper"] = wrapper
+
+    def _on_connection_created(sender, connection, **kwargs):
+        connection.execute_wrappers.append(wrapper)
+        logger.debug(
+            "django probe: execute_wrapper attached to connection alias=%s",
+            connection.alias,
+        )
+
+    connection_created.connect(_on_connection_created, weak=False)
+    _originals["connection_created_handler"] = _on_connection_created
+    logger.info("django probe: database wrapper registered on connection_created signal")
 
 
 def _uninstall_db_wrapper() -> None:
+    from django.db.backends.signals import connection_created
+
+    handler = _originals.pop("connection_created_handler", None)
+    if handler:
+        connection_created.disconnect(handler)
+
     wrapper = _originals.pop("db_wrapper", None)
     if wrapper is None:
         return
@@ -280,7 +297,6 @@ def _uninstall_db_wrapper() -> None:
                 conn.execute_wrappers.remove(wrapper)
     except Exception:
         pass
-
 
 # ====================================================================== #
 # Django signals

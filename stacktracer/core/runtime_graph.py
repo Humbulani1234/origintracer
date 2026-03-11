@@ -179,6 +179,41 @@ class RuntimeGraph:
                     edge_type="calls",
                     duration_ns=event.duration_ns,
                 )
+        
+        # Probe-specific structural edges — topology, not request flow
+        self._add_structural_edges(node_id, event)
+
+    def _add_structural_edges(self, node_id: str, event: NormalizedEvent) -> None:
+        """
+        Draw infrastructure topology edges based on probe type.
+        Called once per event after the node is upserted.
+        Each probe type gets its own block — add new probes here, not above.
+        """
+        probe = event.probe
+
+        if probe == "gunicorn.worker.fork":
+            # master ──spawned──► worker
+            master_node_id = self._node_id("gunicorn", "master")
+            if master_node_id in self._nodes:
+                self.upsert_edge(
+                    source=master_node_id,
+                    target=node_id,
+                    edge_type="spawned",
+                )
+                
+        elif probe == "uvicorn.request.receive":
+            # worker ──handled──► request
+            worker_pid = event.metadata.get("worker_pid")
+            if worker_pid:
+                for nid, node in self._nodes.items():
+                    if (node.node_type == "gunicorn"
+                            and node.metadata.get("worker_pid") == worker_pid):
+                        self.upsert_edge(
+                            source=nid,
+                            target=node_id,
+                            edge_type="handled",
+                        )
+                        break
 
     # ------------------------------------------------------------------ #
     # Queries

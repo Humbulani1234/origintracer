@@ -209,4 +209,4 @@ class NormalizedEvent:
 
     def __repr__(self) -> str:
         dur = f" {self.duration_ns / 1_000:.1f}µs" if self.duration_ns else ""
-        return f"<Event [{self.probe}] {self.service}::{self.name}{dur} trace={self.trace_id[:8]}>"
+        return f"<Event [{self.probe}] {self.service}::{self.name}{dur} trace={self.trace_id[:15]}>"

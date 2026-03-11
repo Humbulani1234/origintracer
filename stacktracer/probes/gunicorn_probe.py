@@ -72,7 +72,7 @@ import os
 from typing import Any, Callable, Optional
 
 from ..sdk.base_probe import BaseProbe
-from ..sdk.emitter import emit_direct
+from ..sdk.emitter import emit_direct, emit
 from ..core.event_schema import NormalizedEvent, ProbeTypes
 
 import uuid
@@ -95,35 +95,34 @@ ProbeTypes.register_many({
 # directly as documented in its configuration reference.
 # ====================================================================== #
 
-def st_on_starting(server: Any) -> None:
-    """
-    Fires in the master process just before it starts.
-    `server` is the Arbiter instance but we do not call any of its methods —
-    we only read stable public attributes (address, worker_class).
-    """
-    print(f">>> gunicorn master starting pid={os.getpid()}")
-    master_pid = os.getpid()
-    trace_id   = f"gunicorn-master-{master_pid}"
+# gunicorn_probe.py — module level
+_pre_fork_events: list = []
 
-    bind = getattr(server, "address", [])
-    cfg  = getattr(server, "cfg", None)
+def st_on_starting(server: Any) -> None:
+    master_pid   = os.getpid()
+    bind         = getattr(server, "address", [])
+    cfg          = getattr(server, "cfg", None)
     worker_class = getattr(cfg, "worker_class_str", "unknown") if cfg else "unknown"
     num_workers  = getattr(cfg, "workers", 0) if cfg else 0
 
-    emit_direct(NormalizedEvent.now(
-        probe="gunicorn.master.start",
-        trace_id=trace_id,
-        service="gunicorn",
-        name="master",
-        master_pid=master_pid,
-        bind=str(bind),
-        worker_class=worker_class,
-        num_workers=num_workers,
+    # Do NOT call init() or emit() here — no engine exists yet and
+    # the buffer will be orphaned after fork.
+    # Instead, park the event in a module-level list.
+    # fork() copies all process memory including this list into every
+    # worker. st_post_fork then drains it into the worker's real engine.
+    _pre_fork_events.append(NormalizedEvent.now(
+        probe        = "gunicorn.master.start",
+        trace_id     = f"gunicorn-master-{master_pid}",
+        service      = "gunicorn",
+        name         = "master",
+        master_pid   = master_pid,
+        bind         = str(bind),
+        worker_class = worker_class,
+        num_workers  = num_workers,
     ))
 
-    # Re-initialise StackTracer in the master if needed.
-    # Workers will re-init in post_fork after the fork.
     logger.info("gunicorn master starting (pid=%d, workers=%d)", master_pid, num_workers)
+
 
 def st_post_fork(server: Any, worker: Any) -> None:
     worker_pid   = os.getpid()
@@ -131,36 +130,58 @@ def st_post_fork(server: Any, worker: Any) -> None:
     worker_class = type(worker).__name__
     trace_id     = f"gunicorn-worker-{worker_pid}"
 
-    # Do NOT call stacktracer.init() here.
-    # AppConfig.ready() fires after Django loads and handles init correctly.
-    # Calling init() here creates a second engine that conflicts with it.
-    #
-    # What we DO need after fork:
-    # The parent's drain thread is dead in the child (threads don't survive fork).
-    # We restart it so the buffer drains correctly in this worker.
     try:
         from stacktracer.sdk.emitter import _restart_drain_thread
         _restart_drain_thread()
     except Exception as exc:
         logger.warning("gunicorn probe: drain thread restart failed: %s", exc)
 
-    # Emit immediately after AppConfig.ready() has run via a post-init hook.
-    # Register a callback that fires once the engine exists.
     import stacktracer
     engine = stacktracer.get_engine()
     if engine is not None:
-        # Engine already exists (AppConfig.ready() ran before post_fork somehow)
         _emit_worker_fork(trace_id, worker_class, worker_pid, master_pid)
+        _drain_pre_fork_events(engine)
     else:
-        # AppConfig.ready() hasn't run yet — register deferred emit
         stacktracer._register_post_init_callback(
             lambda: _emit_worker_fork(trace_id, worker_class, worker_pid, master_pid)
         )
+        stacktracer._register_post_init_callback(
+            lambda: _drain_pre_fork_events(stacktracer.get_engine())
+        )
+
+
+def _drain_pre_fork_events(engine) -> None:
+    """
+    Feed events that were captured in the master process (before fork)
+    into the worker's engine after AppConfig.ready() has run.
+
+    Why this works:
+        fork() copies the entire parent address space into the child.
+        _pre_fork_events is a module-level list — it is copied verbatim
+        into every worker. AppConfig.ready() creates a new engine in the
+        worker, but _pre_fork_events still holds the master events.
+        We feed them into the new engine here.
+
+    Why we clear after draining:
+        Every worker gets the same copy of _pre_fork_events. We only
+        want each worker to process them once. Clearing after drain
+        prevents double-processing if somehow this is called twice.
+    """
+    if not _pre_fork_events or engine is None:
+        return
+
+    for event in _pre_fork_events:
+        try:
+            engine.process(event)
+        except Exception as exc:
+            logger.warning("gunicorn probe: pre-fork event drain failed: %s", exc)
+
+    _pre_fork_events.clear()
+    logger.info("gunicorn probe: drained pre-fork events into worker engine")
 
 
 def _emit_worker_fork(trace_id, worker_class, worker_pid, master_pid):
-    from stacktracer.sdk.emitter import emit_direct
-    emit_direct(NormalizedEvent.now(
+    emit(NormalizedEvent.now(
         probe        = "gunicorn.worker.fork",
         trace_id     = trace_id,
         service      = "gunicorn",
@@ -183,7 +204,7 @@ def st_worker_exit(server: Any, worker: Any) -> None:
     # Emit from the master process — trace_id is worker-scoped
     trace_id = f"gunicorn-worker-{worker_pid}"
 
-    emit_direct(NormalizedEvent.now(
+    emit(NormalizedEvent.now(
         probe="gunicorn.worker.exit",
         trace_id=trace_id,
         service="gunicorn",
