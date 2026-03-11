@@ -158,12 +158,12 @@ class RuntimeGraph:
 
         node_id  = self._node_id(event.service, name)
         node_type = event.service   # e.g. "asyncio", "django", "syscall"
-
+        is_entry = event.probe.endswith((".enter", ".receive", ".entry", ".start"))
         self.upsert_node(
             node_id=node_id,
             node_type=node_type,
             service=event.service,
-            duration_ns=event.duration_ns,
+            duration_ns=None if is_entry else event.duration_ns,
             metadata={"probe": event.probe, **event.metadata},
         )
 

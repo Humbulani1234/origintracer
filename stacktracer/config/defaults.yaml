@@ -62,8 +62,10 @@ semantic:
     description: Background task workers
     services:
       - celery
+      - gunicorn
     node_patterns:
       - "celery::.*"
+      - "gunicorn::.*"
 
   - label: gateway
     description: Reverse proxy and ingress layer
@@ -71,6 +73,28 @@ semantic:
       - nginx
     node_patterns:
       - "nginx::.*"
+  
+  - label: http
+    description: HTTP layer — nginx and uvicorn
+    services:
+      - nginx
+      - uvicorn
+    node_patterns: []
+
+  - label: django
+    description: Django application layer
+    services:
+      - django
+    node_patterns: []
+
+  - label: database
+    description: Database query nodes (ORM level)
+    services: []
+    node_patterns:
+      - "django::SELECT.*"
+      - "django::INSERT.*"
+      - "django::UPDATE.*"
+      - "django::DELETE.*"
 
 # ── Normalization rules ───────────────────────────────────────────────────
 # Applied AFTER built-in patterns (UUID, numeric ID, memory address, SQL).

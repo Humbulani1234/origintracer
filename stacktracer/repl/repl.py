@@ -506,7 +506,26 @@ def cmd_help() -> None:
 # ------------------------------------------------------------------ #
 
 HISTORY_FILE = os.path.expanduser("~/.stacktracer_history")
+import os
+from pathlib import Path
 
+def _live_sockets() -> list:
+    """Return only sockets whose owning process is still alive."""
+    sockets = []
+    for path in sorted(Path("/tmp").glob("stacktracer-*.sock")):
+        try:
+            pid = int(path.stem.split("-")[1])
+            os.kill(pid, 0)   # signal 0 = existence check, no actual signal
+            sockets.append((pid, path))
+        except (ValueError, ProcessLookupError, PermissionError) as e:
+            # ProcessLookupError → process is dead, stale socket
+            # PermissionError   → process alive but not ours, still valid
+            if isinstance(e, ProcessLookupError):
+                path.unlink(missing_ok=True)   # clean up while we're here
+                continue
+            sockets.append((pid, path))
+    return sockets
+sockets = _live_sockets()
 
 def main():
     try:
@@ -591,6 +610,10 @@ def main():
             continue
 
         # ── DSL query — forwarded verbatim to the live engine ──────
+
+        # import pdb
+        # pdb.set_trace()
+
         t0      = time.perf_counter()
         result  = query(sock_path, raw)
         elapsed = (time.perf_counter() - t0) * 1000

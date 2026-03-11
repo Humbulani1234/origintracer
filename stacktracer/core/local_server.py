@@ -145,7 +145,11 @@ class LocalQueryServer:
             try:
                 self._handle(conn)
             except Exception as exc:
-                logger.debug("local server connection error: %s", exc)
+                logger.error("local server handler crashed: %s", exc, exc_info=True)
+                try:
+                    self._send(conn, {"ok": False, "error": f"server error: {exc}"})
+                except Exception:
+                    pass
             finally:
                 try:
                     conn.close()
@@ -153,6 +157,10 @@ class LocalQueryServer:
                     pass
 
     def _handle(self, conn: socket.socket) -> None:
+
+        # import pdb
+        # pdb.set_trace()
+
         conn.settimeout(_READ_TIMEOUT)
         raw = b""
         while b"\n" not in raw:
@@ -163,13 +171,17 @@ class LocalQueryServer:
             if len(raw) > _MAX_MSG_BYTES:
                 self._send(conn, {"ok": False, "error": "query too large"})
                 return
-
+         
         line = raw.split(b"\n")[0]
+        print(">>>>>OUR QUERY", line)
         try:
             msg = json.loads(line.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             self._send(conn, {"ok": False, "error": f"invalid JSON: {exc}"})
             return
+        
+        # import pdb
+        # pdb.set_trace()
 
         query_str = msg.get("query", "").strip()
         req_id    = msg.get("id", "")
@@ -177,8 +189,14 @@ class LocalQueryServer:
         if not query_str:
             self._send(conn, {"id": req_id, "ok": False, "error": "empty query"})
             return
+        
+        # ← wrap _evaluate so crashes return an error instead of closing silently
+        try:
+            result = self._evaluate(query_str)
+        except Exception as exc:
+            logger.exception("_evaluate crashed on query %r", query_str)
+            result = {"ok": False, "error": f"Internal server error: {exc}"}
 
-        result = self._evaluate(query_str)
         result["id"] = req_id
         self._send(conn, result)
 
@@ -196,22 +214,22 @@ class LocalQueryServer:
         if q == "SHOW NODES":
             nodes = [
                 {
-                    "id":           n.id,
-                    "service":      n.service,
-                    "node_type":    n.node_type,
-                    "call_count":   n.call_count,
-                    "duration_ns":  n.total_duration_ns,
-                    "first_seen":   n.first_seen,
-                    "last_seen":    n.last_seen,
+                    "id":          n.id,
+                    "service":     n.service,
+                    "node_type":   n.node_type,
+                    "call_count":  n.call_count,
+                    "duration_ns": n.total_duration_ns,
+                    "first_seen":  n.first_seen,
+                    "last_seen":   n.last_seen,
                 }
-                for n in self._engine.graph.nodes()
+                for n in self._engine.graph.all_nodes()
             ]
             return {"ok": True, "data": nodes}
 
         if q == "SHOW EDGES":
             edges = [
-                {"from": e.source_id, "to": e.target_id, "weight": e.weight}
-                for e in self._engine.graph.edges()
+                {"from": e.source, "to": e.target, "weight": e.call_count}  # source/target not source_id/target_id
+                for e in self._engine.graph.all_edges()
             ]
             return {"ok": True, "data": edges}
 
@@ -223,11 +241,11 @@ class LocalQueryServer:
                     "call_count":  n.call_count,
                     "duration_ns": n.total_duration_ns,
                 }
-                for n in self._engine.graph.nodes()
+                for n in self._engine.graph.all_nodes()
             ]
             edges = [
-                {"from": e.source_id, "to": e.target_id, "weight": e.weight}
-                for e in self._engine.graph.edges()
+                {"from": e.source, "to": e.target, "weight": e.call_count}  # same fix
+                for e in self._engine.graph.all_edges()
             ]
             return {"ok": True, "data": {"nodes": nodes, "edges": edges}}
 
@@ -240,10 +258,10 @@ class LocalQueryServer:
                     "pid":             self._pid,
                     "socket":          self._path,
                     "uptime_s":        round(time.monotonic() - getattr(self._engine, "_started_at", 0), 1),
-                    "graph_nodes":     len(list(graph.nodes())),
-                    "graph_edges":     len(list(graph.edges())),
+                    "graph_nodes":     len(list(graph.all_nodes())),
+                    "graph_edges":     len(list(graph.all_edges())),
                     "event_log_size":  len(getattr(self._engine, "_event_log", [])),
-                    "active_requests": tracker.count() if tracker else 0,
+                    "active_requests": tracker.active_count() if tracker else 0,  # active_count() not count()
                 },
             }
 
@@ -251,10 +269,10 @@ class LocalQueryServer:
             trace_id = query_str[len("SHOW TRACE "):].strip()
             events   = [
                 {
-                    "probe":    e.probe,
-                    "service":  e.service,
-                    "name":     e.name,
-                    "ts":       e.timestamp_ns,
+                    "probe":   e.probe,
+                    "service": e.service,
+                    "name":    e.name,
+                    "ts":      e.timestamp_ns,
                 }
                 for e in getattr(self._engine, "_event_log", [])
                 if e.trace_id == trace_id
@@ -265,9 +283,15 @@ class LocalQueryServer:
             tracker = getattr(self._engine, "tracker", None)
             if tracker is None:
                 return {"ok": True, "data": []}
+            # _active is the internal dict {trace_id: RequestSpan}
             active = [
-                {"trace_id": t, "started_at": v}
-                for t, v in tracker.all().items()
+                {
+                    "trace_id":    span.trace_id,
+                    "service":     span.service,
+                    "name":        span.name,
+                    "in_flight_ms": round(span.in_flight_ms, 1),
+                }
+                for span in tracker._active.values()
             ]
             return {"ok": True, "data": active}
 
