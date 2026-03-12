@@ -214,6 +214,39 @@ class RuntimeGraph:
                             edge_type="handled",
                         )
                         break
+        
+        elif probe == "celery.worker.fork":
+            # MainProcess ──spawned──► ForkPoolWorker
+            # The main process emits celery.worker.fork with master_pid.
+            # We look for a node whose pid matches that master_pid.
+            master_pid = event.metadata.get("master_pid")
+            if master_pid:
+                for nid, node in self._nodes.items():
+                    if (node.node_type == "celery"
+                            and node.metadata.get("worker_pid") == master_pid):
+                        self.upsert_edge(
+                            source=nid,
+                            target=node_id,
+                            edge_type="spawned",
+                        )
+                        break
+
+        elif probe == "celery.task.start":
+            # ForkPoolWorker ──ran──► task
+            # The task fires with worker_pid. We look for the ForkPoolWorker
+            # node whose worker_pid matches — that worker ran this task.
+            worker_pid = event.metadata.get("worker_pid")
+            if worker_pid:
+                for nid, node in self._nodes.items():
+                    if (node.node_type == "celery"
+                            and node.name == "ForkPoolWorker"
+                            and node.metadata.get("worker_pid") == worker_pid):
+                        self.upsert_edge(
+                            source=nid,
+                            target=node_id,
+                            edge_type="ran",
+                        )
+                        break
 
     # ------------------------------------------------------------------ #
     # Queries
