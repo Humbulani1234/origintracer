@@ -1,15 +1,15 @@
 """
-tests/test_core_engine.py
+tests/test_core_graph.py
 
-Integration tests for Engine — the component that wires together
-RuntimeGraph, TemporalStore, PatternRegistry, SemanticLayer, and
-ActiveRequestTracker.
+Tests for the four graph-layer components:
+    RuntimeGraph     — topology store and query engine
+    TemporalStore    — diff capture and deployment correlation
+    GraphNormalizer  — high-cardinality name collapsing
+    GraphCompactor   — memory-bounded eviction
 
-These tests exercise the Engine as it would operate at runtime:
-feeding it realistic event sequences and asserting on the resulting
-graph structure, causal matches, and temporal diffs.
-
-No probes, no threads, no network. Engine.process() is called directly.
+Tests here are a mix of unit (component in isolation) and integration
+(two components working together, e.g. Normalizer feeding Compactor).
+No Engine, no probes, no network.
 """
 
 from __future__ import annotations
@@ -20,237 +20,416 @@ import pytest
 from conftest import evt
 
 
-class TestEngineGraphBuilding:
-    """Engine correctly builds the RuntimeGraph from event streams."""
+# ====================================================================== #
+# RuntimeGraph
+# ====================================================================== #
 
-    def test_single_event_creates_node(self, engine, trace_id):
-        engine.process(evt(service="django", name="handle_view", trace_id=trace_id))
-        assert "django::handle_view" in engine.graph._nodes
+class TestRuntimeGraph:
 
-    def test_two_events_same_trace_creates_edge(self, engine, trace_id):
-        """The core causal connection: consecutive events on same trace → edge."""
-        engine.process(evt(probe="request.entry",  service="nginx",   name="upstream",  trace_id=trace_id))
-        engine.process(evt(probe="function.call",  service="django",  name="view",       trace_id=trace_id))
-        assert "django::view" in engine.graph.reachable_from("nginx::upstream")
+    def setup_method(self):
+        from stacktracer.core.runtime_graph import RuntimeGraph
+        self.g = RuntimeGraph()
 
-    def test_full_stack_topology(self, engine, trace_id):
+    def test_upsert_node_creates_and_increments(self):
+        self.g.upsert_node("svc::fn", "function", "svc")
+        self.g.upsert_node("svc::fn", "function", "svc", duration_ns=2000)
+        n = self.g._nodes["svc::fn"]
+        assert n.call_count == 2
+        assert n.total_duration_ns == 2000
+
+    def test_avg_duration_computed_correctly(self):
+        self.g.upsert_node("svc::fn", "function", "svc", duration_ns=1000)
+        self.g.upsert_node("svc::fn", "function", "svc", duration_ns=3000)
+        assert self.g._nodes["svc::fn"].avg_duration_ns == 2000
+
+    def test_edge_deduplication(self):
+        """Same edge inserted twice should produce one edge with incremented count."""
+        self.g.upsert_node("A", "fn", "svc")
+        self.g.upsert_node("B", "fn", "svc")
+        self.g.upsert_edge("A", "B", "calls")
+        self.g.upsert_edge("A", "B", "calls")
+        assert len(self.g.neighbors("A")) == 1
+        assert self.g.neighbors("A")[0].call_count == 2
+
+    def test_callers_reverse_index(self):
+        self.g.upsert_node("A", "fn", "svc")
+        self.g.upsert_node("B", "fn", "svc")
+        self.g.upsert_edge("A", "B", "calls")
+        callers = self.g.callers("B")
+        assert len(callers) == 1
+        assert callers[0].source == "A"
+
+    def test_reachable_from_bfs(self):
+        for n in ["A", "B", "C", "D"]:
+            self.g.upsert_node(n, "fn", "svc")
+        self.g.upsert_edge("A", "B", "calls")
+        self.g.upsert_edge("B", "C", "calls")
+        self.g.upsert_edge("B", "D", "calls")
+        assert self.g.reachable_from("A") == {"B", "C", "D"}
+
+    def test_reachable_from_cycle_terminates(self):
+        """BFS must not infinite-loop on cyclic graphs (A→B→A)."""
+        for n in ["A", "B"]:
+            self.g.upsert_node(n, "fn", "svc")
+        self.g.upsert_edge("A", "B", "calls")
+        self.g.upsert_edge("B", "A", "calls")
+        reachable = self.g.reachable_from("A")
+        assert "B" in reachable  # terminates and finds B
+
+    def test_add_from_event_creates_node(self):
+        e = evt(service="django", name="handle_view")
+        self.g.add_from_event(e)
+        assert "django::handle_view" in self.g._nodes
+
+    def test_add_from_event_creates_edge_between_consecutive(self):
+        """Two events on the same trace_id should produce a directed edge."""
+        e1 = evt(probe="request.entry",  service="nginx",   name="upstream",  trace_id="t1")
+        e2 = evt(probe="function.call",  service="django",  name="view",       trace_id="t1")
+        self.g.add_from_event(e1)
+        self.g.add_from_event(e2, parent_event=e1)
+        assert len(self.g.neighbors("nginx::upstream")) == 1
+        assert self.g.neighbors("nginx::upstream")[0].target == "django::view"
+
+    def test_add_from_event_duration_ns_top_level_field(self):
         """
-        Simulate nginx → django → postgres call chain.
-        All five nodes must appear and form a connected path.
+        duration_ns passed to NormalizedEvent.now() must land on the
+        top-level dataclass field — not swallowed into metadata — and must
+        accumulate on the graph node.
+        This is the fix from the NormalizedEvent.now() **kwargs discussion.
         """
-        for probe, service, name in [
-            ("request.entry",  "nginx",    "accept"),
-            ("request.entry",  "django",   "TracerMiddleware"),
-            ("function.call",  "django",   "UserView.get"),
-            ("db.query.start", "postgres", "SELECT users"),
-            ("db.query.end",   "postgres", "SELECT users"),
-        ]:
-            engine.process(evt(probe=probe, service=service, name=name, trace_id=trace_id))
+        e = evt(service="django", name="view", trace_id="t1", duration_ns=10_000_000)
+        # Verify the fix: duration must be on the field, not metadata
+        assert e.duration_ns == 10_000_000, (
+            "duration_ns was swallowed into event.metadata — "
+            "NormalizedEvent.now() must explicitly extract it"
+        )
+        assert e.metadata.get("duration_ns") is None, (
+            "duration_ns must NOT appear in metadata after the fix"
+        )
 
-        reachable = engine.graph.reachable_from("nginx::accept")
-        assert "django::TracerMiddleware" in reachable
-        assert "django::UserView.get"     in reachable
-        assert "postgres::SELECT users"   in reachable
+        self.g.add_from_event(e)
+        node = self.g._nodes["django::view"]
+        assert node.total_duration_ns == 10_000_000
+        assert node.avg_duration_ns   == 10_000_000
 
-    def test_different_traces_dont_cross_edges(self, engine):
-        """Events on different trace_ids must never produce cross-trace edges."""
-        engine.process(evt(service="django", name="view_a", trace_id="trace-A"))
-        engine.process(evt(service="django", name="view_b", trace_id="trace-B"))
-        # view_a should have no neighbors (no second event on trace-A)
-        assert engine.graph.neighbors("django::view_a") == []
-
-    def test_duration_accumulates_on_node(self, engine, trace_id):
-        for _ in range(3):
-            engine.process(evt(
-                probe="db.query.start", service="postgres",
-                name="SELECT", trace_id=trace_id, duration_ns=1_000_000,
-            ))
-        node = engine.graph._nodes.get("postgres::SELECT")
+    def test_add_from_event_duration_fallback_from_metadata(self):
+        """
+        If an event was emitted before the NormalizedEvent.now() fix and
+        duration_ns ended up in metadata, add_from_event must still
+        accumulate it via the metadata fallback path.
+        """
+        from stacktracer.core.event_schema import NormalizedEvent
+        # Build event manually — bypass .now() to simulate old behaviour
+        e = NormalizedEvent(
+            probe    = "django.view.exit",
+            service  = "django",
+            name     = "view",
+            trace_id = "t-fallback",
+            metadata = {"duration_ns": 5_000_000},   # old code path
+        )
+        self.g.add_from_event(e)
+        node = self.g._nodes.get("django::view")
         assert node is not None
-        assert node.call_count == 3
-        assert node.avg_duration_ns == 1_000_000
+        assert node.total_duration_ns == 5_000_000
 
-    def test_hotspots_returns_sorted_nodes(self, engine, trace_id):
-        for _ in range(5):
-            engine.process(evt(service="django", name="busy_view", trace_id=trace_id))
-        engine.process(evt(service="django", name="quiet_view", trace_id=trace_id))
-        hotspots = engine.hotspots(top_n=5)
-        names = [h["node"] for h in hotspots]
-        assert names.index("django::busy_view") < names.index("django::quiet_view")
-
-
-class TestEngineTemporalIntegration:
-    """Engine correctly captures temporal diffs and deployment markers."""
-
-    def test_snapshot_records_new_nodes_as_diff(self, engine, trace_id):
-        engine.process(evt(service="django", name="fn_a", trace_id=trace_id))
-        engine.snapshot()
-        engine.process(evt(service="django", name="fn_b", trace_id=trace_id))
-        diff = engine.snapshot()
-        assert "django::fn_b" in diff["added_nodes"]
-        assert "django::fn_a" not in diff["added_nodes"]
-
-    def test_mark_deployment_creates_labelled_diff(self, engine):
-        engine.mark_deployment("v2.0.0")
-        diff = engine.temporal.label_diff("v2.0.0")
-        assert diff is not None
-        assert diff.label == "v2.0.0"
-
-    def test_new_sync_call_rule_fires_after_deployment(self, engine, trace_id):
-        """
-        The new_sync_call_after_deployment rule fires when edges appear
-        after a deployment marker. Simulate: mark deploy, then new edge arrives.
-        """
-        engine.mark_deployment("canary-deploy")
-        time.sleep(0.01)
-
-        # New call edge appears after deployment
-        engine.process(evt(probe="request.entry", service="django",  name="view",      trace_id=trace_id))
-        engine.process(evt(probe="function.call", service="exporter", name="call_flags", trace_id=trace_id))
-        engine.snapshot()
-
-        matches = engine.evaluate()
-        rule_names = [m.rule_name for m in matches]
-        assert "new_sync_call_after_deployment" in rule_names
-
-    def test_evaluate_returns_empty_on_clean_graph(self, engine):
-        """A graph with no anomalous patterns should return no causal matches."""
-        # Process a few normal events — nothing that would trigger rules
-        for i in range(3):
-            engine.process(evt(service="django", name=f"view_{i}", trace_id=f"t{i}"))
-        matches = engine.evaluate()
-        # new_sync_call rule may fire if edges appeared after a deployment marker
-        # — but we never called mark_deployment so it won't
-        for m in matches:
-            assert m.rule_name != "new_sync_call_after_deployment"
-
-    def test_status_contains_expected_keys(self, engine, trace_id):
-        engine.process(evt(service="django", name="view", trace_id=trace_id))
-        s = engine.status()
-        assert "graph_nodes"     in s
-        assert "temporal_diffs"  in s
-        assert s["graph_nodes"]  >= 1
-
-    def test_critical_path_returns_ordered_stages(self, engine, trace_id):
-        """Events on one trace must come back ordered by wall_time."""
-        engine.process(evt(probe="request.entry", service="nginx",    name="accept", trace_id=trace_id))
-        engine.process(evt(probe="function.call", service="django",   name="view",   trace_id=trace_id))
-        engine.process(evt(probe="db.query.start",service="postgres", name="SELECT", trace_id=trace_id))
-        path = engine.critical_path(trace_id)
-        assert len(path) == 3
-        services = [s["service"] for s in path]
-        assert services == ["nginx", "django", "postgres"]
-
-    def test_critical_path_empty_for_unknown_trace(self, engine):
-        assert engine.critical_path("nonexistent-trace-id") == []
-
-
-class TestEngineTrackerIntegration:
-    """Engine wires ActiveRequestTracker correctly."""
-
-    def test_tracker_attached_to_engine(self, engine):
-        assert engine.tracker is not None
-
-    def test_tracker_records_events_via_engine(self, engine, trace_id):
-        """
-        Engine.process() should call tracker.event() for every event
-        so the tracker maintains the probe_sequence of in-flight requests.
-        """
-        engine.tracker.start(trace_id=trace_id, service="django", pattern="/api/users/")
-        engine.process(evt(probe="db.query.start", service="postgres", name="SELECT", trace_id=trace_id))
-        span = engine.tracker._active.get(trace_id)
-        assert span is not None
-        assert "db.query.start" in span.probe_sequence
-
-
-class TestEngineCompactorIntegration:
-    """
-    _snapshot_loop() must call compactor.compact() after every snapshot.
-
-    The unit tests in test_core_graph.py verify the compactor logic itself
-    (TTL eviction, cap eviction, hot-node protection). This test verifies
-    only the wiring: that the engine's snapshot loop actually invokes the
-    compactor so nodes are evicted during normal operation.
-    """
-
-    def test_snapshot_loop_calls_compactor(self):
-        """
-        Start _snapshot_loop in a real thread with a very short interval.
-        After it fires at least once, compactor._compact_runs must be >= 1
-        and the graph must be within the cap.
-        """
-        import threading
-        from stacktracer.core.engine import Engine
-        from stacktracer.core.graph_compactor import GraphCompactor
-
-        engine = Engine(snapshot_interval_s=0.05)   # 50ms — fires quickly in test
-        compactor = GraphCompactor(
-            max_nodes      = 5,
-            evict_to_ratio = 0.6,    # evict to 3 nodes when cap hit
-            node_ttl_s     = 999_999,  # disable TTL — we only want cap eviction
-            min_call_count = 999,      # protect nothing — every node is evictable
-        )
-        engine.compactor = compactor
-
-        # Add 10 nodes — well over the cap of 5
-        for i in range(10):
-            engine.graph.upsert_node(f"svc::fn{i}", "fn", "svc")
-        assert len(engine.graph) == 10
-
-        # Run the loop in a daemon thread and let it fire once
-        engine._running = True
-        t = threading.Thread(target=engine._snapshot_loop, daemon=True)
-        t.start()
-        t.join(timeout=2.0)   # more than enough for a 50ms interval
-        engine._running = False
-
-        assert compactor._compact_runs >= 1, (
-            "_snapshot_loop did not call compactor.compact() — "
-            "check that _snapshot_loop calls self.compactor.compact(self.graph) "
-            "after self.snapshot()"
-        )
-        assert len(engine.graph) <= 5, (
-            f"Graph has {len(engine.graph)} nodes after compaction — "
-            f"expected <= 5 (the configured cap)"
-        )
-
-    def test_stale_trace_ids_evicted_from_last_event_dict(self):
-        """
-        trace_ids not updated within _trace_ttl_s must be removed from
-        _last_event_per_trace by _evict_stale_traces().
-
-        Verifies the fix for the unbounded dict growth bug:
-        at 100 req/s without eviction the dict accumulates 360k entries/hour.
-        """
-        from stacktracer.core.engine import Engine
-
-        engine = Engine(snapshot_interval_s=9999)
-        engine._trace_ttl_s = 0.05   # 50ms TTL so the test does not need to sleep long
-
-        # Simulate 5 completed traces by writing directly to the dict
-        # with a timestamp already past the TTL threshold
-        import time as _time
-        stale_ts = _time.monotonic() - 1.0   # 1 second ago — well past 50ms TTL
-        for i in range(5):
-            from conftest import evt
-            engine._last_event_per_trace[f"old-trace-{i}"] = (
-                evt(trace_id=f"old-trace-{i}"), stale_ts
+    def test_add_from_event_duration_accumulates_across_calls(self):
+        """Multiple events contribute to total_duration_ns and avg is correct."""
+        for _ in range(4):
+            self.g.add_from_event(
+                evt(service="django", name="view", trace_id="t1", duration_ns=2_000_000)
             )
+        node = self.g._nodes["django::view"]
+        assert node.call_count        == 4
+        assert node.total_duration_ns == 8_000_000
+        assert node.avg_duration_ns   == 2_000_000
 
-        # One active trace — updated just now, must survive eviction
-        engine._last_event_per_trace["live-trace"] = (
-            evt(trace_id="live-trace"), _time.monotonic()
+    def test_add_structural_edges_gunicorn_master_to_worker(self):
+        """
+        A gunicorn.worker.fork event must create a spawned edge from
+        master → worker automatically via _add_structural_edges.
+        """
+        from stacktracer.core.event_schema import NormalizedEvent
+
+        master_evt = NormalizedEvent.now(
+            probe    = "gunicorn.master.start",
+            trace_id = "t-guni",
+            service  = "gunicorn",
+            name     = "master",
         )
-
-        assert len(engine._last_event_per_trace) == 6
-
-        engine._evict_stale_traces()
-
-        assert len(engine._last_event_per_trace) == 1, (
-            "Expected only the live trace to survive eviction"
+        worker_evt = NormalizedEvent.now(
+            probe      = "gunicorn.worker.fork",
+            trace_id   = "t-guni",
+            service    = "gunicorn",
+            name       = "UvicornWorker",
+            worker_pid = 12345,
         )
-        assert "live-trace" in engine._last_event_per_trace
-        assert all(
-            k.startswith("old-trace") is False
-            for k in engine._last_event_per_trace
+        self.g.add_from_event(master_evt)
+        self.g.add_from_event(worker_evt)
+
+        master_id = "gunicorn::master"
+        worker_id = "gunicorn::UvicornWorker"
+        assert master_id in self.g._nodes
+        assert worker_id in self.g._nodes
+
+        # The structural edge master → worker must exist
+        spawned_edges = [
+            e for e in self.g.neighbors(master_id)
+            if e.edge_type == "spawned" and e.target == worker_id
+        ]
+        assert spawned_edges, (
+            "Expected a 'spawned' edge from gunicorn::master → gunicorn::UvicornWorker. "
+            "_add_structural_edges may not be wired correctly for gunicorn.worker.fork events."
         )
+        self.g.upsert_node("A", "fn", "svc")
+        self.g.upsert_node("B", "fn", "svc")
+        self.g.upsert_edge("A", "B", "calls")
+        snap = self.g.snapshot()
+        assert "A" in snap["node_ids"]
+        assert "B" in snap["node_ids"]
+        assert any("A" in k for k in snap["edge_keys"])
+
+    def test_hottest_nodes_ordering(self):
+        self.g.upsert_node("hot", "fn", "svc")
+        self.g.upsert_node("cold", "fn", "svc")
+        for _ in range(5):
+            self.g.upsert_node("hot", "fn", "svc")
+        top = self.g.hottest_nodes(top_n=2)
+        assert top[0].id == "hot"
+
+    def test_thread_safety_concurrent_upserts(self):
+        """Concurrent writes from multiple threads must not corrupt the graph."""
+        import threading
+        errors = []
+
+        def worker(service_name):
+            try:
+                for i in range(100):
+                    self.g.upsert_node(f"{service_name}::fn{i}", "fn", service_name)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(f"svc{i}",)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert len(self.g._nodes) == 500  # 5 services × 100 nodes each
+
+
+# ====================================================================== #
+# TemporalStore
+# ====================================================================== #
+
+class TestTemporalStore:
+
+    def setup_method(self):
+        from stacktracer.core.temporal import TemporalStore
+        from stacktracer.core.runtime_graph import RuntimeGraph
+        self.store = TemporalStore()
+        self.g = RuntimeGraph()
+
+    def test_first_capture_is_empty_diff(self):
+        diff = self.store.capture(self.g.snapshot())
+        assert diff.is_empty
+
+    def test_capture_detects_new_node(self):
+        self.store.capture(self.g.snapshot())
+        self.g.upsert_node("A", "fn", "svc")
+        diff = self.store.capture(self.g.snapshot())
+        assert "A" in diff.added_node_ids
+
+    def test_capture_detects_removed_node(self):
+        self.g.upsert_node("A", "fn", "svc")
+        self.store.capture(self.g.snapshot())
+        del self.g._nodes["A"]  # simulate compaction removing node
+        diff = self.store.capture(self.g.snapshot())
+        assert "A" in diff.removed_node_ids
+
+    def test_capture_detects_new_edge(self):
+        self.g.upsert_node("A", "fn", "svc")
+        self.g.upsert_node("B", "fn", "svc")
+        self.store.capture(self.g.snapshot())
+        self.g.upsert_edge("A", "B", "calls")
+        diff = self.store.capture(self.g.snapshot())
+        assert any("A" in k for k in diff.added_edge_keys)
+
+    def test_new_edges_since_aggregates_across_diffs(self):
+        self.g.upsert_node("A", "fn", "svc")
+        self.g.upsert_node("B", "fn", "svc")
+        self.g.upsert_node("C", "fn", "svc")
+        t0 = time.time()
+        self.store.capture(self.g.snapshot())
+        self.g.upsert_edge("A", "B", "calls")
+        self.store.capture(self.g.snapshot())
+        self.g.upsert_edge("B", "C", "calls")
+        self.store.capture(self.g.snapshot())
+        edges = self.store.new_edges_since(t0)
+        assert len(edges) == 2
+
+    def test_label_diff_finds_deployment_marker(self):
+        self.store.mark_event("deploy:v1.2.3")
+        found = self.store.label_diff("deploy:v1.2.3")
+        assert found is not None
+        assert found.label == "deploy:v1.2.3"
+
+    def test_label_diff_returns_none_for_unknown(self):
+        assert self.store.label_diff("nonexistent") is None
+
+    def test_changes_around_window(self):
+        now = time.time()
+        self.store.mark_event("before")
+        time.sleep(0.01)
+        self.store.mark_event("target")
+        time.sleep(0.01)
+        self.store.mark_event("after")
+        target = self.store.label_diff("target")
+        nearby = self.store.changes_around(target.timestamp, window_seconds=0.05)
+        labels = [d.label for d in nearby]
+        assert "before" in labels
+        assert "target" in labels
+        assert "after" in labels
+
+    def test_ring_buffer_bounded(self):
+        store = __import__("stacktracer.core.temporal", fromlist=["TemporalStore"]).TemporalStore(max_diffs=10)
+        g = __import__("stacktracer.core.runtime_graph", fromlist=["RuntimeGraph"]).RuntimeGraph()
+        for _ in range(15):
+            store.capture(g.snapshot())
+        assert len(store) == 10  # capped at max_diffs
+
+
+# ====================================================================== #
+# GraphNormalizer
+# ====================================================================== #
+
+class TestGraphNormalizer:
+
+    def setup_method(self):
+        from stacktracer.core.graph_normalizer import GraphNormalizer
+        self.n = GraphNormalizer(enable_builtins=True)
+
+    def test_uuid_collapsed(self):
+        result = self.n.normalize("django", "/api/users/550e8400-e29b-41d4-a716-446655440000/profile")
+        assert "550e8400" not in result
+        assert "{uuid}" in result
+
+    def test_numeric_id_collapsed(self):
+        result = self.n.normalize("django", "/api/orders/12345/items")
+        assert "12345" not in result
+        assert "{id}" in result
+
+    def test_memory_address_collapsed(self):
+        result = self.n.normalize("asyncio", "coro <coroutine object at 0x7f3a2b4c>")
+        assert "0x7f3a" not in result
+
+    def test_sql_literals_collapsed(self):
+        result = self.n.normalize("postgres", "SELECT * FROM users WHERE id = 42 AND name = 'alice'")
+        assert "42" not in result
+        assert "alice" not in result
+        assert "?" in result
+
+    def test_user_pattern_rule(self):
+        self.n.add_pattern(
+            service     = "django",
+            pattern     = r"/api/v\d+/",
+            replacement = "/api/{version}/",
+        )
+        result = self.n.normalize("django", "/api/v3/widgets/")
+        assert "/api/{version}/" in result
+        assert "v3" not in result
+
+    def test_user_fn_rule(self):
+        self.n.add_rule(
+            service = "celery",
+            fn      = lambda name: name.split("[")[0].strip(),
+        )
+        result = self.n.normalize("celery", "tasks.process_order[abc-123]")
+        assert "[" not in result
+        assert result == "tasks.process_order"
+
+    def test_cache_hit_returns_same_result(self):
+        r1 = self.n.normalize("django", "/api/users/999/")
+        r2 = self.n.normalize("django", "/api/users/999/")
+        assert r1 == r2
+
+    def test_different_ids_collapse_to_same_pattern(self):
+        """Two different user IDs should produce identical normalized names."""
+        r1 = self.n.normalize("django", "/api/users/111/")
+        r2 = self.n.normalize("django", "/api/users/222/")
+        assert r1 == r2
+
+    def test_cardinality_guard(self):
+        """After max_unique_names_per_service distinct names, overflow to sentinel."""
+        n = __import__(
+            "stacktracer.core.graph_normalizer",
+            fromlist=["GraphNormalizer"]
+        ).GraphNormalizer(enable_builtins=False, max_unique_names_per_service=5)
+        results = set()
+        for i in range(10):
+            results.add(n.normalize("svc", f"unique_name_{i}"))
+        # First 5 pass through, remaining overflow to sentinel
+        assert any("overflow" in r or "high_cardinality" in r for r in results)
+
+
+# ====================================================================== #
+# GraphCompactor
+# ====================================================================== #
+
+class TestGraphCompactor:
+
+    def _make_graph_with_nodes(self, count: int, cold: bool = False):
+        from stacktracer.core.runtime_graph import RuntimeGraph
+        g = RuntimeGraph()
+        for i in range(count):
+            node_id = f"svc::fn{i}"
+            g.upsert_node(node_id, "fn", "svc")
+            if cold:
+                # Backdate last_seen to trigger TTL eviction
+                g._nodes[node_id].last_seen = time.time() - 7200
+        return g
+
+    def test_ttl_eviction_removes_cold_nodes(self):
+        from stacktracer.core.graph_compactor import GraphCompactor
+        g = self._make_graph_with_nodes(10, cold=True)
+        c = GraphCompactor(node_ttl_s=3600.0, min_call_count=999)
+        stats = c.compact(g)
+        assert len(g._nodes) == 0
+        assert stats["ttl_evicted"] == 10
+
+    def test_ttl_eviction_spares_hot_nodes(self):
+        """Nodes with call_count >= min_call_count must survive TTL eviction."""
+        from stacktracer.core.runtime_graph import RuntimeGraph
+        from stacktracer.core.graph_compactor import GraphCompactor
+        g = RuntimeGraph()
+        # Hot node — called many times, but not seen recently
+        g.upsert_node("svc::hot", "fn", "svc")
+        for _ in range(10):
+            g.upsert_node("svc::hot", "fn", "svc")
+        g._nodes["svc::hot"].last_seen = time.time() - 7200
+        # Cold node — called once
+        g.upsert_node("svc::cold", "fn", "svc")
+        g._nodes["svc::cold"].last_seen = time.time() - 7200
+
+        c = GraphCompactor(node_ttl_s=3600.0, min_call_count=5)
+        c.compact(g)
+
+        assert "svc::hot" in g._nodes    # protected by min_call_count
+        assert "svc::cold" not in g._nodes
+
+    def test_cap_eviction_when_over_limit(self):
+        from stacktracer.core.graph_compactor import GraphCompactor
+        g = self._make_graph_with_nodes(100)
+        c = GraphCompactor(max_nodes=50, evict_to_ratio=0.8, node_ttl_s=999_999)
+        stats = c.compact(g)
+        assert len(g._nodes) <= 50
+        assert stats["cap_evicted"] > 0
+
+    def test_compact_runs_counter_increments(self):
+        from stacktracer.core.runtime_graph import RuntimeGraph
+        from stacktracer.core.graph_compactor import GraphCompactor
+        g = RuntimeGraph()
+        c = GraphCompactor()
+        c.compact(g)
+        c.compact(g)
+        assert c._compact_runs == 2

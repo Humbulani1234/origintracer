@@ -134,11 +134,13 @@ class TracerMiddleware:
         ))
 
     def _error(self, request: Any, exc: Exception, trace_id: str) -> None:
+        duration_ns = int((time.perf_counter() - request._st_t0) * 1e9)
         emit(NormalizedEvent.now(
             probe          = "django.exception",
             trace_id       = trace_id,
             service        = "django",
             name           = request.path,
+            duration_ns    = duration_ns,        # ← how long before it blew up
             exception_type = type(exc).__name__,
             exception_msg  = str(exc)[:200],
             source         = "middleware",

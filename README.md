@@ -460,67 +460,11 @@ uvicorn stacktracer.backend.main:app --host 0.0.0.0 --port 8000
 | `GET  /api/v1/status` | Engine and memory stats |
 | `GET  /health` | Liveness probe |
 
----
-
-## Project structure
-
-```
-stacktracer/
-├── __init__.py                  Public API: init(), trace(), mark_deployment()
-├── requirements.txt
-├── config/
-│   └── probes.yaml              Package defaults — never edit directly
-│
-├── core/                        Stack-agnostic. No probe imports.
-│   ├── event_schema.py          NormalizedEvent + ProbeTypeRegistry (open, extensible)
-│   ├── runtime_graph.py         Directed graph with adjacency queries
-│   ├── graph_normalizer.py      Collapses high-cardinality names before graph insertion
-│   ├── graph_compactor.py       LRU + TTL eviction — keeps graph memory bounded
-│   ├── graph_serializer.py      Protobuf / MessagePack / JSON graph serialization
-│   ├── stacktracer.proto        Protobuf schema for graph wire format
-│   ├── temporal.py              Diff-based change log (time travel)
-│   ├── causal.py                PatternRegistry + built-in rules
-│   ├── semantic.py              Label → node/service mapping
-│   └── engine.py                Central coordinator
-│
-├── sdk/                         Probe ↔ engine interface
-│   ├── base_probe.py            BaseProbe + ProbeRegistry (auto-discovery)
-│   └── emitter.py               emit() — the only probe→engine path
-│
-├── probes/                      Built-in probes. Emit only, no core imports.
-│   ├── asyncio_probe.py         4-layer: _run_once patch, __step (3.11), eBPF (3.12+), create_task
-│   ├── django_probe.py          TracerMiddleware + URL/view hooks
-│   ├── uvicorn_probe.py         H11Protocol + HttpToolsProtocol run_asgi patch
-│   ├── gunicorn_probe.py        Arbiter + Worker lifecycle, sync request handling
-│   ├── nginx_probe.py           eBPF uprobes (6 symbols) or log-tail fallback
-│   └── kernel_probe.py          eBPF kprobes on tcp_sendmsg / tcp_recvmsg
-│
-├── context/
-│   └── vars.py                  ContextVar trace/span propagation
-│
-├── storage/
-│   └── repository.py            PostgreSQL + ClickHouse + InMemory backends
-│
-├── query/
-│   └── parser.py                DSL parser + graph-aware executor
-│
-├── buffer/
-│   └── uploader.py              Background batch uploader to hosted backend
-│
-├── backend/
-│   └── main.py                  FastAPI ingest + query + graph API
-│
-├── tests/
-│   └── test_full_stack.py       Full test suite (no external dependencies)
-│
-└── applications/                Demo applications — see their own READMEs
-    ├── django_app/              Django + gunicorn + uvicorn + nginx demo
-    └── celery_app/              Celery custom probe + rules end-to-end demo
-```
 
 ---
 
 ## Overhead
+
 
 | Component | Cost |
 |---|---|

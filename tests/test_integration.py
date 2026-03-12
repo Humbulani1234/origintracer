@@ -282,7 +282,7 @@ class TestSnapshotRoundTrip:
         Simulate the full agent→backend pipeline:
             1. Agent builds graph and serialises it
             2. Backend receives bytes and deserialises
-            3. Backend serves a DSL query from the deserialised graph
+            3. Backend mounts the graph on an Engine and serves a DSL query
         """
         pytest.importorskip("msgpack")
         from stacktracer.core.runtime_graph import RuntimeGraph
@@ -297,13 +297,238 @@ class TestSnapshotRoundTrip:
         g.upsert_edge("django::api_view", "postgres::SELECT users", "calls")
         data = MsgpackSerializer().serialize(g)
 
-        # Backend side — deserialise and query
+        # Backend side — deserialise and mount on an engine
+        # execute() needs engine.graph, engine.semantic, engine.temporal, etc.
+        # Passing a raw RuntimeGraph directly will AttributeError.
         g2     = MsgpackSerializer().deserialize(data)
-        result = execute(parse("HOTSPOT TOP 3"), g2)
+        engine = Engine(snapshot_interval_s=9999)
+        engine.graph = g2   # mount the deserialised graph
+
+        result = execute(parse("HOTSPOT TOP 3"), engine)
 
         assert "data" in result
         top = result["data"][0]["node"]
         assert top == "django::api_view"  # called 3 times vs postgres 1
+
+
+# ====================================================================== #
+# N+1 query detection — end to end
+# ====================================================================== #
+
+class TestNPlusOneEndToEnd:
+    """
+    The scenario confirmed live in the REPL:
+        GET /n1/ → NPlusOneView
+            SELECT author  (×1)
+            SELECT book WHERE author_id=%s  (×10)
+        CAUSAL → n_plus_one fires at ≥ 85% confidence
+
+    This test owns the full path:
+        emit() → engine.process() → RuntimeGraph
+              → causal registry → n_plus_one rule
+              → DSL CAUSAL query → result
+
+    If N_PLUS_ONE breaks at any layer, this is the test that catches it.
+    """
+
+    def setup_method(self):
+        tracker = ActiveRequestTracker()
+        self.engine = Engine(
+            causal_registry     = build_default_registry(tracker=tracker),
+            snapshot_interval_s = 9999,
+        )
+        self.engine.tracker = tracker
+        bind_engine(self.engine)
+
+    def _emit_nplusone_request(self, n_authors: int = 1, books_per_author: int = 10):
+        """
+        Emit a single request that matches the N+1 pattern.
+        Probe metadata mirrors what the Django probe emits:
+          - view events use probe="django.view.enter"
+          - db query events use probe="django.db.query"
+        """
+        tid = str(uuid.uuid4())
+
+        emit(NormalizedEvent.now(
+            "django.view.enter", tid, "django", "NPlusOneView",
+        ))
+
+        for _ in range(n_authors):
+            emit(NormalizedEvent.now(
+                "django.db.query", tid, "django",
+                'SELECT "django_tracer_author"."id" FROM "django_tracer_author"',
+                duration_ns=8_000_000,
+            ))
+
+        for _ in range(n_authors * books_per_author):
+            emit(NormalizedEvent.now(
+                "django.db.query", tid, "django",
+                'SELECT "django_tracer_book"."id" FROM "django_tracer_book" WHERE "django_tracer_book"."author_id" = %s',
+                duration_ns=2_500_000,
+            ))
+
+        emit(NormalizedEvent.now(
+            "django.view.exit", tid, "django", "NPlusOneView",
+            duration_ns=50_000_000,
+        ))
+
+    def test_n_plus_one_rule_fires_via_causal(self):
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
+
+        matches = self.engine.evaluate()
+        rule_names = [m.rule_name for m in matches]
+        assert "n_plus_one" in rule_names, (
+            f"Expected n_plus_one in causal matches. Got: {rule_names}. "
+            f"Graph nodes: {[n.id for n in self.engine.graph.all_nodes()]}"
+        )
+
+    def test_n_plus_one_confidence_above_threshold(self):
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
+
+        matches = self.engine.evaluate()
+        m = next((m for m in matches if m.rule_name == "n_plus_one"), None)
+        assert m is not None
+        assert m.confidence >= 0.85
+
+    def test_n_plus_one_evidence_names_query_and_ratio(self):
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
+
+        matches = self.engine.evaluate()
+        m = next(m for m in matches if m.rule_name == "n_plus_one")
+        assert m.evidence.get("ratio", 0) >= 5
+        assert "query" in m.evidence or "db_node" in m.evidence
+
+    def test_n_plus_one_dsl_causal_query_returns_it(self):
+        """End-to-end through the DSL layer, same as the REPL CAUSAL command."""
+        from stacktracer.query.parser import parse, execute
+
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
+
+        result = execute(parse("CAUSAL"), self.engine)
+        assert "data" in result
+        rule_names = [m["rule"] for m in result["data"]]
+        assert "n_plus_one" in rule_names
+
+    def test_n_plus_one_silent_with_prefetch(self):
+        """
+        After adding prefetch_related the book query fires once, not 10 times.
+        The rule should go silent — ratio drops below threshold.
+        """
+        tid = str(uuid.uuid4())
+
+        emit(NormalizedEvent.now("django.view.enter", tid, "django", "FixedView"))
+        emit(NormalizedEvent.now(
+            "django.db.query", tid, "django",
+            'SELECT "django_tracer_author"."id" FROM "django_tracer_author"',
+        ))
+        # prefetch_related: ONE query for all books, not 10
+        emit(NormalizedEvent.now(
+            "django.db.query", tid, "django",
+            'SELECT "django_tracer_book"."id" FROM "django_tracer_book" WHERE author_id IN (%s)',
+        ))
+        emit(NormalizedEvent.now("django.view.exit", tid, "django", "FixedView"))
+
+        matches = self.engine.evaluate()
+        n1_matches = [m for m in matches if m.rule_name == "n_plus_one"]
+        assert n1_matches == [], (
+            "n_plus_one fired after prefetch fix — ratio should be 1:1, below threshold"
+        )
+
+
+# ====================================================================== #
+# Gunicorn worker topology — end to end
+# ====================================================================== #
+
+class TestGunicornTopologyEndToEnd:
+    """
+    Verify the full gunicorn topology chain is built through emit():
+        gunicorn::master ──spawned──► gunicorn::UvicornWorker ──handled──► uvicorn::/n1/
+
+    _add_structural_edges is unit-tested in test_core_graph.py.
+    This test verifies the wiring: that the engine calls _add_structural_edges
+    correctly on every processed event so the edges actually appear at runtime.
+    """
+
+    def setup_method(self):
+        self.engine = Engine(
+            causal_registry     = build_default_registry(),
+            snapshot_interval_s = 9999,
+        )
+        bind_engine(self.engine)
+
+    def test_master_worker_spawned_edge_built_via_emit(self):
+        emit(NormalizedEvent.now(
+            "gunicorn.master.start", "t-guni", "gunicorn", "master",
+        ))
+        emit(NormalizedEvent.now(
+            "gunicorn.worker.fork", "t-guni", "gunicorn", "UvicornWorker",
+            worker_pid=14442,
+        ))
+
+        g = self.engine.graph
+        assert "gunicorn::master"        in [n.id for n in g.all_nodes()]
+        assert "gunicorn::UvicornWorker" in [n.id for n in g.all_nodes()]
+
+        spawned = [
+            e for e in g.neighbors("gunicorn::master")
+            if e.edge_type == "spawned" and e.target == "gunicorn::UvicornWorker"
+        ]
+        assert spawned, (
+            "No 'spawned' edge from gunicorn::master → gunicorn::UvicornWorker. "
+            "Check engine.process() calls graph.add_from_event() which calls "
+            "_add_structural_edges for gunicorn.worker.fork events."
+        )
+
+    def test_worker_handled_edge_built_on_request(self):
+        """Worker→request 'handled' edge appears when uvicorn processes a request."""
+        emit(NormalizedEvent.now(
+            "gunicorn.master.start", "t-guni", "gunicorn", "master",
+        ))
+        emit(NormalizedEvent.now(
+            "gunicorn.worker.fork", "t-guni", "gunicorn", "UvicornWorker",
+            worker_pid=14442,
+        ))
+        emit(NormalizedEvent.now(
+            "uvicorn.request.receive", str(uuid.uuid4()), "uvicorn", "/n1/",
+            worker_pid=14442,
+        ))
+
+        g = self.engine.graph
+        handled = [
+            e for e in g.neighbors("gunicorn::UvicornWorker")
+            if e.edge_type == "handled"
+        ]
+        assert handled, (
+            "No 'handled' edge from gunicorn::UvicornWorker → uvicorn::/n1/. "
+            "Check _add_structural_edges for uvicorn.request.receive events."
+        )
+
+    def test_worker_imbalance_fires_via_causal(self):
+        """
+        Two workers where worker-0 handles all requests and worker-1 is idle
+        should fire WORKER_IMBALANCE through the causal registry.
+        """
+        # Two workers fork
+        for pid, name in [(14442, "UvicornWorker-0"), (14443, "UvicornWorker-1")]:
+            emit(NormalizedEvent.now(
+                "gunicorn.worker.fork", "t-guni", "gunicorn", name,
+                worker_pid=pid,
+            ))
+
+        # worker-0 handles 10 requests, worker-1 handles 1
+        for i in range(10):
+            emit(NormalizedEvent.now(
+                "uvicorn.request.receive", str(uuid.uuid4()), "uvicorn", "/api/",
+                worker_pid=14442,
+            ))
+        emit(NormalizedEvent.now(
+            "uvicorn.request.receive", str(uuid.uuid4()), "uvicorn", "/api/",
+            worker_pid=14443,
+        ))
+
+        matches = self.engine.evaluate()
+        rule_names = [m.rule_name for m in matches]
+        assert "worker_imbalance" in rule_names
 
 
 # ====================================================================== #
