@@ -5,24 +5,35 @@ A simple but graph-aware query DSL.
 
 Grammar:
     QUERY := VERB METRIC [WHERE FILTERS] [LIMIT N] [AS system LABEL]
-
     VERB    := SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL
-    METRIC  := latency | events | path | graph | changes
+    METRIC  := latency | events | path | graph | nodes | edges |
+               status | active | probes | rules | semantic | 
     FILTERS := FILTER [AND FILTER]*
     FILTER  := FIELD OP VALUE
-    OP      := = | > | < | >=| <=| LIKE
-    FIELD   := service | probe | system | trace_id | node | name
+    OP      := = | > | < | >= | <= | LIKE
+    FIELD   := service | probe | system | trace_id | node | name | tags
     VALUE   := quoted string | number
 
 Examples:
     SHOW latency WHERE service = "django"
-    SHOW events WHERE probe = "asyncio.task.block" LIMIT 50
+    SHOW latency WHERE system = "database"
+    SHOW graph
+    SHOW graph WHERE system = "worker"
+    SHOW nodes WHERE service = "gunicorn"
+    SHOW edges
+    SHOW events WHERE probe = "django.db.query" LIMIT 20
+    SHOW status
+    SHOW active
+    SHOW probes
+    SHOW rules
+    SHOW semantic
     TRACE abc123def456
     SHOW path WHERE trace_id = "abc123"
-    BLAME WHERE system = "export"
+    BLAME WHERE system = "db"
     HOTSPOT TOP 10
     DIFF SINCE deployment
     CAUSAL
+    CAUSAL WHERE tags = "blocking,n+1"
 
 The executor traverses the RuntimeGraph and TemporalStore, not raw DB rows,
 so queries reflect the live, structured model — not flat event logs.
@@ -162,15 +173,6 @@ here. local_server._evaluate() is now a single line:
 
     parsed = parse(query_str)
     return {"ok": True, "data": execute(parsed, engine)}
-
-Supported verbs:
-    SHOW   latency | events | path | graph | nodes | edges |
-           status | active | probes | rules | semantic | changes
-    TRACE  <trace_id>
-    BLAME  WHERE system = "<label>"
-    HOTSPOT [TOP N]
-    DIFF   [SINCE <label|timestamp>]
-    CAUSAL [WHERE tags = "<tag,...>"]
 """
 
 import time
@@ -217,29 +219,21 @@ def _exec_show(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
 
     node_scope = None
 
-    # system= is always a semantic label
-    if "system" in filters:
-        label      = filters["system"]
-        node_scope = engine.semantic.resolve_nodes(label, engine.graph)
-        if not node_scope:
+    # NEW — handles system=, service=, node= all through the same semantic layer
+    node_scope = None
+    candidate  = filters.get("system") or filters.get("service") or filters.get("node")
+
+    if candidate:
+        resolved = engine.semantic.resolve_nodes(candidate, engine.graph)
+        if resolved:
+            node_scope = resolved
+        elif "system" in filters:
+            # system= is always a semantic label — hard error if not found
             return {
-                "error":     f"Unknown semantic label '{label}'",
+                "error":     f"Unknown semantic label '{candidate}'",
                 "available": engine.semantic.all_labels(),
             }
-
-    # service= tries semantic first, falls back to literal service name match
-    elif "service" in filters:
-        label      = filters["service"]
-        node_scope = engine.semantic.resolve_nodes(label, engine.graph)
-        if not node_scope:
-            # not a semantic label — treat as a literal service filter downstream
-            node_scope = None   # let _show_latency handle it via n.service == service
-
-    # node= or name= can also be semantic labels
-    elif "node" in filters or "name" in filters:
-        label      = filters.get("node") or filters.get("name")
-        node_scope = engine.semantic.resolve_nodes(label, engine.graph)
-        # if no match, fall through — could be a literal node id
+        # service= and node= fall through silently — handled as literal filters below
 
     handlers = {
         "latency":  lambda: _show_latency(engine, filters, node_scope, query.limit),
@@ -608,6 +602,7 @@ def _exec_causal(query: ParsedQuery, engine: Any) -> Dict:
         tags = [t.strip() for t in str(query.filters["tags"]).split(",")]
 
     matches = engine.evaluate(tags=tags)
+    print(">>>>MATCHES RULES:", matches)
     return {
         "verb":        "CAUSAL",
         "match_count": len(matches),

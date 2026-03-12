@@ -95,6 +95,24 @@ semantic:
       - "django::INSERT.*"
       - "django::UPDATE.*"
       - "django::DELETE.*"
+  
+  - label: export
+    description: "The full export pipeline (Exporter service + all dependencies)"
+    services:
+      - exporter
+    node_patterns:
+      - "django::handle_export"
+      - "django::flags_client.*"
+    tags:
+      - revenue-critical
+
+  - label: auth
+    description: "Authentication and authorisation"
+    services:
+      - auth
+    node_patterns:
+      - "django::authenticate"
+      - "django::check_permissions"
 
 # ── Normalization rules ───────────────────────────────────────────────────
 # Applied AFTER built-in patterns (UUID, numeric ID, memory address, SQL).

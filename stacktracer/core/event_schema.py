@@ -159,18 +159,24 @@ class NormalizedEvent:
         service: str,
         name: str,
         parent_span_id: Optional[str] = None,
+        duration_ns: Optional[int] = None,   # ← extract explicitly
+        pid: Optional[int] = None,           # ← same for pid/tid if probes pass them
+        tid: Optional[int] = None,
         **metadata: Any,
     ) -> "NormalizedEvent":
         """
         Constructor which captures other metadata such as timestamps at call site.
         """
         return NormalizedEvent(
-            probe=probe,
-            service=service,
-            name=name,
-            trace_id=trace_id,
-            parent_span_id=parent_span_id,
-            metadata=metadata,
+            probe          = probe,
+            service        = service,
+            name           = name,
+            trace_id       = trace_id,
+            parent_span_id = parent_span_id,
+            duration_ns    = duration_ns,    # ← lands on the dataclass field
+            pid            = pid,
+            tid            = tid,
+            metadata       = metadata,       # ← only genuinely unknown kwargs
         )
     
     def to_dict(self) -> Dict[str, Any]:
