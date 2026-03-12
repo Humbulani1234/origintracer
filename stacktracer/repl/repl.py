@@ -168,21 +168,14 @@ def render(result: dict) -> None:
 
     data = result.get("data")
 
-    # Unwrap executor envelope — executor returns {"metric": "...", "data": <payload>}
-    # local_server wraps that in {"ok": True, "data": <executor_result>}
-    # So result["data"] is the executor result, and the real payload is inside that.
-    if isinstance(data, dict) and "data" in data:
-        verb   = data.get("verb",   "")
-        metric = data.get("metric", "")
-        data   = data["data"]        # ← unwrap to actual payload
-    else:
-        verb   = result.get("verb",   "")
-        metric = result.get("metric", "")
-
-    # error inside executor result
+    # Agent wrapped the DSL error inside data
     if isinstance(data, dict) and "error" in data and len(data) == 1:
         err(data["error"])
         return
+
+    # Pull verb/metric either from the top-level response or from data
+    verb   = result.get("verb",   data.get("verb",   "") if isinstance(data, dict) else "")
+    metric = result.get("metric", data.get("metric", "") if isinstance(data, dict) else "")
 
     # ── CAUSAL ────────────────────────────────────────────────────
     if verb == "CAUSAL":
@@ -277,7 +270,7 @@ def render(result: dict) -> None:
         return
 
     # ── SHOW STATUS ───────────────────────────────────────────────
-    if verb == "STATUS" or (isinstance(data, dict) and "graph_nodes" in data):
+    if isinstance(data, dict) and "graph_nodes" in data:
         header("Engine Status")
         for k, v in data.items():
             print(f"  {c(k, DIM):<30} {c(v, WHITE)}")
@@ -485,6 +478,7 @@ def cmd_help() -> None:
         ('BLAME WHERE system = "export"',                        'Upstream callers of a system'),
         ('DIFF SINCE deployment',                                'Graph changes after named event'),
         ('TRACE <trace_id>',                                     'Reconstruct critical path'),
+        ('\\stitch <trace_id>',                                   'Stitch trace across ALL worker processes'),
     ]
     for q, desc in queries:
         print(f"  {c(q, CYAN)}")
@@ -512,27 +506,103 @@ def cmd_help() -> None:
 # Main loop
 # ------------------------------------------------------------------ #
 
-HISTORY_FILE = os.path.expanduser("~/.stacktracer_history")
-import os
-from pathlib import Path
+def cmd_stitch(trace_id: str) -> None:
+    """
+    Query every live worker socket for the same trace_id and print
+    a unified timeline across all processes, ordered by timestamp.
 
-def _live_sockets() -> list:
-    """Return only sockets whose owning process is still alive."""
-    sockets = []
-    for path in sorted(Path("/tmp").glob("stacktracer-*.sock")):
+    This is the cross-process story: one HTTP request, one Celery task,
+    two processes, one trace. The trace_id is the thread connecting them.
+
+    Usage:
+        \\stitch abc123-...
+    """
+    if not trace_id:
+        err("Usage: \\stitch <trace_id>")
+        return
+
+    sockets  = discover_sockets()
+    if not sockets:
+        err("No workers found.")
+        return
+
+    # Collect stages from every socket that knows this trace_id
+    all_stages: list[dict] = []
+    found_in: list[str]    = []
+
+    for sock in sockets:
+        pid = sock.replace(_SOCKET_PREFIX, "").replace(_SOCKET_SUFFIX, "")
         try:
-            pid = int(path.stem.split("-")[1])
-            os.kill(pid, 0)   # signal 0 = existence check, no actual signal
-            sockets.append((pid, path))
-        except (ValueError, ProcessLookupError, PermissionError) as e:
-            # ProcessLookupError → process is dead, stale socket
-            # PermissionError   → process alive but not ours, still valid
-            if isinstance(e, ProcessLookupError):
-                path.unlink(missing_ok=True)   # clean up while we're here
-                continue
-            sockets.append((pid, path))
-    return sockets
-sockets = _live_sockets()
+            result = query(sock, f"TRACE {trace_id}")
+            stages = result.get("data", [])
+            if isinstance(stages, list) and stages:
+                for s in stages:
+                    s["_pid"]    = pid
+                    s["_socket"] = sock
+                all_stages.extend(stages)
+                found_in.append(pid)
+        except Exception:
+            pass  # worker may have restarted — skip silently
+
+    if not all_stages:
+        dim(f"  Trace {trace_id[:16]}… not found in any worker.")
+        dim(f"  Searched {len(sockets)} socket(s).")
+        return
+
+    # Sort by timestamp if present, otherwise keep original order
+    all_stages.sort(key=lambda s: s.get("timestamp", 0))
+
+    # Print unified timeline
+    print()
+    print(
+        c(f"  Trace  ", BOLD) +
+        c(trace_id[:24] + "…", CYAN) +
+        c(f"  across {len(found_in)} process(es): pid {', '.join(found_in)}", DIM)
+    )
+    print()
+
+    # Group label per pid so the reader sees process boundaries clearly
+    prev_pid = None
+    total    = 0
+
+    for stage in all_stages:
+        pid     = stage.get("_pid", "?")
+        probe   = stage.get("probe", "?")
+        service = stage.get("service", "?")
+        name    = stage.get("name", "?")
+        dur     = stage.get("duration_ms")
+
+        # Print process boundary header when we cross into a new process
+        if pid != prev_pid:
+            process_label = (
+                "gunicorn/django worker" if "gunicorn" not in probe else "gunicorn worker"
+            )
+            print(c(f"  ── pid={pid} ({'celery worker' if 'celery' in probe else 'gunicorn worker'}) ──", DIM))
+            prev_pid = pid
+
+        dur_str = f"{dur:8.2f}ms" if dur is not None else "        —"
+        bar_len = int(min((dur or 0) / 5, 40))
+        bar     = "▓" * bar_len
+        colour  = RED if (dur or 0) > 100 else YELLOW if (dur or 0) > 20 else GREEN
+
+        print(
+            c(f"  {dur_str}  ", WHITE) +
+            c(f"{bar:<40}", colour) +
+            c(f"  {probe}", BOLD) +
+            c(f"  {service}::{name}", DIM)
+        )
+        total += dur or 0
+
+    print(c(
+        f"\n  End-to-end: {total:.2f}ms  ·  "
+        f"{len(all_stages)} stages  ·  "
+        f"{len(found_in)} process(es)\n",
+        BOLD, CYAN,
+    ))
+
+
+HISTORY_FILE = os.path.expanduser("~/.stacktracer_history")
+
 
 def main():
     try:
@@ -612,15 +682,13 @@ def main():
                         f"Reconnected  pid={d.get('pid', '?')}  "
                         f"nodes={d.get('graph_nodes', '?')}"
                     )
+            elif cmd == "stitch":
+                cmd_stitch(args.strip())
             else:
                 err(f"Unknown command: \\{cmd}  (try \\help)")
             continue
 
         # ── DSL query — forwarded verbatim to the live engine ──────
-
-        # import pdb
-        # pdb.set_trace()
-
         t0      = time.perf_counter()
         result  = query(sock_path, raw)
         elapsed = (time.perf_counter() - t0) * 1000

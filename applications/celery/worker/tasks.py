@@ -1,97 +1,102 @@
 """
-myworker/tasks.py
+myapp/tasks.py
 
-Three tasks that exercise different probe paths.
+Four tasks, each designed to exercise a specific causal rule:
 
-process_report(report_id)
-    Normal task. Completes cleanly. Baseline for comparison.
-    Exercises: celery.task.start → celery.task.end
+    process_report     → baseline, completes cleanly
+    send_notifications → dispatched N times per request (fan-out amplification)
+    export_data        → makes a synchronous DB call (celery_sync_db_call rule)
+    risky_job          → fails and retries  (celery_retry_amplification rule)
 
-slow_task(item_id)
-    Makes a deliberate synchronous database call.
-    Exercises: celery_sync_db_call causal rule.
-    The rule fires because the task has a postgres edge with high latency.
-
-failing_task(should_fail)
-    Fails and retries three times before giving up.
-    Exercises: celery.task.retry × 3 → celery.task.failure
-    After enough failures, triggers celery_retry_amplification rule.
+Each task accepts _trace_id as a kwarg.  The celery probe reads it so
+the trace is continuous from the Django view through to the task execution.
+The graph edge  django::view → celery::task  is built from this shared trace_id.
 """
 
+import os
 import time
 import random
+import sqlite3
 from celery import shared_task
 
 
-@shared_task(name="myworker.tasks.process_report", bind=True)
+@shared_task(name="myapp.tasks.process_report", bind=True)
 def process_report(self, report_id: int, **kwargs):
     """
-    Normal task — completes cleanly.
-
-    Simulates lightweight work with a brief async-friendly sleep.
-    In a real application this might generate a PDF, send an email,
-    or call an external API with proper timeout handling.
+    Baseline task — completes cleanly in 50-150ms.
+    Exercises: celery.task.start → celery.task.end
+    REPL: SHOW latency WHERE system = "celery"
     """
-    time.sleep(random.uniform(0.05, 0.15))   # simulate work: 50-150ms
+    time.sleep(random.uniform(0.05, 0.15))
     return {"status": "ok", "report_id": report_id}
 
 
-@shared_task(name="myworker.tasks.slow_task", bind=True)
-def slow_task(self, item_id: int, **kwargs):
+@shared_task(name="myapp.tasks.send_notification", bind=True)
+def send_notification(self, user_id: int, message: str = "", **kwargs):
     """
-    Slow task making a synchronous database call.
-
-    sqlite3.connect() is a synchronous call. In a Celery prefork worker
-    it blocks the worker process thread for the full query duration.
-    This is the pattern the celery_sync_db_call rule detects.
-
-    In a real application this pattern appears when:
-        - Django ORM is called without sync_to_async
-        - A library makes a blocking HTTP call without a timeout
-        - An unindexed database query takes too long
+    Individual notification task.
+    BulkNotifyView dispatches one of these per user_id — fan-out pattern.
+    When 10+ notifications are dispatched per HTTP request, the
+    django::BulkNotifyView → celery::send_notification edge call_count
+    diverges from the view call_count, surfacing celery_task_amplification.
+    Exercises: fan-out amplification
+    REPL: BLAME WHERE system = "celery"
     """
-    import sqlite3
-    import os
+    time.sleep(random.uniform(0.01, 0.05))
+    return {"status": "sent", "user_id": user_id}
 
-    # Simulate a slow synchronous database call (200-400ms)
-    # This blocks the worker process thread — no yielding, no timeout.
+
+@shared_task(name="myapp.tasks.export_data", bind=True)
+def export_data(self, export_id: int, **kwargs):
+    """
+    Slow task making a synchronous SQLite call on the worker thread.
+    Blocks the Celery prefork worker thread for 200-400ms per call.
+    Exercises: celery_sync_db_call causal rule
+    REPL: CAUSAL WHERE tags = "celery"
+    """
     db_path = os.path.join(os.path.dirname(__file__), "..", "demo.db")
-
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, value TEXT)")
-        conn.execute("INSERT OR IGNORE INTO items VALUES (?, ?)", (item_id, f"item_{item_id}"))
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS exports "
+            "(id INTEGER PRIMARY KEY, status TEXT)"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO exports VALUES (?, ?)",
+            (export_id, "pending"),
+        )
         conn.commit()
-
-        # Simulate slow query
-        time.sleep(random.uniform(0.2, 0.4))
-        cursor = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,))
-        result = cursor.fetchone()
+        time.sleep(random.uniform(0.2, 0.4))   # simulate slow query
+        conn.execute(
+            "UPDATE exports SET status = ? WHERE id = ?",
+            ("done", export_id),
+        )
+        conn.commit()
     finally:
         conn.close()
 
-    return {"status": "ok", "item_id": item_id, "result": result}
+    return {"status": "exported", "export_id": export_id}
 
 
 @shared_task(
-    name="myworker.tasks.failing_task",
+    name="myapp.tasks.risky_job",
     bind=True,
     max_retries=3,
     default_retry_delay=2,
 )
-def failing_task(self, should_fail: bool = True, **kwargs):
+def risky_job(self, should_fail: bool = True, **kwargs):
     """
-    Task that fails and retries.
-
-    should_fail=True  → fails all 3 retries then raises permanently
-    should_fail=False → succeeds normally
-
-    After sending enough failing tasks, the celery_retry_amplification
-    rule fires because retries significantly outnumber completions.
+    Task that fails and retries up to 3 times.
+    After enough failures the celery_retry_amplification rule fires
+    because retry node call_count >> start node call_count.
+    Exercises: celery_retry_amplification causal rule
+    REPL: CAUSAL WHERE tags = "celery"
     """
     if should_fail:
         try:
-            raise ValueError(f"Simulated failure on attempt {self.request.retries + 1}")
+            raise ValueError(
+                f"Simulated failure — attempt {self.request.retries + 1}"
+            )
         except ValueError as exc:
             if self.request.retries < self.max_retries:
                 raise self.retry(exc=exc)

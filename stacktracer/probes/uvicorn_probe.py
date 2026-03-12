@@ -266,8 +266,8 @@ class UvicornProbe(BaseProbe):
 
     def start(self) -> None:
 
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
 
         try:
             import uvicorn  # noqa: F401

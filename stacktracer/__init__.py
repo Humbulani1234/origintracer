@@ -509,7 +509,7 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
         ".probes.uvicorn_probe",
         ".probes.nginx_probe",
         ".probes.db_kprobe",
-        ".probes.celery_probe",
+        # ".probes.celery_probe"
     ]
     for module_path in _builtin_probe_modules:
         try:
@@ -517,7 +517,7 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
             importlib.import_module(module_path, package=__name__)
         except ImportError as exc:
             logger.debug("Probe module not available: %s — %s", module_path, exc)
-
+    
     _discover_user_probes(app_root)
 
     # Per-probe kwargs — keyed by probe name.
@@ -591,7 +591,7 @@ def _discover_user_probes(app_root: str) -> None:
     """
     import importlib.util
 
-    probes_dir = os.path.join(app_root, "stacktracer", "probes")
+    probes_dir = os.path.join(app_root, "probes")
     if not os.path.isdir(probes_dir):
         return
 
@@ -644,7 +644,7 @@ def _discover_user_rules(registry: Any, app_root: str) -> None:
     """
     import importlib.util
 
-    rules_dir = os.path.join(app_root, "stacktracer", "rules")
+    rules_dir = os.path.join(app_root, "rules")
     if not os.path.isdir(rules_dir):
         return
 
@@ -843,8 +843,8 @@ def init(
         MERGES key-by-key.  Keys: ttl_s, max_size
     """
 
-    import pdb
-    pdb.set_trace()
+    # import pdb
+    # pdb.set_trace()
     
     global _config, _engine, _active_probes
 

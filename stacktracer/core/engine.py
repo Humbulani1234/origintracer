@@ -89,8 +89,8 @@ class Engine:
         # add temporarily at the top of process()
         print(f">>> process() engine id={id(self)} graph id={id(self.graph)} event={event.probe}")
 
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
         
         if self.repository:
             try:

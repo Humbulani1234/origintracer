@@ -8,9 +8,9 @@ import os
 import django
 from celery import Celery
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "myworker.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "worker.settings")
 
-app = Celery("myworker")
+app = Celery("worker")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 

@@ -87,8 +87,8 @@ class _DrainThread(threading.Thread):
         # pdb.set_trace()
         
         while self._running:
-            import pdb
-            pdb.set_trace()
+            # import pdb
+            # pdb.set_trace()
             
             try:
                 events = self._buffer.drain(max_batch=500)

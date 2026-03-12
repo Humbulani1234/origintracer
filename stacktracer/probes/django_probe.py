@@ -358,8 +358,8 @@ class DjangoProbe(BaseProbe):
 
     def start(self, observe_modules=None) -> None:
 
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
 
         global _patched
 

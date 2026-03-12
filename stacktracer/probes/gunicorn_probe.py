@@ -368,8 +368,8 @@ class GunicornProbe(BaseProbe):
 
     def start(self) -> None:
 
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
 
         try:
             import gunicorn  # noqa: F401

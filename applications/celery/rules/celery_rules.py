@@ -114,53 +114,72 @@ def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
 
 def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
     """
-    Fires when the total retry count across celery nodes is more than
-    30% of the total task call count.
+    Fires when celery retry events are more than 30% of task start events.
 
-    A healthy system has retries << calls.
-    A system under downstream failure has retries approaching calls.
+    The probe emits a separate celery.task.retry event for each retry,
+    which lands as its own graph node keyed by task name + probe type.
+    We compare:
+        retry_call_count  — sum of call_count on all celery.task.retry nodes
+        start_call_count  — sum of call_count on all celery.task.start nodes
 
-    Evidence includes the specific tasks retrying most frequently.
+    This is reliable because call_count is always incremented by
+    RuntimeGraph.add_from_event() — no metadata reading needed.
     """
-    total_calls = 0
-    total_retries = 0
-    retrying_tasks = []
+    # Inline constants — same reason as celery_probe.py (no package context
+    # when loaded via spec_from_file_location)
+    TASK_START = "celery.task.start"
+    TASK_RETRY = "celery.task.retry"
+
+    start_counts:  dict[str, int] = {}   # task_name → call_count
+    retry_counts:  dict[str, int] = {}   # task_name → retry call_count
 
     for node in graph.all_nodes():
         if node.service != "celery":
             continue
 
-        calls = node.call_count or 0
-        # Retry count is stored in metadata.retries if the probe emitted it
-        retries = node.metadata.get("retries", 0) if hasattr(node, "metadata") else 0
+        probe = node.metadata.get("probe", "")
 
-        total_calls  += calls
-        total_retries += retries
+        if probe == TASK_START or node.name.endswith(".start"):
+            # node.id is "celery::myworker.tasks.failing_task"
+            task_name = node.name
+            start_counts[task_name] = (
+                start_counts.get(task_name, 0) + (node.call_count or 0)
+            )
+        elif probe == TASK_RETRY or node.name.endswith(".retry"):
+            task_name = node.name
+            retry_counts[task_name] = (
+                retry_counts.get(task_name, 0) + (node.call_count or 0)
+            )
 
-        if retries > 0 and calls > 0:
-            retry_rate = retries / calls
-            if retry_rate > 0.1:   # more than 10% of executions retried
-                retrying_tasks.append({
-                    "task": node.id,
-                    "calls": calls,
-                    "retries": retries,
-                    "retry_rate": round(retry_rate, 2),
-                })
+    total_starts  = sum(start_counts.values())
+    total_retries = sum(retry_counts.values())
 
-    if total_calls == 0:
+    if total_starts == 0:
         return False, {}
 
-    overall_retry_rate = total_retries / total_calls
-    fired = overall_retry_rate > 0.30   # more than 30% overall retry rate
+    overall_retry_rate = total_retries / total_starts
+    fired = overall_retry_rate > 0.30
+
+    # Build per-task breakdown for tasks that are retrying heavily
+    retrying_tasks = []
+    for task_name, starts in start_counts.items():
+        retries = retry_counts.get(task_name, 0)
+        if retries > 0 and starts > 0:
+            rate = retries / starts
+            if rate > 0.10:
+                retrying_tasks.append({
+                    "task":       f"celery::{task_name}",
+                    "starts":     starts,
+                    "retries":    retries,
+                    "retry_rate": round(rate, 2),
+                })
 
     return fired, {
         "overall_retry_rate": round(overall_retry_rate, 2),
-        "total_calls": total_calls,
-        "total_retries": total_retries,
-        "worst_offenders": sorted(
-            retrying_tasks,
-            key=lambda t: t["retry_rate"],
-            reverse=True,
+        "total_starts":       total_starts,
+        "total_retries":      total_retries,
+        "worst_offenders":    sorted(
+            retrying_tasks, key=lambda t: t["retry_rate"], reverse=True
         )[:5],
         "remediation": (
             "Check downstream dependencies (database, external APIs). "
