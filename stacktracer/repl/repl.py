@@ -168,14 +168,21 @@ def render(result: dict) -> None:
 
     data = result.get("data")
 
-    # Agent wrapped the DSL error inside data
+    # Unwrap executor envelope — executor returns {"metric": "...", "data": <payload>}
+    # local_server wraps that in {"ok": True, "data": <executor_result>}
+    # So result["data"] is the executor result, and the real payload is inside that.
+    if isinstance(data, dict) and "data" in data:
+        verb   = data.get("verb",   "")
+        metric = data.get("metric", "")
+        data   = data["data"]        # ← unwrap to actual payload
+    else:
+        verb   = result.get("verb",   "")
+        metric = result.get("metric", "")
+
+    # error inside executor result
     if isinstance(data, dict) and "error" in data and len(data) == 1:
         err(data["error"])
         return
-
-    # Pull verb/metric either from the top-level response or from data
-    verb   = result.get("verb",   data.get("verb",   "") if isinstance(data, dict) else "")
-    metric = result.get("metric", data.get("metric", "") if isinstance(data, dict) else "")
 
     # ── CAUSAL ────────────────────────────────────────────────────
     if verb == "CAUSAL":
@@ -270,7 +277,7 @@ def render(result: dict) -> None:
         return
 
     # ── SHOW STATUS ───────────────────────────────────────────────
-    if isinstance(data, dict) and "graph_nodes" in data:
+    if verb == "STATUS" or (isinstance(data, dict) and "graph_nodes" in data):
         header("Engine Status")
         for k, v in data.items():
             print(f"  {c(k, DIM):<30} {c(v, WHITE)}")

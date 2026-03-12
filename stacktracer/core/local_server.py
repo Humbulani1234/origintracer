@@ -173,7 +173,6 @@ class LocalQueryServer:
                 return
          
         line = raw.split(b"\n")[0]
-        print(">>>>>OUR QUERY", line)
         try:
             msg = json.loads(line.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -208,92 +207,6 @@ class LocalQueryServer:
         engine.query() for DSL queries.
         """
         q = query_str.upper().strip()
-
-        # ── Built-in commands ──────────────────────────────────────────
-
-        if q == "SHOW NODES":
-            nodes = [
-                {
-                    "id":          n.id,
-                    "service":     n.service,
-                    "node_type":   n.node_type,
-                    "call_count":  n.call_count,
-                    "duration_ns": n.total_duration_ns,
-                    "first_seen":  n.first_seen,
-                    "last_seen":   n.last_seen,
-                }
-                for n in self._engine.graph.all_nodes()
-            ]
-            return {"ok": True, "data": nodes}
-
-        if q == "SHOW EDGES":
-            edges = [
-                {"from": e.source, "to": e.target, "weight": e.call_count}  # source/target not source_id/target_id
-                for e in self._engine.graph.all_edges()
-            ]
-            return {"ok": True, "data": edges}
-
-        if q == "SHOW GRAPH":
-            nodes = [
-                {
-                    "id":          n.id,
-                    "service":     n.service,
-                    "call_count":  n.call_count,
-                    "duration_ns": n.total_duration_ns,
-                }
-                for n in self._engine.graph.all_nodes()
-            ]
-            edges = [
-                {"from": e.source, "to": e.target, "weight": e.call_count}  # same fix
-                for e in self._engine.graph.all_edges()
-            ]
-            return {"ok": True, "data": {"nodes": nodes, "edges": edges}}
-
-        if q == "SHOW STATUS":
-            graph   = self._engine.graph
-            tracker = getattr(self._engine, "tracker", None)
-            return {
-                "ok": True,
-                "data": {
-                    "pid":             self._pid,
-                    "socket":          self._path,
-                    "uptime_s":        round(time.monotonic() - getattr(self._engine, "_started_at", 0), 1),
-                    "graph_nodes":     len(list(graph.all_nodes())),
-                    "graph_edges":     len(list(graph.all_edges())),
-                    "event_log_size":  len(getattr(self._engine, "_event_log", [])),
-                    "active_requests": tracker.active_count() if tracker else 0,  # active_count() not count()
-                },
-            }
-
-        if q.startswith("SHOW TRACE "):
-            trace_id = query_str[len("SHOW TRACE "):].strip()
-            events   = [
-                {
-                    "probe":   e.probe,
-                    "service": e.service,
-                    "name":    e.name,
-                    "ts":      e.timestamp_ns,
-                }
-                for e in getattr(self._engine, "_event_log", [])
-                if e.trace_id == trace_id
-            ]
-            return {"ok": True, "data": events}
-
-        if q == "SHOW ACTIVE":
-            tracker = getattr(self._engine, "tracker", None)
-            if tracker is None:
-                return {"ok": True, "data": []}
-            # _active is the internal dict {trace_id: RequestSpan}
-            active = [
-                {
-                    "trace_id":    span.trace_id,
-                    "service":     span.service,
-                    "name":        span.name,
-                    "in_flight_ms": round(span.in_flight_ms, 1),
-                }
-                for span in tracker._active.values()
-            ]
-            return {"ok": True, "data": active}
 
         # ── DSL parser — handles everything else ──────────────────────
         #
