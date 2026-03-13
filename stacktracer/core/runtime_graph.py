@@ -19,8 +19,8 @@ from .event_schema import NormalizedEvent
 
 @dataclass
 class GraphNode:
-    id: str                          # e.g.  "django::handle_export"
-    node_type: str                   # ProbeType family: "function", "service", "syscall" …
+    id: str  # e.g.  "django::handle_export"
+    node_type: str  # ProbeType family: "function", "service", "syscall" …
     service: str
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
@@ -45,7 +45,7 @@ class GraphNode:
 class GraphEdge:
     source: str
     target: str
-    edge_type: str               # "calls", "awaits", "owns", "sends_to" …
+    edge_type: str  # "calls", "awaits", "owns", "sends_to" …
     call_count: int = 0
     total_duration_ns: int = 0
     first_seen: float = field(default_factory=time.time)
@@ -78,9 +78,15 @@ class RuntimeGraph:
 
     def __init__(self) -> None:
         self._nodes: Dict[str, GraphNode] = {}
-        self._adj: Dict[str, List[GraphEdge]] = defaultdict(list)     # forward
-        self._rev: Dict[str, List[GraphEdge]] = defaultdict(list)     # reverse
-        self._edge_index: Dict[str, GraphEdge] = {}                   # dedup key → edge
+        self._adj: Dict[str, List[GraphEdge]] = defaultdict(
+            list
+        )  # forward
+        self._rev: Dict[str, List[GraphEdge]] = defaultdict(
+            list
+        )  # reverse
+        self._edge_index: Dict[str, GraphEdge] = (
+            {}
+        )  # dedup key → edge
         self._lock = RLock()
         self.last_updated: float = time.time()
 
@@ -141,7 +147,11 @@ class RuntimeGraph:
             self.last_updated = time.time()
             return edge
 
-    def add_from_event(self, event: NormalizedEvent, parent_event: Optional[NormalizedEvent] = None) -> None:
+    def add_from_event(
+        self,
+        event: NormalizedEvent,
+        parent_event: Optional[NormalizedEvent] = None,
+    ) -> None:
         """
         Translate one NormalizedEvent into graph mutations.
         If parent_event is provided, an edge is drawn from parent → this event.
@@ -153,12 +163,19 @@ class RuntimeGraph:
 
         print(f">>> graph after add: {list(self._nodes.keys())}")
         name = event.name
-        if hasattr(self, "normalizer") and self.normalizer is not None:
+        if (
+            hasattr(self, "normalizer")
+            and self.normalizer is not None
+        ):
             name = self.normalizer.normalize(event.service, name)
 
-        node_id  = self._node_id(event.service, name)
-        node_type = event.service   # e.g. "asyncio", "django", "syscall"
-        is_entry = event.probe.endswith((".enter", ".receive", ".entry", ".start"))
+        node_id = self._node_id(event.service, name)
+        node_type = (
+            event.service
+        )  # e.g. "asyncio", "django", "syscall"
+        is_entry = event.probe.endswith(
+            (".enter", ".receive", ".entry", ".start")
+        )
         self.upsert_node(
             node_id=node_id,
             node_type=node_type,
@@ -169,9 +186,16 @@ class RuntimeGraph:
 
         if parent_event:
             parent_name = parent_event.name
-            if hasattr(self, "normalizer") and self.normalizer is not None:
-                parent_name = self.normalizer.normalize(parent_event.service, parent_name)
-            parent_id = self._node_id(parent_event.service, parent_name)
+            if (
+                hasattr(self, "normalizer")
+                and self.normalizer is not None
+            ):
+                parent_name = self.normalizer.normalize(
+                    parent_event.service, parent_name
+                )
+            parent_id = self._node_id(
+                parent_event.service, parent_name
+            )
             if parent_id != node_id:
                 self.upsert_edge(
                     source=parent_id,
@@ -179,11 +203,13 @@ class RuntimeGraph:
                     edge_type="calls",
                     duration_ns=event.duration_ns,
                 )
-        
+
         # Probe-specific structural edges — topology, not request flow
         self._add_structural_edges(node_id, event)
 
-    def _add_structural_edges(self, node_id: str, event: NormalizedEvent) -> None:
+    def _add_structural_edges(
+        self, node_id: str, event: NormalizedEvent
+    ) -> None:
         """
         Draw infrastructure topology edges based on probe type.
         Called once per event after the node is upserted.
@@ -200,21 +226,24 @@ class RuntimeGraph:
                     target=node_id,
                     edge_type="spawned",
                 )
-                
+
         elif probe == "uvicorn.request.receive":
             # worker ──handled──► request
             worker_pid = event.metadata.get("worker_pid")
             if worker_pid:
                 for nid, node in self._nodes.items():
-                    if (node.node_type == "gunicorn"
-                            and node.metadata.get("worker_pid") == worker_pid):
+                    if (
+                        node.node_type == "gunicorn"
+                        and node.metadata.get("worker_pid")
+                        == worker_pid
+                    ):
                         self.upsert_edge(
                             source=nid,
                             target=node_id,
                             edge_type="handled",
                         )
                         break
-        
+
         elif probe == "celery.worker.fork":
             # MainProcess ──spawned──► ForkPoolWorker
             # The main process emits celery.worker.fork with master_pid.
@@ -222,8 +251,11 @@ class RuntimeGraph:
             master_pid = event.metadata.get("master_pid")
             if master_pid:
                 for nid, node in self._nodes.items():
-                    if (node.node_type == "celery"
-                            and node.metadata.get("worker_pid") == master_pid):
+                    if (
+                        node.node_type == "celery"
+                        and node.metadata.get("worker_pid")
+                        == master_pid
+                    ):
                         self.upsert_edge(
                             source=nid,
                             target=node_id,
@@ -235,10 +267,17 @@ class RuntimeGraph:
             worker_pid = event.metadata.get("worker_pid")
             if worker_pid:
                 for nid, node in self._nodes.items():
-                    node_name = nid.split("::", 1)[1] if "::" in nid else nid
-                    if (node.node_type == "celery"
-                            and node_name == "ForkPoolWorker"
-                            and node.metadata.get("worker_pid") == worker_pid):
+                    node_name = (
+                        nid.split("::", 1)[1]
+                        if "::" in nid
+                        else nid
+                    )
+                    if (
+                        node.node_type == "celery"
+                        and node_name == "ForkPoolWorker"
+                        and node.metadata.get("worker_pid")
+                        == worker_pid
+                    ):
                         self.upsert_edge(
                             source=nid,
                             target=node_id,
@@ -260,7 +299,9 @@ class RuntimeGraph:
         with self._lock:
             return list(self._rev.get(node_id, []))
 
-    def reachable_from(self, node_id: str, max_depth: int = 20) -> Set[str]:
+    def reachable_from(
+        self, node_id: str, max_depth: int = 20
+    ) -> Set[str]:
         """BFS downstream — all nodes reachable from node_id."""
         visited: Set[str] = set()
         queue: deque = deque([(node_id, 0)])
@@ -274,7 +315,9 @@ class RuntimeGraph:
                     queue.append((edge.target, depth + 1))
         return visited - {node_id}
 
-    def reachable_to(self, node_id: str, max_depth: int = 20) -> Set[str]:
+    def reachable_to(
+        self, node_id: str, max_depth: int = 20
+    ) -> Set[str]:
         """BFS upstream — all nodes that can reach this node."""
         visited: Set[str] = set()
         queue: deque = deque([(node_id, 0)])
@@ -290,14 +333,22 @@ class RuntimeGraph:
 
     def nodes_by_service(self, service: str) -> List[GraphNode]:
         with self._lock:
-            return [n for n in self._nodes.values() if n.service == service]
+            return [
+                n
+                for n in self._nodes.values()
+                if n.service == service
+            ]
 
-    def hottest_nodes(self, top_n: int = 10, by: str = "call_count") -> List[GraphNode]:
+    def hottest_nodes(
+        self, top_n: int = 10, by: str = "call_count"
+    ) -> List[GraphNode]:
         """Return the N most-called (or slowest) nodes."""
         with self._lock:
             nodes = list(self._nodes.values())
         if by == "duration":
-            nodes.sort(key=lambda n: n.total_duration_ns, reverse=True)
+            nodes.sort(
+                key=lambda n: n.total_duration_ns, reverse=True
+            )
         else:
             nodes.sort(key=lambda n: n.call_count, reverse=True)
         return nodes[:top_n]

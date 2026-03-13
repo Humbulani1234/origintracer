@@ -179,7 +179,9 @@ class KprobeBridge:
         (no bcc, no root, unsupported kernel).
         """
         if os.name != "posix":
-            logger.info("kprobe bridge: not on Linux — kernel probes unavailable")
+            logger.info(
+                "kprobe bridge: not on Linux — kernel probes unavailable"
+            )
             return False
 
         try:
@@ -207,20 +209,26 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
         try:
             self._bpf = BPF(text=bridge_program)
             self._map = self._bpf["trace_context"]
-            
+
             # PINNING: Pin the map to a shared filesystem location
             pin_path = "/sys/fs/bpf/trace_context"
             try:
                 self._map.pin(pin_path)
             except Exception:
                 # If already pinned, just load it
-                self._map = BPF.get_table("trace_context", path=pin_path)
+                self._map = BPF.get_table(
+                    "trace_context", path=pin_path
+                )
 
             self._available = True
-            logger.info("kprobe bridge loaded — trace_context map ready and pinned")
+            logger.info(
+                "kprobe bridge loaded — trace_context map ready and pinned"
+            )
             return True
         except Exception as exc:
-            logger.warning("kprobe bridge failed to load: %s", exc)
+            logger.warning(
+                "kprobe bridge failed to load: %s", exc
+            )
             return False
 
     def stop(self) -> None:
@@ -259,7 +267,7 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
                 tid = os.gettid()
             else:
                 libc = ctypes.CDLL("libc.so.6")
-                tid = libc.syscall(186) # __NR_gettid
+                tid = libc.syscall(186)  # __NR_gettid
 
             key = ctypes.c_uint32(tid)
 
@@ -268,12 +276,13 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
                 _fields_ = [
                     ("trace_id", ctypes.c_char * 36),
                     ("start_ns", ctypes.c_uint64),
-                    ("service",  ctypes.c_char * 32),
-                    ("pid",      ctypes.c_uint32),
-                    ("tid",      ctypes.c_uint32),
+                    ("service", ctypes.c_char * 32),
+                    ("pid", ctypes.c_uint32),
+                    ("tid", ctypes.c_uint32),
                 ]
 
             import time
+
             entry = TraceEntry(
                 trace_id=trace_id.encode("ascii")[:35],
                 start_ns=int(time.perf_counter() * 1e9),
@@ -285,7 +294,9 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
             self._map[key] = entry
 
         except Exception as exc:
-            logger.debug("kprobe bridge register_trace error: %s", exc)
+            logger.debug(
+                "kprobe bridge register_trace error: %s", exc
+            )
 
     def unregister_trace(self) -> None:
         """
@@ -301,7 +312,7 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
                 tid = os.gettid()
             else:
                 libc = ctypes.CDLL("libc.so.6")
-                tid = libc.syscall(186) # __NR_gettid
+                tid = libc.syscall(186)  # __NR_gettid
 
             key = ctypes.c_uint32(tid)
             self._map.__delitem__(key)

@@ -46,6 +46,7 @@ logger = logging.getLogger("stacktracer.storage")
 # Abstract interface
 # ====================================================================== #
 
+
 class BaseRepository(ABC):
 
     @abstractmethod
@@ -58,10 +59,10 @@ class BaseRepository(ABC):
         self,
         *,
         trace_id: Optional[str] = None,
-        probe:    Optional[str] = None,
-        service:  Optional[str] = None,
-        since:    Optional[float] = None,
-        limit:    int = 100,
+        probe: Optional[str] = None,
+        service: Optional[str] = None,
+        since: Optional[float] = None,
+        limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """Retrieve events matching filters, newest first."""
         ...
@@ -69,11 +70,11 @@ class BaseRepository(ABC):
     @abstractmethod
     def insert_snapshot(
         self,
-        customer_id:  str,
-        data:         bytes,
-        content_type: str   = "application/msgpack",
-        node_count:   int   = 0,
-        edge_count:   int   = 0,
+        customer_id: str,
+        data: bytes,
+        content_type: str = "application/msgpack",
+        node_count: int = 0,
+        edge_count: int = 0,
     ) -> None:
         """
         Persist a serialised RuntimeGraph snapshot.
@@ -99,7 +100,7 @@ class BaseRepository(ABC):
     def insert_marker(
         self,
         customer_id: str,
-        label:       str,
+        label: str,
     ) -> None:
         """Store a deployment marker with current timestamp."""
         ...
@@ -195,7 +196,9 @@ class EventRepository(BaseRepository):
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
-                        event.metadata.get("customer_id", "default"),
+                        event.metadata.get(
+                            "customer_id", "default"
+                        ),
                         event.trace_id,
                         event.span_id,
                         event.parent_span_id,
@@ -217,25 +220,33 @@ class EventRepository(BaseRepository):
     def query_events(
         self,
         *,
-        trace_id: Optional[str]   = None,
-        probe:    Optional[str]   = None,
-        service:  Optional[str]   = None,
-        since:    Optional[float] = None,
-        limit:    int             = 100,
+        trace_id: Optional[str] = None,
+        probe: Optional[str] = None,
+        service: Optional[str] = None,
+        since: Optional[float] = None,
+        limit: int = 100,
     ) -> List[Dict[str, Any]]:
         conditions: List[str] = []
-        params:     List[Any] = []
+        params: List[Any] = []
 
         if trace_id:
-            conditions.append("trace_id = %s");   params.append(trace_id)
+            conditions.append("trace_id = %s")
+            params.append(trace_id)
         if probe:
-            conditions.append("probe = %s");       params.append(probe)
+            conditions.append("probe = %s")
+            params.append(probe)
         if service:
-            conditions.append("service = %s");     params.append(service)
+            conditions.append("service = %s")
+            params.append(service)
         if since:
-            conditions.append("wall_time >= %s");  params.append(since)
+            conditions.append("wall_time >= %s")
+            params.append(since)
 
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        where = (
+            ("WHERE " + " AND ".join(conditions))
+            if conditions
+            else ""
+        )
         params.append(limit)
 
         sql = f"""
@@ -250,9 +261,19 @@ class EventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
-            cols = ["trace_id", "span_id", "parent_span_id", "probe",
-                    "service", "name", "wall_time", "duration_ns",
-                    "pid", "tid", "metadata"]
+            cols = [
+                "trace_id",
+                "span_id",
+                "parent_span_id",
+                "probe",
+                "service",
+                "name",
+                "wall_time",
+                "duration_ns",
+                "pid",
+                "tid",
+                "metadata",
+            ]
             return [dict(zip(cols, r)) for r in rows]
         except Exception as exc:
             logger.error("PG query_events failed: %s", exc)
@@ -262,11 +283,11 @@ class EventRepository(BaseRepository):
 
     def insert_snapshot(
         self,
-        customer_id:  str,
-        data:         bytes,
+        customer_id: str,
+        data: bytes,
         content_type: str = "application/msgpack",
-        node_count:   int = 0,
-        edge_count:   int = 0,
+        node_count: int = 0,
+        edge_count: int = 0,
     ) -> None:
         try:
             with self._conn.cursor() as cur:
@@ -277,8 +298,14 @@ class EventRepository(BaseRepository):
                          node_count, edge_count, data)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (customer_id, time.time(), content_type,
-                     node_count, edge_count, data),
+                    (
+                        customer_id,
+                        time.time(),
+                        content_type,
+                        node_count,
+                        edge_count,
+                        data,
+                    ),
                 )
             self._conn.commit()
         except Exception as exc:
@@ -305,17 +332,23 @@ class EventRepository(BaseRepository):
             if row is None:
                 return None
             return {
-                "data":         bytes(row[0]),  # psycopg2 returns memoryview
+                "data": bytes(
+                    row[0]
+                ),  # psycopg2 returns memoryview
                 "content_type": row[1],
-                "received_at":  row[2],
+                "received_at": row[2],
             }
         except Exception as exc:
-            logger.error("PG get_latest_snapshot failed: %s", exc)
+            logger.error(
+                "PG get_latest_snapshot failed: %s", exc
+            )
             return None
 
     # ── Markers ──────────────────────────────────────────────────────────
 
-    def insert_marker(self, customer_id: str, label: str) -> None:
+    def insert_marker(
+        self, customer_id: str, label: str
+    ) -> None:
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -419,21 +452,31 @@ class ClickHouseRepository(BaseRepository):
 
     def __init__(
         self,
-        host:     str = "localhost",
-        port:     int = 9000,
+        host: str = "localhost",
+        port: int = 9000,
         database: str = "stacktracer",
     ) -> None:
         try:
             from clickhouse_driver import Client
-            self._client = Client(host=host, port=port, database=database)
+
+            self._client = Client(
+                host=host, port=port, database=database
+            )
             self._ensure_schema()
-            logger.info("ClickHouse connected: %s:%d/%s", host, port, database)
+            logger.info(
+                "ClickHouse connected: %s:%d/%s",
+                host,
+                port,
+                database,
+            )
         except ImportError:
             raise RuntimeError(
                 "clickhouse-driver not installed: pip install clickhouse-driver"
             )
         except Exception as exc:
-            raise RuntimeError(f"ClickHouse connection failed: {exc}") from exc
+            raise RuntimeError(
+                f"ClickHouse connection failed: {exc}"
+            ) from exc
 
     def _ensure_schema(self) -> None:
         for ddl in (
@@ -445,12 +488,15 @@ class ClickHouseRepository(BaseRepository):
             try:
                 self._client.execute(ddl)
             except Exception as exc:
-                logger.debug("ClickHouse DDL skip (may exist): %s", exc)
+                logger.debug(
+                    "ClickHouse DDL skip (may exist): %s", exc
+                )
 
     # ── Events ──────────────────────────────────────────────────────────
 
     def insert_event(self, event: NormalizedEvent) -> None:
         from datetime import datetime
+
         try:
             self._client.execute(
                 """
@@ -460,32 +506,40 @@ class ClickHouseRepository(BaseRepository):
                      duration_ns, pid, tid, metadata)
                 VALUES
                 """,
-                [(
-                    event.metadata.get("customer_id", "default"),
-                    event.trace_id,
-                    event.span_id or "",
-                    event.parent_span_id or "",
-                    event.probe,
-                    event.service,
-                    event.name,
-                    datetime.utcfromtimestamp(event.wall_time),
-                    event.duration_ns,
-                    event.pid,
-                    event.tid,
-                    json.dumps(event.metadata),
-                )],
+                [
+                    (
+                        event.metadata.get(
+                            "customer_id", "default"
+                        ),
+                        event.trace_id,
+                        event.span_id or "",
+                        event.parent_span_id or "",
+                        event.probe,
+                        event.service,
+                        event.name,
+                        datetime.utcfromtimestamp(
+                            event.wall_time
+                        ),
+                        event.duration_ns,
+                        event.pid,
+                        event.tid,
+                        json.dumps(event.metadata),
+                    )
+                ],
             )
         except Exception as exc:
-            logger.warning("ClickHouse insert_event failed: %s", exc)
+            logger.warning(
+                "ClickHouse insert_event failed: %s", exc
+            )
 
     def query_events(
         self,
         *,
-        trace_id: Optional[str]   = None,
-        probe:    Optional[str]   = None,
-        service:  Optional[str]   = None,
-        since:    Optional[float] = None,
-        limit:    int             = 100,
+        trace_id: Optional[str] = None,
+        probe: Optional[str] = None,
+        service: Optional[str] = None,
+        since: Optional[float] = None,
+        limit: int = 100,
     ) -> List[Dict[str, Any]]:
         conditions: List[str] = ["1=1"]
         params: Dict[str, Any] = {}
@@ -501,6 +555,7 @@ class ClickHouseRepository(BaseRepository):
             params["service"] = service
         if since:
             from datetime import datetime
+
             conditions.append("wall_time >= %(since)s")
             params["since"] = datetime.utcfromtimestamp(since)
 
@@ -516,22 +571,32 @@ class ClickHouseRepository(BaseRepository):
         """
         try:
             rows = self._client.execute(sql, params)
-            cols = ["trace_id", "span_id", "probe", "service",
-                    "name", "wall_time", "duration_ns", "metadata"]
+            cols = [
+                "trace_id",
+                "span_id",
+                "probe",
+                "service",
+                "name",
+                "wall_time",
+                "duration_ns",
+                "metadata",
+            ]
             return [dict(zip(cols, r)) for r in rows]
         except Exception as exc:
-            logger.error("ClickHouse query_events failed: %s", exc)
+            logger.error(
+                "ClickHouse query_events failed: %s", exc
+            )
             return []
 
     # ── Snapshots ────────────────────────────────────────────────────────
 
     def insert_snapshot(
         self,
-        customer_id:  str,
-        data:         bytes,
+        customer_id: str,
+        data: bytes,
         content_type: str = "application/msgpack",
-        node_count:   int = 0,
-        edge_count:   int = 0,
+        node_count: int = 0,
+        edge_count: int = 0,
     ) -> None:
         try:
             self._client.execute(
@@ -541,17 +606,21 @@ class ClickHouseRepository(BaseRepository):
                      node_count, edge_count, data_b64)
                 VALUES
                 """,
-                [(
-                    customer_id,
-                    time.time(),
-                    content_type,
-                    node_count,
-                    edge_count,
-                    base64.b64encode(data).decode("ascii"),
-                )],
+                [
+                    (
+                        customer_id,
+                        time.time(),
+                        content_type,
+                        node_count,
+                        edge_count,
+                        base64.b64encode(data).decode("ascii"),
+                    )
+                ],
             )
         except Exception as exc:
-            logger.warning("ClickHouse insert_snapshot failed: %s", exc)
+            logger.warning(
+                "ClickHouse insert_snapshot failed: %s", exc
+            )
 
     def get_latest_snapshot(
         self,
@@ -572,32 +641,39 @@ class ClickHouseRepository(BaseRepository):
                 return None
             row = rows[0]
             return {
-                "data":         base64.b64decode(row[0]),
+                "data": base64.b64decode(row[0]),
                 "content_type": row[1],
-                "received_at":  float(row[2]),
+                "received_at": float(row[2]),
             }
         except Exception as exc:
-            logger.error("ClickHouse get_latest_snapshot failed: %s", exc)
+            logger.error(
+                "ClickHouse get_latest_snapshot failed: %s", exc
+            )
             return None
 
     # ── Markers ──────────────────────────────────────────────────────────
 
-    def insert_marker(self, customer_id: str, label: str) -> None:
+    def insert_marker(
+        self, customer_id: str, label: str
+    ) -> None:
         try:
             self._client.execute(
                 "INSERT INTO st_markers (customer_id, label, created_at) VALUES",
                 [(customer_id, label, time.time())],
             )
         except Exception as exc:
-            logger.warning("ClickHouse insert_marker failed: %s", exc)
+            logger.warning(
+                "ClickHouse insert_marker failed: %s", exc
+            )
 
     def close(self) -> None:
-        pass   # clickhouse-driver manages connections internally
+        pass  # clickhouse-driver manages connections internally
 
 
 # ====================================================================== #
 # InMemory — dev / tests
 # ====================================================================== #
+
 
 class InMemoryRepository(BaseRepository):
     """
@@ -609,9 +685,12 @@ class InMemoryRepository(BaseRepository):
 
     def __init__(self, max_events: int = 100_000) -> None:
         from collections import deque
-        self._events:    deque               = deque(maxlen=max_events)
-        self._snapshots: Dict[str, Dict]     = {}   # customer_id → latest snapshot dict
-        self._markers:   List[Dict[str, Any]] = []
+
+        self._events: deque = deque(maxlen=max_events)
+        self._snapshots: Dict[str, Dict] = (
+            {}
+        )  # customer_id → latest snapshot dict
+        self._markers: List[Dict[str, Any]] = []
 
     # ── Events ──────────────────────────────────────────────────────────
 
@@ -621,21 +700,21 @@ class InMemoryRepository(BaseRepository):
     def query_events(
         self,
         *,
-        trace_id: Optional[str]   = None,
-        probe:    Optional[str]   = None,
-        service:  Optional[str]   = None,
-        since:    Optional[float] = None,
-        limit:    int             = 100,
+        trace_id: Optional[str] = None,
+        probe: Optional[str] = None,
+        service: Optional[str] = None,
+        since: Optional[float] = None,
+        limit: int = 100,
     ) -> List[Dict[str, Any]]:
         results = []
         for e in reversed(self._events):
             if trace_id and e.get("trace_id") != trace_id:
                 continue
-            if probe    and e.get("probe")    != probe:
+            if probe and e.get("probe") != probe:
                 continue
-            if service  and e.get("service")  != service:
+            if service and e.get("service") != service:
                 continue
-            if since    and e.get("wall_time", 0) < since:
+            if since and e.get("wall_time", 0) < since:
                 continue
             results.append(e)
             if len(results) >= limit:
@@ -646,18 +725,18 @@ class InMemoryRepository(BaseRepository):
 
     def insert_snapshot(
         self,
-        customer_id:  str,
-        data:         bytes,
+        customer_id: str,
+        data: bytes,
         content_type: str = "application/msgpack",
-        node_count:   int = 0,
-        edge_count:   int = 0,
+        node_count: int = 0,
+        edge_count: int = 0,
     ) -> None:
         self._snapshots[customer_id] = {
-            "data":         data,
+            "data": data,
             "content_type": content_type,
-            "received_at":  time.time(),
-            "node_count":   node_count,
-            "edge_count":   edge_count,
+            "received_at": time.time(),
+            "node_count": node_count,
+            "edge_count": edge_count,
         }
 
     def get_latest_snapshot(
@@ -668,19 +747,23 @@ class InMemoryRepository(BaseRepository):
         if entry is None:
             return None
         return {
-            "data":         entry["data"],
+            "data": entry["data"],
             "content_type": entry["content_type"],
-            "received_at":  entry["received_at"],
+            "received_at": entry["received_at"],
         }
 
     # ── Markers ──────────────────────────────────────────────────────────
 
-    def insert_marker(self, customer_id: str, label: str) -> None:
-        self._markers.append({
-            "customer_id": customer_id,
-            "label":       label,
-            "created_at":  time.time(),
-        })
+    def insert_marker(
+        self, customer_id: str, label: str
+    ) -> None:
+        self._markers.append(
+            {
+                "customer_id": customer_id,
+                "label": label,
+                "created_at": time.time(),
+            }
+        )
 
     def close(self) -> None:
         pass

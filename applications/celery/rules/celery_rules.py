@@ -28,46 +28,53 @@ def register(registry: PatternRegistry) -> None:
     Called automatically when this file is loaded.
     Register all rules from this file here.
     """
-    registry.register(CausalRule(
-        name="celery_sync_db_call",
-        description=(
-            "A Celery task is making synchronous database calls. "
-            "In a prefork worker, this blocks the worker process thread "
-            "for the full query duration, reducing pool throughput."
-        ),
-        tags=["celery", "blocking", "database"],
-        predicate=_sync_db_in_celery,
-        confidence=0.85,
-    ))
+    registry.register(
+        CausalRule(
+            name="celery_sync_db_call",
+            description=(
+                "A Celery task is making synchronous database calls. "
+                "In a prefork worker, this blocks the worker process thread "
+                "for the full query duration, reducing pool throughput."
+            ),
+            tags=["celery", "blocking", "database"],
+            predicate=_sync_db_in_celery,
+            confidence=0.85,
+        )
+    )
 
-    registry.register(CausalRule(
-        name="celery_retry_amplification",
-        description=(
-            "Celery tasks are being retried at a high rate. "
-            "A downstream failure (database, external API) is amplifying "
-            "into many retried tasks consuming the worker pool."
-        ),
-        tags=["celery", "retry"],
-        predicate=_retry_amplification,
-        confidence=0.80,
-    ))
+    registry.register(
+        CausalRule(
+            name="celery_retry_amplification",
+            description=(
+                "Celery tasks are being retried at a high rate. "
+                "A downstream failure (database, external API) is amplifying "
+                "into many retried tasks consuming the worker pool."
+            ),
+            tags=["celery", "retry"],
+            predicate=_retry_amplification,
+            confidence=0.80,
+        )
+    )
 
-    registry.register(CausalRule(
-        name="celery_task_duration_spike",
-        description=(
-            "One or more Celery tasks have significantly higher average "
-            "duration than the rest of the task queue. Likely a new "
-            "slow operation introduced in a recent deployment."
-        ),
-        tags=["celery", "latency"],
-        predicate=_task_duration_spike,
-        confidence=0.75,
-    ))
+    registry.register(
+        CausalRule(
+            name="celery_task_duration_spike",
+            description=(
+                "One or more Celery tasks have significantly higher average "
+                "duration than the rest of the task queue. Likely a new "
+                "slow operation introduced in a recent deployment."
+            ),
+            tags=["celery", "latency"],
+            predicate=_task_duration_spike,
+            confidence=0.75,
+        )
+    )
 
 
 # ====================================================================== #
 # Predicates
 # ====================================================================== #
+
 
 def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
     """
@@ -92,16 +99,27 @@ def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
             if target is None:
                 continue
 
-            is_db = target.service in ("postgres", "sqlite", "mysql")
-            is_slow = (target.avg_duration_ns or 0) > 50_000_000   # 50ms
+            is_db = target.service in (
+                "postgres",
+                "sqlite",
+                "mysql",
+            )
+            is_slow = (
+                target.avg_duration_ns or 0
+            ) > 50_000_000  # 50ms
 
             if is_db and is_slow:
-                evidence.append({
-                    "task": node.id,
-                    "db_node": target.id,
-                    "avg_ms": round((target.avg_duration_ns or 0) / 1e6, 1),
-                    "call_count": edge.call_count,
-                })
+                evidence.append(
+                    {
+                        "task": node.id,
+                        "db_node": target.id,
+                        "avg_ms": round(
+                            (target.avg_duration_ns or 0) / 1e6,
+                            1,
+                        ),
+                        "call_count": edge.call_count,
+                    }
+                )
 
     return bool(evidence), {
         "blocking_db_calls": evidence,
@@ -130,8 +148,10 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
     TASK_START = "celery.task.start"
     TASK_RETRY = "celery.task.retry"
 
-    start_counts:  dict[str, int] = {}   # task_name → call_count
-    retry_counts:  dict[str, int] = {}   # task_name → retry call_count
+    start_counts: dict[str, int] = {}  # task_name → call_count
+    retry_counts: dict[str, int] = (
+        {}
+    )  # task_name → retry call_count
 
     for node in graph.all_nodes():
         if node.service != "celery":
@@ -142,16 +162,16 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
         if probe == TASK_START or node.name.endswith(".start"):
             # node.id is "celery::myworker.tasks.failing_task"
             task_name = node.name
-            start_counts[task_name] = (
-                start_counts.get(task_name, 0) + (node.call_count or 0)
-            )
+            start_counts[task_name] = start_counts.get(
+                task_name, 0
+            ) + (node.call_count or 0)
         elif probe == TASK_RETRY or node.name.endswith(".retry"):
             task_name = node.name
-            retry_counts[task_name] = (
-                retry_counts.get(task_name, 0) + (node.call_count or 0)
-            )
+            retry_counts[task_name] = retry_counts.get(
+                task_name, 0
+            ) + (node.call_count or 0)
 
-    total_starts  = sum(start_counts.values())
+    total_starts = sum(start_counts.values())
     total_retries = sum(retry_counts.values())
 
     if total_starts == 0:
@@ -167,19 +187,23 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
         if retries > 0 and starts > 0:
             rate = retries / starts
             if rate > 0.10:
-                retrying_tasks.append({
-                    "task":       f"celery::{task_name}",
-                    "starts":     starts,
-                    "retries":    retries,
-                    "retry_rate": round(rate, 2),
-                })
+                retrying_tasks.append(
+                    {
+                        "task": f"celery::{task_name}",
+                        "starts": starts,
+                        "retries": retries,
+                        "retry_rate": round(rate, 2),
+                    }
+                )
 
     return fired, {
         "overall_retry_rate": round(overall_retry_rate, 2),
-        "total_starts":       total_starts,
-        "total_retries":      total_retries,
-        "worst_offenders":    sorted(
-            retrying_tasks, key=lambda t: t["retry_rate"], reverse=True
+        "total_starts": total_starts,
+        "total_retries": total_retries,
+        "worst_offenders": sorted(
+            retrying_tasks,
+            key=lambda t: t["retry_rate"],
+            reverse=True,
         )[:5],
         "remediation": (
             "Check downstream dependencies (database, external APIs). "
@@ -199,7 +223,8 @@ def _task_duration_spike(graph, temporal) -> tuple[bool, dict]:
     Correlate with DIFF SINCE deployment to confirm.
     """
     celery_nodes = [
-        n for n in graph.all_nodes()
+        n
+        for n in graph.all_nodes()
         if n.service == "celery"
         and (n.call_count or 0) >= 5
         and n.avg_duration_ns

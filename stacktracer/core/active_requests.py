@@ -67,19 +67,20 @@ from typing import Deque, Dict, List, Optional
 
 logger = logging.getLogger("stacktracer.active_requests")
 
-_DEFAULT_TTL_S    = 30.0
-_DEFAULT_MAX      = 10_000
-_EVICT_PERIOD_S   = 5.0
+_DEFAULT_TTL_S = 30.0
+_DEFAULT_MAX = 10_000
+_EVICT_PERIOD_S = 5.0
 _COMPLETION_WINDOW = 200  # keep last N completions per pattern for rule evaluation
 
 
 @dataclass
 class RequestSpan:
     """One in-flight or recently completed request."""
-    trace_id:   str
-    service:    str
-    pattern:    str           # normalized name, e.g. "GET /api/users/{id}/"
-    start_time: float         # time.monotonic()
+
+    trace_id: str
+    service: str
+    pattern: str  # normalized name, e.g. "GET /api/users/{id}/"
+    start_time: float  # time.monotonic()
     last_event: float = field(default_factory=time.monotonic)
     complete_time: Optional[float] = None
     probe_sequence: List[str] = field(default_factory=list)
@@ -109,19 +110,23 @@ class ActiveRequestTracker:
 
     def __init__(
         self,
-        ttl_s:   float = _DEFAULT_TTL_S,
-        max_size: int  = _DEFAULT_MAX,
+        ttl_s: float = _DEFAULT_TTL_S,
+        max_size: int = _DEFAULT_MAX,
     ) -> None:
-        self._ttl        = ttl_s
-        self._max        = max_size
-        self._active:    Dict[str, RequestSpan] = {}
-        self._lock       = threading.Lock()
-        self._alive      = True
+        self._ttl = ttl_s
+        self._max = max_size
+        self._active: Dict[str, RequestSpan] = {}
+        self._lock = threading.Lock()
+        self._alive = True
 
         # Ring buffer of recent completions keyed by pattern.
         # Used by causal rules to compute rolling P99.
-        self._completions: Dict[str, Deque[float]] = collections.defaultdict(
-            lambda: collections.deque(maxlen=_COMPLETION_WINDOW)
+        self._completions: Dict[str, Deque[float]] = (
+            collections.defaultdict(
+                lambda: collections.deque(
+                    maxlen=_COMPLETION_WINDOW
+                )
+            )
         )
 
         # Background eviction thread
@@ -142,8 +147,8 @@ class ActiveRequestTracker:
     def start(
         self,
         trace_id: str,
-        service:  str,
-        pattern:  str,
+        service: str,
+        pattern: str,
     ) -> RequestSpan:
         """
         Register a new in-flight request.
@@ -163,7 +168,10 @@ class ActiveRequestTracker:
                 # Evict oldest entry (FIFO)
                 oldest_key = next(iter(self._active))
                 del self._active[oldest_key]
-                logger.debug("active_requests: cap eviction of %s", oldest_key)
+                logger.debug(
+                    "active_requests: cap eviction of %s",
+                    oldest_key,
+                )
             self._active[trace_id] = span
         return span
 
@@ -198,7 +206,9 @@ class ActiveRequestTracker:
         # Store duration in the per-pattern completions ring buffer
         if span.duration_ms is not None:
             with self._lock:
-                self._completions[span.pattern].append(span.duration_ms)
+                self._completions[span.pattern].append(
+                    span.duration_ms
+                )
 
         return span
 
@@ -211,9 +221,15 @@ class ActiveRequestTracker:
         with self._lock:
             if service is None:
                 return len(self._active)
-            return sum(1 for s in self._active.values() if s.service == service)
+            return sum(
+                1
+                for s in self._active.values()
+                if s.service == service
+            )
 
-    def slow_in_flight(self, threshold_ms: float = 1000.0) -> List[RequestSpan]:
+    def slow_in_flight(
+        self, threshold_ms: float = 1000.0
+    ) -> List[RequestSpan]:
         """
         Returns in-flight requests that have been running longer than threshold_ms.
         Used by _request_duration_anomaly to detect live slowness.
@@ -222,7 +238,8 @@ class ActiveRequestTracker:
             spans = list(self._active.values())
         now = time.monotonic()
         return [
-            s for s in spans
+            s
+            for s in spans
             if (now - s.start_time) * 1000 > threshold_ms
         ]
 
@@ -243,7 +260,9 @@ class ActiveRequestTracker:
         with self._lock:
             return list(self._completions.get(pattern, []))
 
-    def percentile(self, durations: List[float], p: float) -> Optional[float]:
+    def percentile(
+        self, durations: List[float], p: float
+    ) -> Optional[float]:
         """Helper for causal rules: p99, p95 from a duration list."""
         if not durations:
             return None
@@ -257,16 +276,24 @@ class ActiveRequestTracker:
         Used by the REPL \status command to show live throughput.
         """
         with self._lock:
-            completions = {k: list(v) for k, v in self._completions.items()}
+            completions = {
+                k: list(v) for k, v in self._completions.items()
+            }
         result = {}
         for pattern, durations in completions.items():
             if not durations:
                 continue
             result[pattern] = {
-                "count":    len(durations),
-                "avg_ms":   round(sum(durations) / len(durations), 1),
-                "p99_ms":   round(self.percentile(durations, 99) or 0, 1),
-                "p50_ms":   round(self.percentile(durations, 50) or 0, 1),
+                "count": len(durations),
+                "avg_ms": round(
+                    sum(durations) / len(durations), 1
+                ),
+                "p99_ms": round(
+                    self.percentile(durations, 99) or 0, 1
+                ),
+                "p50_ms": round(
+                    self.percentile(durations, 50) or 0, 1
+                ),
             }
         return result
 
@@ -286,7 +313,8 @@ class ActiveRequestTracker:
             cutoff = time.monotonic() - self._ttl
             with self._lock:
                 stale = [
-                    tid for tid, span in self._active.items()
+                    tid
+                    for tid, span in self._active.items()
                     if span.last_event < cutoff
                 ]
                 for tid in stale:
@@ -294,5 +322,7 @@ class ActiveRequestTracker:
                     logger.debug(
                         "active_requests: TTL eviction trace_id=%s service=%s "
                         "in_flight_ms=%.1f",
-                        tid, span.service, span.in_flight_ms,
+                        tid,
+                        span.service,
+                        span.in_flight_ms,
                     )

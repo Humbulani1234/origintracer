@@ -99,18 +99,20 @@ from ..core.kprobe_bridge import get_bridge
 
 logger = logging.getLogger("stacktracer.probes.db_kprobe")
 
-ProbeTypes.register_many({
-    "postgres.query.simple":   "Postgres simple query (Q message, unencrypted)",
-    "postgres.query.parse":    "Postgres prepared statement parse (P message)",
-    "postgres.query.execute":  "Postgres prepared statement execute (E message)",
-    "postgres.bytes.sent":     "Postgres data sent (encrypted or unknown format)",
-    "redis.command.execute":   "Redis command sent to server",
-    "redis.pipeline.sent":     "Redis pipeline (multiple commands in single write)",
-})
+ProbeTypes.register_many(
+    {
+        "postgres.query.simple": "Postgres simple query (Q message, unencrypted)",
+        "postgres.query.parse": "Postgres prepared statement parse (P message)",
+        "postgres.query.execute": "Postgres prepared statement execute (E message)",
+        "postgres.bytes.sent": "Postgres data sent (encrypted or unknown format)",
+        "redis.command.execute": "Redis command sent to server",
+        "redis.pipeline.sent": "Redis pipeline (multiple commands in single write)",
+    }
+)
 
 # Default ports — override in stacktracer.yaml if non-standard
 DEFAULT_POSTGRES_PORT = 5432
-DEFAULT_REDIS_PORT    = 6379
+DEFAULT_REDIS_PORT = 6379
 
 # Maximum query/command bytes to capture in BPF
 # Larger values increase BPF stack usage; 200 bytes captures most query patterns
@@ -302,7 +304,10 @@ TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
 # BPF captures raw bytes; Python extracts meaning.
 # Easier to maintain, easier to test, no BPF stack size concerns.
 
-def _parse_postgres(payload: bytes, payload_len: int) -> Tuple[str, str]:
+
+def _parse_postgres(
+    payload: bytes, payload_len: int
+) -> Tuple[str, str]:
     """
     Parse the Postgres wire protocol frontend message.
     Returns (probe_type, query_text).
@@ -323,7 +328,9 @@ def _parse_postgres(payload: bytes, payload_len: int) -> Tuple[str, str]:
     if msg_type == "Q":
         # Simple query: payload[5:] is null-terminated query string
         raw = payload[5:payload_len]
-        query = raw.split(b"\x00")[0].decode("utf-8", errors="replace")
+        query = raw.split(b"\x00")[0].decode(
+            "utf-8", errors="replace"
+        )
         return "postgres.query.simple", query
 
     elif msg_type == "P":
@@ -332,13 +339,19 @@ def _parse_postgres(payload: bytes, payload_len: int) -> Tuple[str, str]:
         # then: null-terminated query string
         raw = payload[5:payload_len]
         parts = raw.split(b"\x00", 2)
-        query = parts[1].decode("utf-8", errors="replace") if len(parts) > 1 else ""
+        query = (
+            parts[1].decode("utf-8", errors="replace")
+            if len(parts) > 1
+            else ""
+        )
         return "postgres.query.parse", query
 
     elif msg_type == "E":
         # Execute (prepared statement): named portal being executed
         raw = payload[5:payload_len]
-        portal = raw.split(b"\x00")[0].decode("utf-8", errors="replace")
+        portal = raw.split(b"\x00")[0].decode(
+            "utf-8", errors="replace"
+        )
         return "postgres.query.execute", f"EXECUTE {portal}"
 
     elif msg_type == "X":
@@ -350,7 +363,9 @@ def _parse_postgres(payload: bytes, payload_len: int) -> Tuple[str, str]:
         return "postgres.bytes.sent", ""
 
 
-def _parse_redis(payload: bytes, payload_len: int) -> Tuple[str, str]:
+def _parse_redis(
+    payload: bytes, payload_len: int
+) -> Tuple[str, str]:
     """
     Parse the Redis RESP protocol.
     Returns (probe_type, command_name).
@@ -367,7 +382,9 @@ def _parse_redis(payload: bytes, payload_len: int) -> Tuple[str, str]:
         return "redis.command.execute", ""
 
     try:
-        text = payload[:payload_len].decode("utf-8", errors="replace")
+        text = payload[:payload_len].decode(
+            "utf-8", errors="replace"
+        )
 
         if text[0] == "*":
             # Bulk array format — standard redis-py encoding
@@ -379,7 +396,11 @@ def _parse_redis(payload: bytes, payload_len: int) -> Tuple[str, str]:
             if count >= 2:
                 # Pipeline: multiple commands in one write
                 # We take the first command name as representative
-                probe_type = "redis.pipeline.sent" if count > 2 else "redis.command.execute"
+                probe_type = (
+                    "redis.pipeline.sent"
+                    if count > 2
+                    else "redis.command.execute"
+                )
             else:
                 probe_type = "redis.command.execute"
 
@@ -391,7 +412,9 @@ def _parse_redis(payload: bytes, payload_len: int) -> Tuple[str, str]:
 
         else:
             # Inline command format: "SET foo bar\r\n"
-            command = text.split()[0].upper() if text.strip() else ""
+            command = (
+                text.split()[0].upper() if text.strip() else ""
+            )
             return "redis.command.execute", command
 
     except Exception:
@@ -401,6 +424,7 @@ def _parse_redis(payload: bytes, payload_len: int) -> Tuple[str, str]:
 # ====================================================================== #
 # DBKprobe
 # ====================================================================== #
+
 
 class DBKprobe(BaseProbe):
     """
@@ -433,19 +457,20 @@ class DBKprobe(BaseProbe):
     Requires: Linux + root/CAP_BPF + bcc
     Degrades gracefully to no-op if unavailable.
     """
+
     name = "db_kprobe"
 
     def __init__(
         self,
         postgres_port: int = DEFAULT_POSTGRES_PORT,
-        redis_port:    int = DEFAULT_REDIS_PORT,
+        redis_port: int = DEFAULT_REDIS_PORT,
     ) -> None:
         self._postgres_port = postgres_port
-        self._redis_port    = redis_port
-        self._bpf           = None
-        self._thread        = None
-        self._running       = False
-        self._our_pid       = os.getpid()
+        self._redis_port = redis_port
+        self._bpf = None
+        self._thread = None
+        self._running = False
+        self._our_pid = os.getpid()
 
     def start(self) -> None:
         bridge = get_bridge()
@@ -460,7 +485,9 @@ class DBKprobe(BaseProbe):
         try:
             from bcc import BPF
         except ImportError:
-            logger.info("db_kprobe: bcc not installed — inactive")
+            logger.info(
+                "db_kprobe: bcc not installed — inactive"
+            )
             return
 
         # Inject port constants into BPF at compile time
@@ -472,12 +499,16 @@ class DBKprobe(BaseProbe):
         try:
             self._bpf = BPF(text=_DB_KPROBE_BPF, cflags=cflags)
         except Exception as exc:
-            logger.warning("db_kprobe BPF compile failed: %s", exc)
+            logger.warning(
+                "db_kprobe BPF compile failed: %s", exc
+            )
             return
 
-        self._bpf["db_events"].open_perf_buffer(self._handle_event)
+        self._bpf["db_events"].open_perf_buffer(
+            self._handle_event
+        )
         self._running = True
-        self._thread  = threading.Thread(
+        self._thread = threading.Thread(
             target=self._poll_loop,
             daemon=True,
             name="stacktracer-db-kprobe",
@@ -487,7 +518,8 @@ class DBKprobe(BaseProbe):
         logger.info(
             "db_kprobe active — observing port %d (postgres) and port %d (redis) "
             "via sys_sendmsg tracepoint",
-            self._postgres_port, self._redis_port,
+            self._postgres_port,
+            self._redis_port,
         )
 
     def stop(self) -> None:
@@ -511,47 +543,66 @@ class DBKprobe(BaseProbe):
             ev = self._bpf["db_events"].event(data)
 
             if ev.pid != self._our_pid:
-                return   # ignore other processes
+                return  # ignore other processes
 
-            trace_id = ev.trace_id.decode("ascii", errors="replace").rstrip("\x00")
+            trace_id = ev.trace_id.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
             if not trace_id:
                 return
 
-            payload     = bytes(ev.payload[:ev.payload_len])
+            payload = bytes(ev.payload[: ev.payload_len])
             payload_len = ev.payload_len
-            dst_port    = ev.dst_port
+            dst_port = ev.dst_port
 
             if dst_port == self._postgres_port:
-                probe_type, query_text = _parse_postgres(payload, payload_len)
-                emit(NormalizedEvent.now(
-                    probe=probe_type,
-                    trace_id=trace_id,
-                    service="postgres",
-                    # name is the query text — GraphNormalizer collapses literals
-                    name=query_text[:200] if query_text else "unknown",
-                    pid=ev.pid,
-                    tid=ev.tid,
-                    duration_ns=ev.duration_ns,
-                    bytes_sent=ev.bytes_sent,
-                    port=dst_port,
-                    source="kprobe",
-                    encrypted=(probe_type == "postgres.bytes.sent" and not query_text),
-                ))
+                probe_type, query_text = _parse_postgres(
+                    payload, payload_len
+                )
+                emit(
+                    NormalizedEvent.now(
+                        probe=probe_type,
+                        trace_id=trace_id,
+                        service="postgres",
+                        # name is the query text — GraphNormalizer collapses literals
+                        name=(
+                            query_text[:200]
+                            if query_text
+                            else "unknown"
+                        ),
+                        pid=ev.pid,
+                        tid=ev.tid,
+                        duration_ns=ev.duration_ns,
+                        bytes_sent=ev.bytes_sent,
+                        port=dst_port,
+                        source="kprobe",
+                        encrypted=(
+                            probe_type == "postgres.bytes.sent"
+                            and not query_text
+                        ),
+                    )
+                )
 
             elif dst_port == self._redis_port:
-                probe_type, command = _parse_redis(payload, payload_len)
-                emit(NormalizedEvent.now(
-                    probe=probe_type,
-                    trace_id=trace_id,
-                    service="redis",
-                    name=command or "UNKNOWN",
-                    pid=ev.pid,
-                    tid=ev.tid,
-                    duration_ns=ev.duration_ns,
-                    bytes_sent=ev.bytes_sent,
-                    port=dst_port,
-                    source="kprobe",
-                ))
+                probe_type, command = _parse_redis(
+                    payload, payload_len
+                )
+                emit(
+                    NormalizedEvent.now(
+                        probe=probe_type,
+                        trace_id=trace_id,
+                        service="redis",
+                        name=command or "UNKNOWN",
+                        pid=ev.pid,
+                        tid=ev.tid,
+                        duration_ns=ev.duration_ns,
+                        bytes_sent=ev.bytes_sent,
+                        port=dst_port,
+                        source="kprobe",
+                    )
+                )
 
         except Exception as exc:
-            logger.debug("db_kprobe event handling error: %s", exc)
+            logger.debug(
+                "db_kprobe event handling error: %s", exc
+            )

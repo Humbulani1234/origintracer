@@ -16,6 +16,7 @@ This lets the causal graph distinguish:
     epoll woke because postgres responded (I/O-bound wait — expected)
     epoll woke because nothing arrived yet (busy-poll — loop starvation)
 """
+
 from __future__ import annotations
 
 import asyncio, logging, os, sys, threading, time
@@ -29,16 +30,18 @@ from ..core.kprobe_bridge import get_bridge
 
 logger = logging.getLogger("stacktracer.probes.asyncio")
 
-ProbeTypes.register_many({
-    "asyncio.loop.epoll_wait":  "epoll_wait returned — fds ready, with socket type",
-    "asyncio.loop.coro_call":   "coroutine entered (sys.monitoring)",
-    "asyncio.loop.coro_return": "coroutine returned (sys.monitoring)",
-    "asyncio.task.create":      "asyncio.create_task() called",
-})
+ProbeTypes.register_many(
+    {
+        "asyncio.loop.epoll_wait": "epoll_wait returned — fds ready, with socket type",
+        "asyncio.loop.coro_call": "coroutine entered (sys.monitoring)",
+        "asyncio.loop.coro_return": "coroutine returned (sys.monitoring)",
+        "asyncio.task.create": "asyncio.create_task() called",
+    }
+)
 
 _originals: dict = {}
-_patched          = False
-_MONITORING_ID    = None
+_patched = False
+_MONITORING_ID = None
 
 # ── Enriched epoll BPF: reads dst_port from each ready fd ─────────────
 
@@ -136,155 +139,254 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
 }
 """
 
+
 class _EpollKprobe:
     def __init__(self, bridge):
-        self._bridge  = bridge
-        self._bpf     = None
-        self._thread  = None
+        self._bridge = bridge
+        self._bpf = None
+        self._thread = None
         self._running = False
-        self._pid     = os.getpid()
+        self._pid = os.getpid()
 
     def start(self) -> bool:
-        if not self._bridge.available: return False
+        if not self._bridge.available:
+            return False
         try:
             from bcc import BPF
+
             self._bpf = BPF(text=_EPOLL_BPF)
         except Exception as e:
             logger.warning("asyncio epoll BPF: %s", e)
             return False
-        self._bpf["epoll_events"].open_perf_buffer(self._on_event)
+        self._bpf["epoll_events"].open_perf_buffer(
+            self._on_event
+        )
         self._running = True
-        self._thread  = threading.Thread(target=self._poll, daemon=True,
-                                          name="stacktracer-asyncio-epoll")
+        self._thread = threading.Thread(
+            target=self._poll,
+            daemon=True,
+            name="stacktracer-asyncio-epoll",
+        )
         self._thread.start()
-        logger.info("asyncio epoll kprobe active (with fd socket-type enrichment)")
+        logger.info(
+            "asyncio epoll kprobe active (with fd socket-type enrichment)"
+        )
         return True
 
     def stop(self):
         self._running = False
-        if self._thread: self._thread.join(timeout=2)
+        if self._thread:
+            self._thread.join(timeout=2)
         self._bpf = None
 
     def _poll(self):
         while self._running and self._bpf:
-            try: self._bpf.perf_buffer_poll(timeout=100)
-            except Exception: pass
+            try:
+                self._bpf.perf_buffer_poll(timeout=100)
+            except Exception:
+                pass
 
     def _on_event(self, cpu, data, size):
-        if not self._bpf: return
+        if not self._bpf:
+            return
         try:
             ev = self._bpf["epoll_events"].event(data)
-            if ev.pid != self._pid: return
-            trace_id = ev.trace_id.decode("ascii","replace").rstrip("\x00")
-            if not trace_id: return
-            service  = ev.service.decode("ascii","replace").rstrip("\x00")
+            if ev.pid != self._pid:
+                return
+            trace_id = ev.trace_id.decode(
+                "ascii", "replace"
+            ).rstrip("\x00")
+            if not trace_id:
+                return
+            service = ev.service.decode(
+                "ascii", "replace"
+            ).rstrip("\x00")
 
             ready = []
             for i in range(min(ev.fd_count, 8)):
                 fd_info = {
-                    "fd":         ev.fds[i].fd,
-                    "events":     ev.fds[i].epoll_events,
-                    "dst_port":   ev.fds[i].dst_port,
+                    "fd": ev.fds[i].fd,
+                    "events": ev.fds[i].epoll_events,
+                    "dst_port": ev.fds[i].dst_port,
                 }
                 # Human-readable service type from port
                 p = ev.fds[i].dst_port
-                if   p == 5432: fd_info["io_type"] = "postgres"
-                elif p == 6379: fd_info["io_type"] = "redis"
-                elif p == 0:    fd_info["io_type"] = "pipe_or_signal"
-                else:           fd_info["io_type"] = "tcp"
+                if p == 5432:
+                    fd_info["io_type"] = "postgres"
+                elif p == 6379:
+                    fd_info["io_type"] = "redis"
+                elif p == 0:
+                    fd_info["io_type"] = "pipe_or_signal"
+                else:
+                    fd_info["io_type"] = "tcp"
                 ready.append(fd_info)
 
-            emit(NormalizedEvent.now(
-                probe="asyncio.loop.epoll_wait",
-                trace_id=trace_id, service=service or "asyncio",
-                name="epoll_wait", pid=ev.pid, tid=ev.tid,
-                duration_ns=ev.dur_ns, n_events=ev.n_events,
-                ready_fds=ready, source="kprobe",
-            ))
+            emit(
+                NormalizedEvent.now(
+                    probe="asyncio.loop.epoll_wait",
+                    trace_id=trace_id,
+                    service=service or "asyncio",
+                    name="epoll_wait",
+                    pid=ev.pid,
+                    tid=ev.tid,
+                    duration_ns=ev.dur_ns,
+                    n_events=ev.n_events,
+                    ready_fds=ready,
+                    source="kprobe",
+                )
+            )
         except Exception as e:
             logger.debug("asyncio epoll event: %s", e)
 
 
 # ── sys.monitoring layer (unchanged from previous version) ────────────
 
+
 def _is_coro(code) -> bool:
     return bool(code.co_flags & 0x100)
 
+
 def _setup_monitoring_312() -> bool:
     global _MONITORING_ID
-    if not hasattr(sys, "monitoring"): return False
+    if not hasattr(sys, "monitoring"):
+        return False
     tid = sys.monitoring.PROFILER_ID
     _MONITORING_ID = tid
     try:
         sys.monitoring.set_events(
             tid,
-            sys.monitoring.events.CALL | sys.monitoring.events.PY_RETURN,
+            sys.monitoring.events.CALL
+            | sys.monitoring.events.PY_RETURN,
         )
     except Exception as e:
-        logger.warning("sys.monitoring set_events: %s", e); return False
+        logger.warning("sys.monitoring set_events: %s", e)
+        return False
 
     def on_call(code, offset, callable_, arg0):
-        if not _is_coro(code): return sys.monitoring.DISABLE
+        if not _is_coro(code):
+            return sys.monitoring.DISABLE
         tid = get_trace_id()
         if tid:
-            emit(NormalizedEvent.now(probe="asyncio.loop.coro_call",
-                trace_id=tid, service="asyncio", name=code.co_qualname,
-                parent_span_id=get_span_id(), source="sys.monitoring"))
+            emit(
+                NormalizedEvent.now(
+                    probe="asyncio.loop.coro_call",
+                    trace_id=tid,
+                    service="asyncio",
+                    name=code.co_qualname,
+                    parent_span_id=get_span_id(),
+                    source="sys.monitoring",
+                )
+            )
 
     def on_ret(code, offset, retval):
-        if not _is_coro(code): return sys.monitoring.DISABLE
+        if not _is_coro(code):
+            return sys.monitoring.DISABLE
         tid = get_trace_id()
         if tid:
-            emit(NormalizedEvent.now(probe="asyncio.loop.coro_return",
-                trace_id=tid, service="asyncio", name=code.co_qualname,
-                parent_span_id=get_span_id(), source="sys.monitoring"))
+            emit(
+                NormalizedEvent.now(
+                    probe="asyncio.loop.coro_return",
+                    trace_id=tid,
+                    service="asyncio",
+                    name=code.co_qualname,
+                    parent_span_id=get_span_id(),
+                    source="sys.monitoring",
+                )
+            )
 
     try:
-        sys.monitoring.register_callback(tid, sys.monitoring.events.CALL, on_call)
-        sys.monitoring.register_callback(tid, sys.monitoring.events.PY_RETURN, on_ret)
+        sys.monitoring.register_callback(
+            tid, sys.monitoring.events.CALL, on_call
+        )
+        sys.monitoring.register_callback(
+            tid, sys.monitoring.events.PY_RETURN, on_ret
+        )
         logger.info("asyncio: sys.monitoring installed")
         return True
     except Exception as e:
-        logger.warning("sys.monitoring register: %s", e); return False
+        logger.warning("sys.monitoring register: %s", e)
+        return False
+
 
 def _teardown_monitoring_312():
     global _MONITORING_ID
-    if _MONITORING_ID is None or not hasattr(sys, "monitoring"): return
-    sys.monitoring.set_events(_MONITORING_ID, sys.monitoring.events.NO_EVENTS)
-    sys.monitoring.register_callback(_MONITORING_ID, sys.monitoring.events.CALL, None)
-    sys.monitoring.register_callback(_MONITORING_ID, sys.monitoring.events.PY_RETURN, None)
+    if _MONITORING_ID is None or not hasattr(sys, "monitoring"):
+        return
+    sys.monitoring.set_events(
+        _MONITORING_ID, sys.monitoring.events.NO_EVENTS
+    )
+    sys.monitoring.register_callback(
+        _MONITORING_ID, sys.monitoring.events.CALL, None
+    )
+    sys.monitoring.register_callback(
+        _MONITORING_ID, sys.monitoring.events.PY_RETURN, None
+    )
     _MONITORING_ID = None
+
 
 def _setup_setprofile_311() -> bool:
     orig = sys.getprofile()
     _originals["sys_profile"] = orig
+
     def _cb(frame, event, arg):
-        if event in ("call","return") and _is_coro(frame.f_code):
+        if event in ("call", "return") and _is_coro(
+            frame.f_code
+        ):
             tid = get_trace_id()
             if tid:
-                p = "asyncio.loop.coro_call" if event=="call" else "asyncio.loop.coro_return"
-                emit(NormalizedEvent.now(probe=p, trace_id=tid, service="asyncio",
-                    name=frame.f_code.co_qualname, source="sys.setprofile"))
-        if orig: orig(frame, event, arg)
+                p = (
+                    "asyncio.loop.coro_call"
+                    if event == "call"
+                    else "asyncio.loop.coro_return"
+                )
+                emit(
+                    NormalizedEvent.now(
+                        probe=p,
+                        trace_id=tid,
+                        service="asyncio",
+                        name=frame.f_code.co_qualname,
+                        source="sys.setprofile",
+                    )
+                )
+        if orig:
+            orig(frame, event, arg)
+
     sys.setprofile(_cb)
     logger.info("asyncio: sys.setprofile installed")
     return True
 
+
 def _teardown_setprofile_311():
     sys.setprofile(_originals.pop("sys_profile", None))
+
 
 def _create_task_wrapper(orig: Callable) -> Callable:
     def _wrapped(coro, *, name=None, context=None):
         tid = get_trace_id()
         if tid:
-            emit(NormalizedEvent.now(probe="asyncio.task.create", trace_id=tid,
-                service="asyncio", name=getattr(coro,"__qualname__",type(coro).__name__),
-                parent_span_id=get_span_id(), task_name=name))
-        return orig(coro, name=name) if context is None else orig(coro, name=name, context=context)
+            emit(
+                NormalizedEvent.now(
+                    probe="asyncio.task.create",
+                    trace_id=tid,
+                    service="asyncio",
+                    name=getattr(
+                        coro, "__qualname__", type(coro).__name__
+                    ),
+                    parent_span_id=get_span_id(),
+                    task_name=name,
+                )
+            )
+        return (
+            orig(coro, name=name)
+            if context is None
+            else orig(coro, name=name, context=context)
+        )
+
     return _wrapped
 
 
 # ── AsyncioProbe ──────────────────────────────────────────────────────
+
 
 class AsyncioProbe(BaseProbe):
     """
@@ -302,6 +404,7 @@ class AsyncioProbe(BaseProbe):
     The causal rule engine can now distinguish I/O-bound waits
     (expected) from busy-poll (loop starvation symptom).
     """
+
     name = "asyncio"
 
     def __init__(self):
@@ -310,11 +413,16 @@ class AsyncioProbe(BaseProbe):
     def start(self):
         global _patched
         if _patched:
-            logger.warning("asyncio probe already installed"); return
+            logger.warning("asyncio probe already installed")
+            return
 
         major, minor = sys.version_info[:2]
-        if (major, minor) not in ((3,11),(3,12),(3,13)):
-            logger.warning("asyncio probe: unsupported Python %d.%d", major, minor)
+        if (major, minor) not in ((3, 11), (3, 12), (3, 13)):
+            logger.warning(
+                "asyncio probe: unsupported Python %d.%d",
+                major,
+                minor,
+            )
             return
 
         bridge = get_bridge()
@@ -323,19 +431,28 @@ class AsyncioProbe(BaseProbe):
             if not self._epoll.start():
                 self._epoll = None
 
-        if minor >= 12: _setup_monitoring_312()
-        else:           _setup_setprofile_311()
+        if minor >= 12:
+            _setup_monitoring_312()
+        else:
+            _setup_setprofile_311()
 
         _originals["create_task"] = asyncio.create_task
-        asyncio.create_task = _create_task_wrapper(asyncio.create_task)
+        asyncio.create_task = _create_task_wrapper(
+            asyncio.create_task
+        )
         _patched = True
 
     def stop(self):
         global _patched
-        if not _patched: return
-        if self._epoll: self._epoll.stop(); self._epoll = None
-        if sys.version_info[1] >= 12: _teardown_monitoring_312()
-        else: _teardown_setprofile_311()
+        if not _patched:
+            return
+        if self._epoll:
+            self._epoll.stop()
+            self._epoll = None
+        if sys.version_info[1] >= 12:
+            _teardown_monitoring_312()
+        else:
+            _teardown_setprofile_311()
         if "create_task" in _originals:
             asyncio.create_task = _originals.pop("create_task")
         _patched = False

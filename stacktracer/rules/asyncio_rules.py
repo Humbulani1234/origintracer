@@ -2,7 +2,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..core.causal import CausalRule
 from ..core.runtime_graph import RuntimeGraph
-from ..core.temporal import TemporalStore 
+from ..core.temporal import TemporalStore
 
 
 def _new_sync_call_after_deployment(
@@ -18,7 +18,9 @@ def _new_sync_call_after_deployment(
     if not deployment_diff:
         return False, {}
 
-    new_edges = temporal.new_edges_since(deployment_diff.timestamp)
+    new_edges = temporal.new_edges_since(
+        deployment_diff.timestamp
+    )
     sync_call_edges = [k for k in new_edges if ":calls" in k]
 
     if not sync_call_edges:

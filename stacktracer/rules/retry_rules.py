@@ -2,7 +2,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..core.causal import CausalRule
 from ..core.runtime_graph import RuntimeGraph
-from ..core.temporal import TemporalStore 
+from ..core.temporal import TemporalStore
 
 
 def _retry_amplification(
@@ -14,14 +14,19 @@ def _retry_amplification(
     a symptom of upstream latency being amplified by retry loops.
     """
     hot_edges = [
-        e for e in graph.all_edges()
+        e
+        for e in graph.all_edges()
         if e.metadata.get("retries", 0) > 3
     ]
     if not hot_edges:
         return False, {}
     evidence = {
         "edges": [
-            {"source": e.source, "target": e.target, "retries": e.metadata.get("retries")}
+            {
+                "source": e.source,
+                "target": e.target,
+                "retries": e.metadata.get("retries"),
+            }
             for e in hot_edges[:5]
         ]
     }

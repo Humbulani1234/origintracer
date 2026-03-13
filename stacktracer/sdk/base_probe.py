@@ -18,6 +18,7 @@ logger = logging.getLogger("stacktracer.probes")
 # Base Probe
 # ====================================================================== #
 
+
 class BaseProbe(ABC):
     """
     All probes inherit from this class.
@@ -32,7 +33,7 @@ class BaseProbe(ABC):
     They NEVER import Engine, RuntimeGraph, or any core layer directly.
     """
 
-    name: str = ""          # Override in each subclass
+    name: str = ""  # Override in each subclass
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
@@ -55,11 +56,14 @@ class BaseProbe(ABC):
 # Probe Registry
 # ====================================================================== #
 
+
 class ProbeRegistry:
     _registry: Dict[str, Type[BaseProbe]] = {}
 
     @classmethod
-    def register(cls, probe_class: Type[BaseProbe]) -> Type[BaseProbe]:
+    def register(
+        cls, probe_class: Type[BaseProbe]
+    ) -> Type[BaseProbe]:
         """Register a probe class. Called automatically via __init_subclass__."""
         cls._registry[probe_class.name] = probe_class
         return probe_class
@@ -95,5 +99,7 @@ class ProbeRegistry:
                 probes.append(cls.instantiate(name))
                 logger.info("Loaded probe: %s", name)
             except KeyError as exc:
-                logger.warning("Unknown probe in config: %s", exc)
+                logger.warning(
+                    "Unknown probe in config: %s", exc
+                )
         return probes

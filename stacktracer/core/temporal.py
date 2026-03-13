@@ -23,8 +23,9 @@ class GraphDiff:
     The delta between two consecutive graph snapshots.
     Stored, not the full graphs.
     """
+
     timestamp: float
-    label: Optional[str]              # e.g. "deployment:abc123"
+    label: Optional[str]  # e.g. "deployment:abc123"
 
     added_node_ids: Set[str] = field(default_factory=set)
     removed_node_ids: Set[str] = field(default_factory=set)
@@ -78,24 +79,38 @@ class TemporalStore:
     # Mutation
     # ------------------------------------------------------------------ #
 
-    def capture(self, graph_snapshot: Dict[str, Any], label: Optional[str] = None) -> GraphDiff:
+    def capture(
+        self,
+        graph_snapshot: Dict[str, Any],
+        label: Optional[str] = None,
+    ) -> GraphDiff:
         """
         Compute the diff between the last snapshot and the current graph state,
         store it, and return it.
 
         graph_snapshot comes from RuntimeGraph.snapshot().
         """
-        current_nodes: Set[str] = graph_snapshot.get("node_ids", set())
-        current_edges: Set[str] = graph_snapshot.get("edge_keys", set())
+        current_nodes: Set[str] = graph_snapshot.get(
+            "node_ids", set()
+        )
+        current_edges: Set[str] = graph_snapshot.get(
+            "edge_keys", set()
+        )
 
         with self._lock:
             diff = GraphDiff(
-                timestamp=graph_snapshot.get("timestamp", time.time()),
+                timestamp=graph_snapshot.get(
+                    "timestamp", time.time()
+                ),
                 label=label,
-                added_node_ids=current_nodes - self._prev_node_ids,
-                removed_node_ids=self._prev_node_ids - current_nodes,
-                added_edge_keys=current_edges - self._prev_edge_keys,
-                removed_edge_keys=self._prev_edge_keys - current_edges,
+                added_node_ids=current_nodes
+                - self._prev_node_ids,
+                removed_node_ids=self._prev_node_ids
+                - current_nodes,
+                added_edge_keys=current_edges
+                - self._prev_edge_keys,
+                removed_edge_keys=self._prev_edge_keys
+                - current_edges,
             )
             self._diffs.append(diff)
             self._prev_node_ids = current_nodes
@@ -109,10 +124,12 @@ class TemporalStore:
         Useful for deployment boundaries, config changes, etc.
         """
         with self._lock:
-            self._diffs.append(GraphDiff(
-                timestamp=time.time(),
-                label=label,
-            ))
+            self._diffs.append(
+                GraphDiff(
+                    timestamp=time.time(),
+                    label=label,
+                )
+            )
 
     # ------------------------------------------------------------------ #
     # Queries
@@ -120,7 +137,9 @@ class TemporalStore:
 
     def changes_since(self, since: float) -> List[GraphDiff]:
         with self._lock:
-            return [d for d in self._diffs if d.timestamp >= since]
+            return [
+                d for d in self._diffs if d.timestamp >= since
+            ]
 
     def new_edges_since(self, since: float) -> Set[str]:
         """Which edges appeared after a given timestamp? (Deployment analysis)"""
@@ -135,11 +154,15 @@ class TemporalStore:
             result |= diff.removed_edge_keys
         return result
 
-    def changes_around(self, t: float, window_seconds: float = 60.0) -> List[GraphDiff]:
+    def changes_around(
+        self, t: float, window_seconds: float = 60.0
+    ) -> List[GraphDiff]:
         lo = t - window_seconds
         hi = t + window_seconds
         with self._lock:
-            return [d for d in self._diffs if lo <= d.timestamp <= hi]
+            return [
+                d for d in self._diffs if lo <= d.timestamp <= hi
+            ]
 
     def label_diff(self, label: str) -> Optional[GraphDiff]:
         """Find the diff (or marker) with this label."""

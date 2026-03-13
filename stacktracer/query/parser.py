@@ -7,7 +7,7 @@ Grammar:
     QUERY := VERB METRIC [WHERE FILTERS] [LIMIT N] [AS system LABEL]
     VERB    := SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL
     METRIC  := latency | events | path | graph | nodes | edges |
-               status | active | probes | rules | semantic | 
+               status | active | probes | rules | semantic |
     FILTERS := FILTER [AND FILTER]*
     FILTER  := FIELD OP VALUE
     OP      := = | > | < | >= | <= | LIKE
@@ -47,15 +47,15 @@ import shlex
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # ====================================================================== #
 # Parser
 # ====================================================================== #
 
+
 @dataclass
 class ParsedQuery:
-    verb: str                           # SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL
-    metric: str                         # latency | events | path | graph | changes | …
+    verb: str  # SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL
+    metric: str  # latency | events | path | graph | changes | …
     filters: Dict[str, Any] = field(default_factory=dict)
     limit: int = 100
     raw: str = ""
@@ -67,7 +67,9 @@ def parse(query_str: str) -> ParsedQuery:
     Raises ValueError on syntax errors.
     """
     original = query_str.strip()
-    tokens = shlex.split(original)   # shlex handles quoted strings correctly
+    tokens = shlex.split(
+        original
+    )  # shlex handles quoted strings correctly
 
     if not tokens:
         raise ValueError("Empty query")
@@ -77,13 +79,25 @@ def parse(query_str: str) -> ParsedQuery:
     # --- TRACE <trace_id> ---
     if verb == "TRACE":
         if len(tokens) < 2:
-            raise ValueError("TRACE requires a trace_id argument")
-        return ParsedQuery(verb="TRACE", metric="path", filters={"trace_id": tokens[1]}, raw=original)
+            raise ValueError(
+                "TRACE requires a trace_id argument"
+            )
+        return ParsedQuery(
+            verb="TRACE",
+            metric="path",
+            filters={"trace_id": tokens[1]},
+            raw=original,
+        )
 
     # --- BLAME WHERE system = "..." ---
     if verb == "BLAME":
         filters = _parse_filters(tokens[1:])
-        return ParsedQuery(verb="BLAME", metric="upstream", filters=filters, raw=original)
+        return ParsedQuery(
+            verb="BLAME",
+            metric="upstream",
+            filters=filters,
+            raw=original,
+        )
 
     # --- HOTSPOT [TOP N] ---
     if verb == "HOTSPOT":
@@ -93,33 +107,62 @@ def parse(query_str: str) -> ParsedQuery:
                 limit = int(tokens[2])
             except ValueError:
                 pass
-        return ParsedQuery(verb="HOTSPOT", metric="nodes", limit=limit, raw=original)
+        return ParsedQuery(
+            verb="HOTSPOT",
+            metric="nodes",
+            limit=limit,
+            raw=original,
+        )
 
     # --- DIFF SINCE <label|timestamp> ---
     if verb == "DIFF":
         if len(tokens) >= 3 and tokens[1].upper() == "SINCE":
-            return ParsedQuery(verb="DIFF", metric="edges", filters={"since": tokens[2]}, raw=original)
-        return ParsedQuery(verb="DIFF", metric="edges", raw=original)
+            return ParsedQuery(
+                verb="DIFF",
+                metric="edges",
+                filters={"since": tokens[2]},
+                raw=original,
+            )
+        return ParsedQuery(
+            verb="DIFF", metric="edges", raw=original
+        )
 
     # --- CAUSAL [WHERE tags = "..."] ---
     if verb == "CAUSAL":
         filters = _parse_filters(tokens[1:])
-        return ParsedQuery(verb="CAUSAL", metric="matches", filters=filters, raw=original)
+        return ParsedQuery(
+            verb="CAUSAL",
+            metric="matches",
+            filters=filters,
+            raw=original,
+        )
 
     # --- SHOW <metric> [WHERE ...] [LIMIT N] ---
     if verb == "SHOW":
         if len(tokens) < 2:
-            raise ValueError("SHOW requires a metric (latency | events | path | graph | changes)")
+            raise ValueError(
+                "SHOW requires a metric (latency | events | path | graph | changes)"
+            )
 
         metric = tokens[1].lower()
         remaining = tokens[2:]
         filters, limit = _parse_where_limit(remaining)
-        return ParsedQuery(verb="SHOW", metric=metric, filters=filters, limit=limit, raw=original)
+        return ParsedQuery(
+            verb="SHOW",
+            metric=metric,
+            filters=filters,
+            limit=limit,
+            raw=original,
+        )
 
-    raise ValueError(f"Unknown verb '{verb}'. Expected: SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL")
+    raise ValueError(
+        f"Unknown verb '{verb}'. Expected: SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL"
+    )
 
 
-def _parse_where_limit(tokens: List[str]) -> Tuple[Dict[str, Any], int]:
+def _parse_where_limit(
+    tokens: List[str],
+) -> Tuple[Dict[str, Any], int]:
     filters: Dict[str, Any] = {}
     limit = 100
     i = 0
@@ -127,7 +170,10 @@ def _parse_where_limit(tokens: List[str]) -> Tuple[Dict[str, Any], int]:
         tok = tokens[i].upper()
         if tok == "WHERE":
             i += 1
-            while i < len(tokens) and tokens[i].upper() not in ("LIMIT", "AND"):
+            while i < len(tokens) and tokens[i].upper() not in (
+                "LIMIT",
+                "AND",
+            ):
                 if i + 2 < len(tokens):
                     key = tokens[i]
                     op = tokens[i + 1]
@@ -163,6 +209,7 @@ def _parse_filters(tokens: List[str]) -> Dict[str, Any]:
     filters, _ = _parse_where_limit(tokens)
     return filters
 
+
 """
 query/executor.py
 
@@ -181,19 +228,19 @@ from typing import Any, Dict, List, Optional
 
 from .parser import ParsedQuery
 
-
 # ====================================================================== #
 # Entry point
 # ====================================================================== #
 
+
 def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
     dispatch = {
-        "SHOW":    _exec_show,
-        "TRACE":   _exec_trace,
-        "BLAME":   _exec_blame,
+        "SHOW": _exec_show,
+        "TRACE": _exec_trace,
+        "BLAME": _exec_blame,
         "HOTSPOT": _exec_hotspot,
-        "DIFF":    _exec_diff,
-        "CAUSAL":  _exec_causal,
+        "DIFF": _exec_diff,
+        "CAUSAL": _exec_causal,
     }
     handler = dispatch.get(query.verb)
     if not handler:
@@ -208,12 +255,15 @@ def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
 # SHOW — dispatch by metric
 # ====================================================================== #
 
-def _exec_show(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
+
+def _exec_show(
+    query: ParsedQuery, engine: Any
+) -> Dict[str, Any]:
 
     # import pdb
     # pdb.set_trace()
 
-    metric  = query.metric
+    metric = query.metric
     # print(">>>>THE METRIC", metric)
     filters = query.filters
 
@@ -221,32 +271,44 @@ def _exec_show(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
 
     # NEW — handles system=, service=, node= all through the same semantic layer
     node_scope = None
-    candidate  = filters.get("system") or filters.get("service") or filters.get("node")
+    candidate = (
+        filters.get("system")
+        or filters.get("service")
+        or filters.get("node")
+    )
 
     if candidate:
-        resolved = engine.semantic.resolve_nodes(candidate, engine.graph)
+        resolved = engine.semantic.resolve_nodes(
+            candidate, engine.graph
+        )
         if resolved:
             node_scope = resolved
         elif "system" in filters:
             # system= is always a semantic label — hard error if not found
             return {
-                "error":     f"Unknown semantic label '{candidate}'",
+                "error": f"Unknown semantic label '{candidate}'",
                 "available": engine.semantic.all_labels(),
             }
         # service= and node= fall through silently — handled as literal filters below
 
     handlers = {
-        "latency":  lambda: _show_latency(engine, filters, node_scope, query.limit),
-        "events":   lambda: _show_events(engine, filters, query.limit),
-        "path":     lambda: _show_path(engine, filters),
-        "graph":    lambda: _show_graph(engine, node_scope),
-        "nodes":    lambda: _show_nodes(engine, filters, node_scope, query.limit),
-        "edges":    lambda: _show_edges(engine, node_scope),
-        "changes":  lambda: _exec_diff(query, engine),
-        "status":   lambda: _show_status(engine),
-        "active":   lambda: _show_active(engine),
-        "probes":   lambda: _show_probes(engine),
-        "rules":    lambda: _show_rules(engine),
+        "latency": lambda: _show_latency(
+            engine, filters, node_scope, query.limit
+        ),
+        "events": lambda: _show_events(
+            engine, filters, query.limit
+        ),
+        "path": lambda: _show_path(engine, filters),
+        "graph": lambda: _show_graph(engine, node_scope),
+        "nodes": lambda: _show_nodes(
+            engine, filters, node_scope, query.limit
+        ),
+        "edges": lambda: _show_edges(engine, node_scope),
+        "changes": lambda: _exec_diff(query, engine),
+        "status": lambda: _show_status(engine),
+        "active": lambda: _show_active(engine),
+        "probes": lambda: _show_probes(engine),
+        "rules": lambda: _show_rules(engine),
         "semantic": lambda: _show_semantic(engine),
     }
 
@@ -259,6 +321,7 @@ def _exec_show(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
 # ====================================================================== #
 # SHOW metric handlers
 # ====================================================================== #
+
 
 def _show_latency(
     engine: Any,
@@ -274,20 +337,28 @@ def _show_latency(
     if service := filters.get("service"):
         nodes = [n for n in nodes if n.service == service]
 
-    nodes.sort(key=lambda n: n.avg_duration_ns or 0, reverse=True)
+    nodes.sort(
+        key=lambda n: n.avg_duration_ns or 0, reverse=True
+    )
     nodes = nodes[:limit]
 
     return {
-        "metric":  "latency",
+        "metric": "latency",
         "filters": filters,
         "data": [
             {
-                "node":             n.id,
-                "service":          n.service,
-                "type":             n.node_type,
-                "call_count":       n.call_count,
-                "avg_duration_ms":  round(n.avg_duration_ns / 1e6, 3) if n.avg_duration_ns else None,
-                "total_duration_ms": round(n.total_duration_ns / 1e6, 3),
+                "node": n.id,
+                "service": n.service,
+                "type": n.node_type,
+                "call_count": n.call_count,
+                "avg_duration_ms": (
+                    round(n.avg_duration_ns / 1e6, 3)
+                    if n.avg_duration_ns
+                    else None
+                ),
+                "total_duration_ms": round(
+                    n.total_duration_ns / 1e6, 3
+                ),
             }
             for n in nodes
         ],
@@ -308,18 +379,18 @@ def _show_events(engine: Any, filters: Dict, limit: int) -> Dict:
     if service := filters.get("service"):
         events = [e for e in events if e.service == service]
 
-    events = events[-limit:]   # most recent N
+    events = events[-limit:]  # most recent N
 
     return {
-        "metric":  "events",
+        "metric": "events",
         "filters": filters,
         "data": [
             {
-                "probe":    e.probe,
-                "service":  e.service,
-                "name":     e.name,
+                "probe": e.probe,
+                "service": e.service,
+                "name": e.name,
                 "trace_id": e.trace_id,
-                "ts":       getattr(e, "timestamp_ns", None),
+                "ts": getattr(e, "timestamp_ns", None),
             }
             for e in events
         ],
@@ -329,11 +400,13 @@ def _show_events(engine: Any, filters: Dict, limit: int) -> Dict:
 def _show_path(engine: Any, filters: Dict) -> Dict:
     trace_id = filters.get("trace_id")
     if not trace_id:
-        return {"error": "SHOW path requires WHERE trace_id = <id>"}
+        return {
+            "error": "SHOW path requires WHERE trace_id = <id>"
+        }
     return {
-        "metric":   "critical_path",
+        "metric": "critical_path",
         "trace_id": trace_id,
-        "data":     engine.critical_path(trace_id),
+        "data": engine.critical_path(trace_id),
     }
 
 
@@ -351,7 +424,11 @@ def _show_graph(engine: Any, node_scope: Optional[set]) -> Dict:
             for e in engine.graph.callers(nid):
                 extended.add(e.source)
         nodes = [n for n in nodes if n.id in extended]
-        edges = [e for e in edges if e.source in extended or e.target in extended]
+        edges = [
+            e
+            for e in edges
+            if e.source in extended or e.target in extended
+        ]
 
     return {
         "metric": "graph",
@@ -384,7 +461,7 @@ def _show_nodes(
 
     return {
         "metric": "nodes",
-        "data":   [_node_dict(n) for n in nodes],
+        "data": [_node_dict(n) for n in nodes],
     }
 
 
@@ -396,7 +473,8 @@ def _show_edges(engine: Any, node_scope: Optional[set]) -> Dict:
 
     if node_scope:
         edges = [
-            e for e in edges
+            e
+            for e in edges
             if e.source in node_scope or e.target in node_scope
         ]
 
@@ -410,19 +488,21 @@ def _show_status(engine: Any) -> Dict:
     """
     Engine health snapshot — same fields as the old built-in SHOW STATUS.
     """
-    graph   = engine.graph
+    graph = engine.graph
     tracker = getattr(engine, "tracker", None)
     started = getattr(engine, "_started_at", 0)
 
     return {
         "verb": "STATUS",
         "data": {
-            "pid":             os.getpid(),
-            "socket":          f"/tmp/stacktracer-{os.getpid()}.sock",
-            "uptime_s":        round(time.monotonic() - started, 1),
-            "graph_nodes":     len(list(graph.all_nodes())),
-            "graph_edges":     len(list(graph.all_edges())),
-            "event_log_size":  len(getattr(engine, "_event_log", [])),
+            "pid": os.getpid(),
+            "socket": f"/tmp/stacktracer-{os.getpid()}.sock",
+            "uptime_s": round(time.monotonic() - started, 1),
+            "graph_nodes": len(list(graph.all_nodes())),
+            "graph_edges": len(list(graph.all_edges())),
+            "event_log_size": len(
+                getattr(engine, "_event_log", [])
+            ),
             "active_requests": tracker.count() if tracker else 0,
         },
     }
@@ -443,7 +523,9 @@ def _show_active(engine: Any) -> Dict:
 def _show_probes(engine: Any) -> Dict:
     """List registered probe adapters by name."""
     probes = []
-    probe_mgr = getattr(engine, "probes", None) or getattr(engine, "_probes", None)
+    probe_mgr = getattr(engine, "probes", None) or getattr(
+        engine, "_probes", None
+    )
     if probe_mgr:
         probes = (
             list(probe_mgr.keys())
@@ -455,7 +537,9 @@ def _show_probes(engine: Any) -> Dict:
 
 def _show_rules(engine: Any) -> Dict:
     """List registered causal rule names."""
-    registry = getattr(engine, "_registry", None) or getattr(engine, "registry", None)
+    registry = getattr(engine, "_registry", None) or getattr(
+        engine, "registry", None
+    )
     rules = registry.rule_names() if registry else []
     return {"metric": "rules", "data": rules}
 
@@ -470,13 +554,14 @@ def _show_semantic(engine: Any) -> Dict:
     for label in semantic.all_labels():
         desc = ""
         # SemanticLayer may store descriptions — try common attribute patterns
-        defn = (
-            getattr(semantic, "_definitions", {}).get(label)
-            or getattr(semantic, "_labels", {}).get(label)
-        )
+        defn = getattr(semantic, "_definitions", {}).get(
+            label
+        ) or getattr(semantic, "_labels", {}).get(label)
         if defn:
             desc = getattr(defn, "description", "") or (
-                defn.get("description", "") if isinstance(defn, dict) else ""
+                defn.get("description", "")
+                if isinstance(defn, dict)
+                else ""
             )
         labels.append({"label": label, "description": desc})
 
@@ -487,16 +572,17 @@ def _show_semantic(engine: Any) -> Dict:
 # Other verb handlers
 # ====================================================================== #
 
+
 def _exec_trace(query: ParsedQuery, engine: Any) -> Dict:
     trace_id = query.filters.get("trace_id")
     if not trace_id:
         return {"error": "TRACE requires a trace_id"}
     path = engine.critical_path(trace_id)
     return {
-        "verb":     "TRACE",
+        "verb": "TRACE",
         "trace_id": trace_id,
-        "stages":   len(path),
-        "data":     path,
+        "stages": len(path),
+        "data": path,
     }
 
 
@@ -507,7 +593,9 @@ def _exec_blame(query: ParsedQuery, engine: Any) -> Dict:
     """
     label = query.filters.get("system")
     if not label:
-        return {"error": "BLAME requires WHERE system = '<label>'"}
+        return {
+            "error": "BLAME requires WHERE system = '<label>'"
+        }
 
     node_ids = engine.semantic.resolve_nodes(label, engine.graph)
     if not node_ids:
@@ -516,12 +604,16 @@ def _exec_blame(query: ParsedQuery, engine: Any) -> Dict:
     callers: Dict[str, int] = {}
     for nid in node_ids:
         for edge in engine.graph.callers(nid):
-            callers[edge.source] = callers.get(edge.source, 0) + edge.call_count
+            callers[edge.source] = (
+                callers.get(edge.source, 0) + edge.call_count
+            )
 
-    sorted_callers = sorted(callers.items(), key=lambda x: x[1], reverse=True)
+    sorted_callers = sorted(
+        callers.items(), key=lambda x: x[1], reverse=True
+    )
     return {
-        "verb":           "BLAME",
-        "system":         label,
+        "verb": "BLAME",
+        "system": label,
         "resolved_nodes": list(node_ids),
         "data": [
             {"caller": c, "call_count": n}
@@ -539,7 +631,10 @@ def _exec_hotspot(query: ParsedQuery, engine: Any) -> Dict:
 
     # Prefer the engine method if it exists
     if hasattr(engine, "hotspots"):
-        return {"verb": "HOTSPOT", "data": engine.hotspots(top_n=top_n)}
+        return {
+            "verb": "HOTSPOT",
+            "data": engine.hotspots(top_n=top_n),
+        }
 
     # Fallback — sort all_nodes() by call_count directly
     nodes = sorted(
@@ -552,11 +647,17 @@ def _exec_hotspot(query: ParsedQuery, engine: Any) -> Dict:
         "verb": "HOTSPOT",
         "data": [
             {
-                "node":             n.id,
-                "service":          n.service,
-                "call_count":       n.call_count,
-                "avg_duration_ms":  round(n.avg_duration_ns / 1e6, 3) if n.avg_duration_ns else None,
-                "total_duration_ms": round(n.total_duration_ns / 1e6, 3),
+                "node": n.id,
+                "service": n.service,
+                "call_count": n.call_count,
+                "avg_duration_ms": (
+                    round(n.avg_duration_ns / 1e6, 3)
+                    if n.avg_duration_ns
+                    else None
+                ),
+                "total_duration_ms": round(
+                    n.total_duration_ns / 1e6, 3
+                ),
             }
             for n in nodes
         ],
@@ -579,34 +680,49 @@ def _exec_diff(query: ParsedQuery, engine: Any) -> Dict:
                     "error": f"Cannot resolve SINCE '{since_label}' — no marker found"
                 }
     else:
-        since_ts = time.time() - 60   # default: last 60 seconds
+        since_ts = time.time() - 60  # default: last 60 seconds
 
     # temporal methods may not all exist yet — degrade gracefully
-    new_edges     = list(engine.temporal.new_edges_since(since_ts))     if hasattr(engine.temporal, "new_edges_since")     else []
-    removed_edges = list(engine.temporal.removed_edges_since(since_ts)) if hasattr(engine.temporal, "removed_edges_since") else []
-    changes       = engine.temporal.changes_since(since_ts)             if hasattr(engine.temporal, "changes_since")       else []
+    new_edges = (
+        list(engine.temporal.new_edges_since(since_ts))
+        if hasattr(engine.temporal, "new_edges_since")
+        else []
+    )
+    removed_edges = (
+        list(engine.temporal.removed_edges_since(since_ts))
+        if hasattr(engine.temporal, "removed_edges_since")
+        else []
+    )
+    changes = (
+        engine.temporal.changes_since(since_ts)
+        if hasattr(engine.temporal, "changes_since")
+        else []
+    )
 
     return {
-        "verb":          "DIFF",
-        "since":         since_ts,
-        "since_label":   since_label,
-        "new_edges":     new_edges,
+        "verb": "DIFF",
+        "since": since_ts,
+        "since_label": since_label,
+        "new_edges": new_edges,
         "removed_edges": removed_edges,
-        "diff_count":    len(changes),
+        "diff_count": len(changes),
     }
 
 
 def _exec_causal(query: ParsedQuery, engine: Any) -> Dict:
     tags = None
     if "tags" in query.filters:
-        tags = [t.strip() for t in str(query.filters["tags"]).split(",")]
+        tags = [
+            t.strip()
+            for t in str(query.filters["tags"]).split(",")
+        ]
 
     matches = engine.evaluate(tags=tags)
     print(">>>>MATCHES RULES:", matches)
     return {
-        "verb":        "CAUSAL",
+        "verb": "CAUSAL",
         "match_count": len(matches),
-        "data":        [m.to_dict() for m in matches],
+        "data": [m.to_dict() for m in matches],
     }
 
 
@@ -614,26 +730,31 @@ def _exec_causal(query: ParsedQuery, engine: Any) -> Dict:
 # Shared serialisers
 # ====================================================================== #
 
+
 def _node_dict(n) -> Dict:
     """Full node representation — used by SHOW NODES and SHOW GRAPH."""
     return {
-        "id":           n.id,
-        "service":      n.service,
-        "type":         n.node_type,
-        "call_count":   n.call_count,
-        "duration_ns":  n.total_duration_ns,
-        "avg_ms":       round(n.avg_duration_ns / 1e6, 3) if n.avg_duration_ns else None,
-        "first_seen":   n.first_seen,
-        "last_seen":    n.last_seen,
+        "id": n.id,
+        "service": n.service,
+        "type": n.node_type,
+        "call_count": n.call_count,
+        "duration_ns": n.total_duration_ns,
+        "avg_ms": (
+            round(n.avg_duration_ns / 1e6, 3)
+            if n.avg_duration_ns
+            else None
+        ),
+        "first_seen": n.first_seen,
+        "last_seen": n.last_seen,
     }
 
 
 def _edge_dict(e) -> Dict:
     """Full edge representation — used by SHOW EDGES and SHOW GRAPH."""
     return {
-        "source":     e.source,
-        "target":     e.target,
-        "type":       e.edge_type,
+        "source": e.source,
+        "target": e.target,
+        "type": e.edge_type,
         "call_count": e.call_count,
-        "weight":     e.call_count,   # alias for REPL table renderer
+        "weight": e.call_count,  # alias for REPL table renderer
     }

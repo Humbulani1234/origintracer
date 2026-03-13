@@ -2,6 +2,7 @@
 from django.apps import AppConfig
 from pathlib import Path
 
+
 class DjangoTracerConfig(AppConfig):
     name = "django_tracer"
     default_auto_field = "django.db.models.BigAutoField"
@@ -9,12 +10,18 @@ class DjangoTracerConfig(AppConfig):
     def ready(self):
         print(">>> AppConfig.ready() fired", flush=True)
         import os
+
         _is_runserver_reloader = (
-            os.environ.get("RUN_MAIN") is None        # not runserver at all — uvicorn, gunicorn, etc.
-            or os.environ.get("RUN_MAIN") == "true"   # runserver worker process
+            os.environ.get("RUN_MAIN")
+            is None  # not runserver at all — uvicorn, gunicorn, etc.
+            or os.environ.get("RUN_MAIN")
+            == "true"  # runserver worker process
         )
         if not _is_runserver_reloader:
             return
         import stacktracer
+
         BASE_DIR = Path(__file__).resolve().parent.parent
-        stacktracer.init(config=str(BASE_DIR / "stacktracer.yaml"))
+        stacktracer.init(
+            config=str(BASE_DIR / "stacktracer.yaml")
+        )

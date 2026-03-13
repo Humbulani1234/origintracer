@@ -91,13 +91,15 @@ from ..core.kprobe_bridge import get_bridge
 
 logger = logging.getLogger("stacktracer.probes.nginx")
 
-ProbeTypes.register_many({
-    "nginx.connection.accept":    "nginx worker accepted a new client connection",
-    "nginx.connection.data_in":   "nginx received request bytes from client",
-    "nginx.connection.data_out":  "nginx sent response bytes to client",
-    "nginx.epoll.tick":           "nginx epoll_wait returned with ready events",
-    "nginx.request.complete":     "nginx request completed (from access log)",
-})
+ProbeTypes.register_many(
+    {
+        "nginx.connection.accept": "nginx worker accepted a new client connection",
+        "nginx.connection.data_in": "nginx received request bytes from client",
+        "nginx.connection.data_out": "nginx sent response bytes to client",
+        "nginx.epoll.tick": "nginx epoll_wait returned with ready events",
+        "nginx.request.complete": "nginx request completed (from access log)",
+    }
+)
 
 # nginx synthetic trace prefix — nginx has no Python trace context
 _NGINX_TRACE_PREFIX = "nginx-"
@@ -106,6 +108,7 @@ _NGINX_TRACE_PREFIX = "nginx-"
 # ====================================================================== #
 # nginx pid discovery
 # ====================================================================== #
+
 
 def _find_nginx_pids() -> List[int]:
     """
@@ -124,7 +127,11 @@ def _find_nginx_pids() -> List[int]:
                 pids.extend(_children_of(master_pid))
                 if not pids:
                     pids.append(master_pid)
-                logger.info("nginx: found master pid %d, workers: %s", master_pid, pids)
+                logger.info(
+                    "nginx: found master pid %d, workers: %s",
+                    master_pid,
+                    pids,
+                )
                 return pids
             except (ValueError, OSError):
                 pass
@@ -173,7 +180,9 @@ def _children_of(parent_pid: int) -> List[int]:
 
 def _ip_to_str(ip_be: int) -> str:
     """Convert network-byte-order u32 to dotted-decimal string."""
-    return socket.inet_ntoa(struct.pack("!I", socket.ntohl(ip_be)))
+    return socket.inet_ntoa(
+        struct.pack("!I", socket.ntohl(ip_be))
+    )
 
 
 # ====================================================================== #
@@ -359,9 +368,9 @@ class _NginxKprobeMode:
     """
 
     def __init__(self) -> None:
-        self._bpf      = None
-        self._thread   = None
-        self._running  = False
+        self._bpf = None
+        self._thread = None
+        self._running = False
         self._pids: List[int] = []
 
     def start(self) -> bool:
@@ -392,16 +401,23 @@ class _NginxKprobeMode:
         # Populate the nginx_pids filter map
         pid_map = self._bpf["nginx_pids"]
         for pid in self._pids:
-            pid_map[self._bpf.get_table("nginx_pids").Key(pid)] = \
-                self._bpf.get_table("nginx_pids").Leaf(1)
+            pid_map[
+                self._bpf.get_table("nginx_pids").Key(pid)
+            ] = self._bpf.get_table("nginx_pids").Leaf(1)
 
-        self._bpf["nginx_events"].open_perf_buffer(self._handle_event)
+        self._bpf["nginx_events"].open_perf_buffer(
+            self._handle_event
+        )
         self._running = True
-        self._thread  = threading.Thread(
-            target=self._poll_loop, daemon=True, name="stacktracer-nginx-kprobe"
+        self._thread = threading.Thread(
+            target=self._poll_loop,
+            daemon=True,
+            name="stacktracer-nginx-kprobe",
         )
         self._thread.start()
-        logger.info("nginx kprobe active for pids: %s", self._pids)
+        logger.info(
+            "nginx kprobe active for pids: %s", self._pids
+        )
         return True
 
     def stop(self) -> None:
@@ -422,62 +438,80 @@ class _NginxKprobeMode:
             return
         try:
             ev = self._bpf["nginx_events"].event(data)
-            etype = ev.event_type.decode("ascii", errors="replace").rstrip("\x00")
+            etype = ev.event_type.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
 
             # nginx has no Python trace context — generate a connection-level ID
             # using pid+tid as a stable key for the duration of the connection
             conn_key = f"{_NGINX_TRACE_PREFIX}{ev.pid}-{ev.tid}"
 
             if etype == "accept":
-                client_ip   = _ip_to_str(ev.client_ip) if ev.client_ip else ""
-                client_port = socket.ntohs(ev.client_port) if ev.client_port else 0
-                emit(NormalizedEvent.now(
-                    probe="nginx.connection.accept",
-                    trace_id=conn_key,
-                    service="nginx",
-                    name="accept",
-                    pid=ev.pid,
-                    fd=ev.value1,
-                    client_ip=client_ip,
-                    client_port=client_port,
-                    duration_ns=ev.duration_ns,
-                    source="kprobe",
-                ))
+                client_ip = (
+                    _ip_to_str(ev.client_ip)
+                    if ev.client_ip
+                    else ""
+                )
+                client_port = (
+                    socket.ntohs(ev.client_port)
+                    if ev.client_port
+                    else 0
+                )
+                emit(
+                    NormalizedEvent.now(
+                        probe="nginx.connection.accept",
+                        trace_id=conn_key,
+                        service="nginx",
+                        name="accept",
+                        pid=ev.pid,
+                        fd=ev.value1,
+                        client_ip=client_ip,
+                        client_port=client_port,
+                        duration_ns=ev.duration_ns,
+                        source="kprobe",
+                    )
+                )
 
             elif etype == "epoll":
-                emit(NormalizedEvent.now(
-                    probe="nginx.epoll.tick",
-                    trace_id=conn_key,
-                    service="nginx",
-                    name="epoll_wait",
-                    pid=ev.pid,
-                    n_events=ev.value1,
-                    duration_ns=ev.duration_ns,
-                    source="kprobe",
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="nginx.epoll.tick",
+                        trace_id=conn_key,
+                        service="nginx",
+                        name="epoll_wait",
+                        pid=ev.pid,
+                        n_events=ev.value1,
+                        duration_ns=ev.duration_ns,
+                        source="kprobe",
+                    )
+                )
 
             elif etype == "data_out":
-                emit(NormalizedEvent.now(
-                    probe="nginx.connection.data_out",
-                    trace_id=conn_key,
-                    service="nginx",
-                    name="sendmsg",
-                    pid=ev.pid,
-                    fd=ev.value2,
-                    bytes_sent=ev.value1,
-                    source="kprobe",
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="nginx.connection.data_out",
+                        trace_id=conn_key,
+                        service="nginx",
+                        name="sendmsg",
+                        pid=ev.pid,
+                        fd=ev.value2,
+                        bytes_sent=ev.value1,
+                        source="kprobe",
+                    )
+                )
 
             elif etype == "data_in":
-                emit(NormalizedEvent.now(
-                    probe="nginx.connection.data_in",
-                    trace_id=conn_key,
-                    service="nginx",
-                    name="recvmsg",
-                    pid=ev.pid,
-                    bytes_received=ev.value1,
-                    source="kprobe",
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="nginx.connection.data_in",
+                        trace_id=conn_key,
+                        service="nginx",
+                        name="recvmsg",
+                        pid=ev.pid,
+                        bytes_received=ev.value1,
+                        source="kprobe",
+                    )
+                )
 
         except Exception as exc:
             logger.debug("nginx event handling error: %s", exc)
@@ -486,6 +520,7 @@ class _NginxKprobeMode:
 # ====================================================================== #
 # Mode B — access log tail (fallback, all platforms)
 # ====================================================================== #
+
 
 class _NginxLogMode:
     """
@@ -496,16 +531,20 @@ class _NginxLogMode:
 
     def __init__(self, log_path: str) -> None:
         self._log_path = log_path
-        self._thread   = None
-        self._running  = False
+        self._thread = None
+        self._running = False
 
     def start(self) -> bool:
         if not os.path.exists(self._log_path):
-            logger.warning("nginx log not found at %s", self._log_path)
+            logger.warning(
+                "nginx log not found at %s", self._log_path
+            )
             return False
         self._running = True
-        self._thread  = threading.Thread(
-            target=self._tail_loop, daemon=True, name="stacktracer-nginx-log"
+        self._thread = threading.Thread(
+            target=self._tail_loop,
+            daemon=True,
+            name="stacktracer-nginx-log",
         )
         self._thread.start()
         logger.info("nginx log-tail mode: %s", self._log_path)
@@ -545,27 +584,30 @@ class _NginxLogMode:
             or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
         )
 
-        uri             = rec.get("uri", rec.get("request", "unknown"))
-        status          = int(rec.get("status", 0))
-        request_time_s  = float(rec.get("request_time", 0))
-        upstream_time   = rec.get("upstream_response_time", "-")
-        client          = rec.get("remote_addr", "")
+        uri = rec.get("uri", rec.get("request", "unknown"))
+        status = int(rec.get("status", 0))
+        request_time_s = float(rec.get("request_time", 0))
+        upstream_time = rec.get("upstream_response_time", "-")
+        client = rec.get("remote_addr", "")
 
-        emit(NormalizedEvent.now(
-            probe="nginx.request.complete",
-            trace_id=trace_id,
-            service="nginx",
-            name=uri,
-            status_code=status,
-            duration_ns=int(request_time_s * 1e9),
-            upstream_duration_ns=(
-                int(float(upstream_time) * 1e9)
-                if upstream_time and upstream_time not in ("-", "")
-                else None
-            ),
-            client_ip=client,
-            source="log",
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="nginx.request.complete",
+                trace_id=trace_id,
+                service="nginx",
+                name=uri,
+                status_code=status,
+                duration_ns=int(request_time_s * 1e9),
+                upstream_duration_ns=(
+                    int(float(upstream_time) * 1e9)
+                    if upstream_time
+                    and upstream_time not in ("-", "")
+                    else None
+                ),
+                client_ip=client,
+                source="log",
+            )
+        )
 
     @staticmethod
     def _parse_common(line: str) -> Optional[dict]:
@@ -575,9 +617,11 @@ class _NginxLogMode:
                 return None
             req = parts[1]
             status_part = parts[2].strip().split()
-            method, uri = (req.split()[:2] if " " in req else ("", req))
+            method, uri = (
+                req.split()[:2] if " " in req else ("", req)
+            )
             return {
-                "uri":    uri,
+                "uri": uri,
                 "method": method,
                 "status": status_part[0] if status_part else "0",
             }
@@ -588,6 +632,7 @@ class _NginxLogMode:
 # ====================================================================== #
 # NginxProbe — unified entry point
 # ====================================================================== #
+
 
 class NginxProbe(BaseProbe):
     """
@@ -610,6 +655,7 @@ class NginxProbe(BaseProbe):
         log_format with "$request_id"
         proxy_set_header X-Request-ID $request_id;
     """
+
     name = "nginx"
 
     def __init__(
@@ -617,14 +663,14 @@ class NginxProbe(BaseProbe):
         log_path: str = "/var/log/nginx/access.log",
         mode: str = "auto",
     ) -> None:
-        self._log_path   = log_path
-        self._mode       = mode
+        self._log_path = log_path
+        self._mode = mode
         self._kprobe: Optional[_NginxKprobeMode] = None
-        self._log:    Optional[_NginxLogMode]    = None
+        self._log: Optional[_NginxLogMode] = None
 
     def start(self) -> None:
         use_kprobe = self._mode in ("auto", "kprobe", "combined")
-        use_log    = self._mode in ("auto", "log", "combined")
+        use_log = self._mode in ("auto", "log", "combined")
 
         kprobe_ok = False
         if use_kprobe and sys.platform == "linux":

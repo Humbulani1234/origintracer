@@ -64,11 +64,11 @@ class MonitoringCoordinator:
     """
 
     def __init__(self, tool_id: int) -> None:
-        self._tool_id  = tool_id
-        self._lock     = threading.RLock()
+        self._tool_id = tool_id
+        self._lock = threading.RLock()
         # name → (on_call, on_return)  — both optional
         self._handlers: Dict[str, HandlerPair] = {}
-        self._active   = False
+        self._active = False
 
     # ------------------------------------------------------------------ #
     # Public API for probes
@@ -77,7 +77,7 @@ class MonitoringCoordinator:
     def register(
         self,
         name: str,
-        on_call:   Optional[Callable] = None,
+        on_call: Optional[Callable] = None,
         on_return: Optional[Callable] = None,
     ) -> None:
         """
@@ -85,7 +85,10 @@ class MonitoringCoordinator:
         Claims the sys.monitoring slot on first registration.
         """
         if not hasattr(sys, "monitoring"):
-            logger.debug("monitoring_coordinator: sys.monitoring not available — skipping %s", name)
+            logger.debug(
+                "monitoring_coordinator: sys.monitoring not available — skipping %s",
+                name,
+            )
             return
 
         with self._lock:
@@ -93,7 +96,10 @@ class MonitoringCoordinator:
             if not self._active:
                 self._claim()
 
-        logger.info("monitoring_coordinator: registered handler '%s'", name)
+        logger.info(
+            "monitoring_coordinator: registered handler '%s'",
+            name,
+        )
 
     def unregister(self, name: str) -> None:
         """
@@ -108,7 +114,10 @@ class MonitoringCoordinator:
             if self._active and not self._handlers:
                 self._release()
 
-        logger.info("monitoring_coordinator: unregistered handler '%s'", name)
+        logger.info(
+            "monitoring_coordinator: unregistered handler '%s'",
+            name,
+        )
 
     def is_registered(self, name: str) -> bool:
         with self._lock:
@@ -121,11 +130,14 @@ class MonitoringCoordinator:
     def _claim(self) -> None:
         """Claim the tool slot and install fan-out callbacks."""
         try:
-            sys.monitoring.use_tool_id(self._tool_id, "stacktracer")
+            sys.monitoring.use_tool_id(
+                self._tool_id, "stacktracer"
+            )
         except Exception as exc:
             logger.warning(
                 "monitoring_coordinator: could not claim tool slot %d: %s",
-                self._tool_id, exc,
+                self._tool_id,
+                exc,
             )
             return
 
@@ -136,7 +148,10 @@ class MonitoringCoordinator:
                 events.CALL | events.PY_RETURN,
             )
         except Exception as exc:
-            logger.warning("monitoring_coordinator: set_events failed: %s", exc)
+            logger.warning(
+                "monitoring_coordinator: set_events failed: %s",
+                exc,
+            )
             try:
                 sys.monitoring.free_tool_id(self._tool_id)
             except Exception:
@@ -145,13 +160,20 @@ class MonitoringCoordinator:
 
         try:
             sys.monitoring.register_callback(
-                self._tool_id, events.CALL, self._dispatch_call,
+                self._tool_id,
+                events.CALL,
+                self._dispatch_call,
             )
             sys.monitoring.register_callback(
-                self._tool_id, events.PY_RETURN, self._dispatch_return,
+                self._tool_id,
+                events.PY_RETURN,
+                self._dispatch_return,
             )
         except Exception as exc:
-            logger.warning("monitoring_coordinator: register_callback failed: %s", exc)
+            logger.warning(
+                "monitoring_coordinator: register_callback failed: %s",
+                exc,
+            )
             return
 
         self._active = True
@@ -164,20 +186,32 @@ class MonitoringCoordinator:
         """Release the tool slot and remove callbacks."""
         events = sys.monitoring.events
         try:
-            sys.monitoring.set_events(self._tool_id, events.NO_EVENTS)
-            sys.monitoring.register_callback(self._tool_id, events.CALL, None)
-            sys.monitoring.register_callback(self._tool_id, events.PY_RETURN, None)
+            sys.monitoring.set_events(
+                self._tool_id, events.NO_EVENTS
+            )
+            sys.monitoring.register_callback(
+                self._tool_id, events.CALL, None
+            )
+            sys.monitoring.register_callback(
+                self._tool_id, events.PY_RETURN, None
+            )
             sys.monitoring.free_tool_id(self._tool_id)
         except Exception as exc:
-            logger.debug("monitoring_coordinator: release error: %s", exc)
+            logger.debug(
+                "monitoring_coordinator: release error: %s", exc
+            )
         self._active = False
-        logger.info("monitoring_coordinator: released sys.monitoring tool slot")
+        logger.info(
+            "monitoring_coordinator: released sys.monitoring tool slot"
+        )
 
     # ------------------------------------------------------------------ #
     # Fan-out callbacks — called by sys.monitoring
     # ------------------------------------------------------------------ #
 
-    def _dispatch_call(self, code: Any, offset: int, callable_: Any, arg0: Any) -> Any:
+    def _dispatch_call(
+        self, code: Any, offset: int, callable_: Any, arg0: Any
+    ) -> Any:
         """
         Fan out CALL events to all registered on_call handlers.
         Returns DISABLE only if ALL handlers returned DISABLE for this code object.
@@ -198,13 +232,17 @@ class MonitoringCoordinator:
                 if result is sys.monitoring.DISABLE:
                     disable_count += 1
             except Exception as exc:
-                logger.debug("monitoring on_call handler error: %s", exc)
+                logger.debug(
+                    "monitoring on_call handler error: %s", exc
+                )
 
         # Only DISABLE if every interested handler said DISABLE
         if total > 0 and disable_count == total:
             return sys.monitoring.DISABLE
 
-    def _dispatch_return(self, code: Any, offset: int, retval: Any) -> Any:
+    def _dispatch_return(
+        self, code: Any, offset: int, retval: Any
+    ) -> Any:
         """Fan out PY_RETURN events to all registered on_return handlers."""
         disable_count = 0
         total = 0
@@ -220,7 +258,9 @@ class MonitoringCoordinator:
                 if result is sys.monitoring.DISABLE:
                     disable_count += 1
             except Exception as exc:
-                logger.debug("monitoring on_return handler error: %s", exc)
+                logger.debug(
+                    "monitoring on_return handler error: %s", exc
+                )
 
         if total > 0 and disable_count == total:
             return sys.monitoring.DISABLE
@@ -246,6 +286,6 @@ def get_coordinator() -> MonitoringCoordinator:
                 if hasattr(sys, "monitoring"):
                     tool_id = sys.monitoring.PROFILER_ID
                 else:
-                    tool_id = 2   # fallback — will no-op if monitoring unavailable
+                    tool_id = 2  # fallback — will no-op if monitoring unavailable
                 _coordinator = MonitoringCoordinator(tool_id)
     return _coordinator

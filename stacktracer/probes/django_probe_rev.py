@@ -59,15 +59,16 @@ from ..context.vars import get_trace_id, set_trace, reset_trace
 logger = logging.getLogger("stacktracer.probes.django")
 
 # Module-level state — one probe instance per process
-_originals:         dict  = {}
-_patched:           bool  = False
-_MONITORING_TOOL_ID: Any  = None
-_observe_modules:   List[str] = []
+_originals: dict = {}
+_patched: bool = False
+_MONITORING_TOOL_ID: Any = None
+_observe_modules: List[str] = []
 
 
 # ====================================================================== #
 # TracerMiddleware — primary observation point
 # ====================================================================== #
+
 
 class TracerMiddleware:
     """
@@ -83,10 +84,10 @@ class TracerMiddleware:
     def __init__(self, get_response: Callable) -> None:
         self.get_response = get_response
         import asyncio, inspect
-        self._is_async = (
-            asyncio.iscoroutinefunction(get_response)
-            or inspect.iscoroutinefunction(get_response)
-        )
+
+        self._is_async = asyncio.iscoroutinefunction(
+            get_response
+        ) or inspect.iscoroutinefunction(get_response)
 
     def __call__(self, request: Any) -> Any:
         if self._is_async:
@@ -126,49 +127,65 @@ class TracerMiddleware:
     def _begin(self, request: Any):
         # Prefer trace_id forwarded by nginx via X-Request-ID header.
         # Fall back to generating a new UUID if this is the entry point.
-        trace_id = (
-            request.META.get("HTTP_X_REQUEST_ID")
-            or str(uuid.uuid4())
+        trace_id = request.META.get("HTTP_X_REQUEST_ID") or str(
+            uuid.uuid4()
         )
         token = set_trace(trace_id)
-        request._st_t0 = time.perf_counter()   # stamp start time for duration calc in _end
-        emit(NormalizedEvent.now(
-            probe    = "request.entry",
-            trace_id = trace_id,
-            service  = "django",
-            name     = request.path,
-            method   = request.method,
-            http_host= request.META.get("HTTP_HOST", ""),
-        ))
+        request._st_t0 = (
+            time.perf_counter()
+        )  # stamp start time for duration calc in _end
+        emit(
+            NormalizedEvent.now(
+                probe="request.entry",
+                trace_id=trace_id,
+                service="django",
+                name=request.path,
+                method=request.method,
+                http_host=request.META.get("HTTP_HOST", ""),
+            )
+        )
         return trace_id, token
 
-    def _end(self, request: Any, response: Any, trace_id: str) -> None:
-        duration_ns = int((time.perf_counter() - request._st_t0) * 1e9) if hasattr(request, "_st_t0") else None
-        emit(NormalizedEvent.now(
-            probe       = "request.exit",
-            trace_id    = trace_id,
-            service     = "django",
-            name        = request.path,
-            method      = request.method,
-            status_code = response.status_code,
-            duration_ns = duration_ns,
-        ))
+    def _end(
+        self, request: Any, response: Any, trace_id: str
+    ) -> None:
+        duration_ns = (
+            int((time.perf_counter() - request._st_t0) * 1e9)
+            if hasattr(request, "_st_t0")
+            else None
+        )
+        emit(
+            NormalizedEvent.now(
+                probe="request.exit",
+                trace_id=trace_id,
+                service="django",
+                name=request.path,
+                method=request.method,
+                status_code=response.status_code,
+                duration_ns=duration_ns,
+            )
+        )
 
-    def _error(self, request: Any, exc: Exception, trace_id: str) -> None:
-        emit(NormalizedEvent.now(
-            probe          = "django.exception",
-            trace_id       = trace_id,
-            service        = "django",
-            name           = request.path,
-            exception_type = type(exc).__name__,
-            exception_msg  = str(exc)[:200],
-            source         = "middleware",
-        ))
+    def _error(
+        self, request: Any, exc: Exception, trace_id: str
+    ) -> None:
+        emit(
+            NormalizedEvent.now(
+                probe="django.exception",
+                trace_id=trace_id,
+                service="django",
+                name=request.path,
+                exception_type=type(exc).__name__,
+                exception_msg=str(exc)[:200],
+                source="middleware",
+            )
+        )
 
 
 # ====================================================================== #
 # Database execute_wrapper — official query profiling hook
 # ====================================================================== #
+
 
 def _make_db_wrapper():
     """
@@ -193,30 +210,38 @@ def _make_db_wrapper():
         except Exception as exc:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe      = "django.db.query",
-                    trace_id   = trace_id,
-                    service    = "django",
-                    name       = sql[:200],   # GraphNormalizer collapses literals
-                    duration_ns= duration_ns,
-                    db_alias   = context["connection"].alias,
-                    success    = False,
-                    error      = str(exc)[:200],
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="django.db.query",
+                        trace_id=trace_id,
+                        service="django",
+                        name=sql[
+                            :200
+                        ],  # GraphNormalizer collapses literals
+                        duration_ns=duration_ns,
+                        db_alias=context["connection"].alias,
+                        success=False,
+                        error=str(exc)[:200],
+                    )
+                )
             raise
         else:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe      = "django.db.query",
-                    trace_id   = trace_id,
-                    service    = "django",
-                    name       = sql[:200],
-                    duration_ns= duration_ns,
-                    db_alias   = context["connection"].alias,
-                    success    = True,
-                    row_count  = getattr(result, "rowcount", None),
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="django.db.query",
+                        trace_id=trace_id,
+                        service="django",
+                        name=sql[:200],
+                        duration_ns=duration_ns,
+                        db_alias=context["connection"].alias,
+                        success=True,
+                        row_count=getattr(
+                            result, "rowcount", None
+                        ),
+                    )
+                )
             return result
 
     return _wrapper
@@ -225,13 +250,18 @@ def _make_db_wrapper():
 def _install_db_wrapper() -> None:
     try:
         from django.db import connections
+
         wrapper = _make_db_wrapper()
         for conn in connections.all():
             conn.execute_wrappers.append(wrapper)
         _originals["db_wrapper"] = wrapper
-        logger.info("django probe: database execute_wrapper installed")
+        logger.info(
+            "django probe: database execute_wrapper installed"
+        )
     except Exception as exc:
-        logger.warning("django probe: database wrapper failed: %s", exc)
+        logger.warning(
+            "django probe: database wrapper failed: %s", exc
+        )
 
 
 def _uninstall_db_wrapper() -> None:
@@ -240,6 +270,7 @@ def _uninstall_db_wrapper() -> None:
         return
     try:
         from django.db import connections
+
         for conn in connections.all():
             if wrapper in conn.execute_wrappers:
                 conn.execute_wrappers.remove(wrapper)
@@ -260,25 +291,38 @@ def _uninstall_db_wrapper() -> None:
 # (e.g. exceptions raised inside Django's own request handling machinery
 # before the middleware's finally block runs in certain edge cases).
 
-def _on_unhandled_exception(sender: Any, request: Any = None, exception: Any = None, **kwargs) -> None:
+
+def _on_unhandled_exception(
+    sender: Any,
+    request: Any = None,
+    exception: Any = None,
+    **kwargs,
+) -> None:
     trace_id = get_trace_id()
     if trace_id:
-        emit(NormalizedEvent.now(
-            probe          = "django.exception",
-            trace_id       = trace_id,
-            service        = "django",
-            name           = request.path if request else "unknown",
-            exception_type = type(exception).__name__,
-            exception_msg  = str(exception)[:200],
-            source         = "got_request_exception_signal",
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="django.exception",
+                trace_id=trace_id,
+                service="django",
+                name=request.path if request else "unknown",
+                exception_type=type(exception).__name__,
+                exception_msg=str(exception)[:200],
+                source="got_request_exception_signal",
+            )
+        )
 
 
 def _install_signals() -> None:
     try:
         from django.core.signals import got_request_exception
-        got_request_exception.connect(_on_unhandled_exception, weak=False)
-        logger.info("django probe: got_request_exception signal connected")
+
+        got_request_exception.connect(
+            _on_unhandled_exception, weak=False
+        )
+        logger.info(
+            "django probe: got_request_exception signal connected"
+        )
     except ImportError:
         pass
 
@@ -286,6 +330,7 @@ def _install_signals() -> None:
 def _uninstall_signals() -> None:
     try:
         from django.core.signals import got_request_exception
+
         got_request_exception.disconnect(_on_unhandled_exception)
     except ImportError:
         pass
@@ -298,6 +343,7 @@ def _uninstall_signals() -> None:
 # Both paths are gated on observe_modules being non-empty.
 # An empty list means "observe nothing" — no callbacks are registered,
 # no overhead is added, and a clear INFO log explains what is missing.
+
 
 def _make_module_filter(observe_modules: List[str]) -> Callable:
     """
@@ -314,15 +360,21 @@ def _make_module_filter(observe_modules: List[str]) -> Callable:
         /home/user/.venv/lib/django/views/generic/base.py
     """
     # Convert Python module names to path fragments for substring matching
-    path_fragments = tuple(m.replace(".", "/") for m in observe_modules)
+    path_fragments = tuple(
+        m.replace(".", "/") for m in observe_modules
+    )
 
     def is_app_code(code: Any) -> bool:
-        return any(frag in code.co_filename for frag in path_fragments)
+        return any(
+            frag in code.co_filename for frag in path_fragments
+        )
 
     return is_app_code
 
 
-def _setup_monitoring_312(observe_modules: List[str] = None) -> bool:
+def _setup_monitoring_312(
+    observe_modules: List[str] = None,
+) -> bool:
     from ..core.monitoring_coordinator import get_coordinator
 
     # App module coroutines are already handled by django probe.
@@ -331,6 +383,7 @@ def _setup_monitoring_312(observe_modules: List[str] = None) -> bool:
         m.replace(".", "/") for m in (observe_modules or [])
     )
     print(f"APP FRAGMENTS: {app_fragments}")
+
     def _is_app_code(code) -> bool:
         if not app_fragments:
             return False
@@ -361,7 +414,9 @@ def _setup_monitoring_312(observe_modules: List[str] = None) -> bool:
         if not (code.co_flags & inspect.CO_COROUTINE):
             return sys.monitoring.DISABLE
         if _is_app_code(code):
-            return sys.monitoring.DISABLE    # django probe handles these
+            return (
+                sys.monitoring.DISABLE
+            )  # django probe handles these
         print(f"ASYNCIO QUALNAME: {code.co_qualname!r}")
         if any(f in code.co_qualname for f in _DJANGO_NOISE):
             return sys.monitoring.DISABLE
@@ -375,14 +430,16 @@ def _setup_monitoring_312(observe_modules: List[str] = None) -> bool:
             return
         _active_coros.add(key)
 
-        emit(NormalizedEvent.now(
-            probe          = "asyncio.loop.coro_call",
-            trace_id       = trace_id,
-            service        = "asyncio",
-            name           = code.co_qualname,
-            parent_span_id = get_span_id(),
-            source         = "sys.monitoring",
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="asyncio.loop.coro_call",
+                trace_id=trace_id,
+                service="asyncio",
+                name=code.co_qualname,
+                parent_span_id=get_span_id(),
+                source="sys.monitoring",
+            )
+        )
 
     def on_return(code, offset: int, retval: Any):
         if code.co_name == "<module>":
@@ -402,18 +459,25 @@ def _setup_monitoring_312(observe_modules: List[str] = None) -> bool:
 
         _active_coros.discard((trace_id, code.co_qualname))
 
-        emit(NormalizedEvent.now(
-            probe          = "asyncio.loop.coro_return",
-            trace_id       = trace_id,
-            service        = "asyncio",
-            name           = code.co_qualname,
-            parent_span_id = get_span_id(),
-            source         = "sys.monitoring",
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="asyncio.loop.coro_return",
+                trace_id=trace_id,
+                service="asyncio",
+                name=code.co_qualname,
+                parent_span_id=get_span_id(),
+                source="sys.monitoring",
+            )
+        )
 
-    get_coordinator().register("asyncio", on_call=on_call, on_return=on_return)
-    logger.info("asyncio probe: registered sys.monitoring handlers via coordinator")
+    get_coordinator().register(
+        "asyncio", on_call=on_call, on_return=on_return
+    )
+    logger.info(
+        "asyncio probe: registered sys.monitoring handlers via coordinator"
+    )
     return True
+
 
 def _setup_setprofile_311(observe_modules: List[str]) -> None:
     """Install sys.setprofile for Python 3.11 (fallback from sys.monitoring)."""
@@ -422,29 +486,41 @@ def _setup_setprofile_311(observe_modules: List[str]) -> None:
     _originals["sys_profile"] = original_profile
 
     def _profile(frame: Any, event: str, arg: Any) -> None:
-        if event in ("call", "return") and is_app_code(frame.f_code):
+        if event in ("call", "return") and is_app_code(
+            frame.f_code
+        ):
             trace_id = get_trace_id()
             if trace_id:
-                probe = "django.view.enter" if event == "call" else "django.view.exit"
-                emit(NormalizedEvent.now(
-                    probe    = probe,
-                    trace_id = trace_id,
-                    service  = "django",
-                    name     = frame.f_code.co_qualname,
-                    source   = "sys.setprofile",
-                ))
+                probe = (
+                    "django.view.enter"
+                    if event == "call"
+                    else "django.view.exit"
+                )
+                emit(
+                    NormalizedEvent.now(
+                        probe=probe,
+                        trace_id=trace_id,
+                        service="django",
+                        name=frame.f_code.co_qualname,
+                        source="sys.setprofile",
+                    )
+                )
         # Always chain to the previous profiler if one existed
         if original_profile:
             original_profile(frame, event, arg)
 
     sys.setprofile(_profile)
-    logger.info("django probe: sys.setprofile installed for modules: %s", observe_modules)
+    logger.info(
+        "django probe: sys.setprofile installed for modules: %s",
+        observe_modules,
+    )
 
 
 def _teardown_function_observation() -> None:
     minor = sys.version_info.minor
     if minor >= 12:
         from ..core.monitoring_coordinator import get_coordinator
+
         get_coordinator().unregister("django")
     elif minor == 11:
         original = _originals.pop("sys_profile", None)
@@ -454,6 +530,7 @@ def _teardown_function_observation() -> None:
 # ====================================================================== #
 # DjangoProbe
 # ====================================================================== #
+
 
 class DjangoProbe(BaseProbe):
     """
@@ -465,17 +542,23 @@ class DjangoProbe(BaseProbe):
 
     See module docstring for full details.
     """
+
     name = "django"
 
-    def start(self, observe_modules: Optional[List[str]] = None) -> None:
+    def start(
+        self, observe_modules: Optional[List[str]] = None
+    ) -> None:
 
         import pdb
+
         pdb.set_trace()
 
         global _patched, _observe_modules
 
         if _patched:
-            logger.warning("django probe: already installed — skipping")
+            logger.warning(
+                "django probe: already installed — skipping"
+            )
             return
 
         _observe_modules = observe_modules or []
@@ -502,7 +585,10 @@ class DjangoProbe(BaseProbe):
         #     )
 
         _patched = True
-        logger.info("django probe: installed (view_tracing=%s)", bool(_observe_modules))
+        logger.info(
+            "django probe: installed (view_tracing=%s)",
+            bool(_observe_modules),
+        )
 
     def stop(self) -> None:
         global _patched

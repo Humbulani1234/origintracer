@@ -12,6 +12,7 @@ from typing import Any, Dict, Literal, Optional
 
 # core/event_schema.py
 
+
 class ProbeTypeRegistry:
     """
     Open registry of probe type strings.
@@ -31,9 +32,11 @@ class ProbeTypeRegistry:
     """
 
     def __init__(self):
-        self._types: dict[str, str] = {}   # name → description
+        self._types: dict[str, str] = {}  # name → description
 
-    def register(self, probe_type: str, description: str = "") -> str:
+    def register(
+        self, probe_type: str, description: str = ""
+    ) -> str:
         """
         Register a probe type string.
         Returns the string so it can be used as a constant:
@@ -60,56 +63,59 @@ class ProbeTypeRegistry:
 ProbeTypes = ProbeTypeRegistry()
 
 # Built-in types registered at import time
-ProbeTypes.register_many({
-    # HTTP lifecycle
-    "request.entry":              "HTTP request received",
-    "request.exit":               "HTTP response sent",
-    # Django
-    "django.middleware.enter":    "Django middleware chain entered",
-    "django.middleware.exit":     "Django middleware chain exited",
-    "django.url.resolve":         "URL resolved to view",
-    "django.view.enter":          "View function entered",
-    "django.view.exit":           "View function returned",
-    # asyncio
-    "asyncio.task.create":        "asyncio.create_task() called",
-    "asyncio.task.block":         "Coroutine blocked on awaitable",
-    "asyncio.task.wakeup":        "Coroutine resumed from await",
-    "asyncio.loop.tick":          "Event loop Task.__step fired",
-    "asyncio.timer.schedule":     "Timer scheduled on event loop",
-    "asyncio.selector.event":     "I/O selector event fired",
-    # Python function level
-    "function.call":              "Traced function entered",
-    "function.return":            "Traced function returned",
-    "function.exception":         "Traced function raised exception",
-    # Kernel
-    "syscall.enter":              "Syscall entered",
-    "syscall.exit":               "Syscall returned",
-    "tcp.send":                   "TCP send (kernel level)",
-    "tcp.recv":                   "TCP receive (kernel level)",
-    # Database
-    "db.query.start":             "Database query started",
-    "db.query.end":               "Database query completed",
-    # Uvicorn
-    "uvicorn.request.receive":    "ASGI scope ready, app about to be called",
-    "uvicorn.response.send":      "Response headers sent",
-    "uvicorn.h11.cycle":          "H11 request/response cycle complete",
-    "uvicorn.httptools.cycle":    "httptools request/response cycle complete",
-    # Gunicorn
-    "gunicorn.worker.spawn":      "Arbiter spawned a new worker",
-    "gunicorn.worker.init":       "Worker process initialised",
-    "gunicorn.worker.exit":       "Worker process exiting",
-    "gunicorn.request.handle":    "Sync worker handling request",
-    "gunicorn.worker.heartbeat":  "Worker heartbeat to master",
-    # Nginx
-    "nginx.connection.accept":    "Connection accepted, waiting first byte",
-    "nginx.request.parse":        "HTTP request parsing started",
-    "nginx.request.route":        "Request routed to location block",
-    "nginx.recv":                 "nginx reading socket data",
-    "nginx.upstream.dispatch":    "Dispatched to upstream",
-    "nginx.epoll.tick":           "nginx epoll loop iteration",
-    # Generic
-    "custom":                     "User-defined event",
-})
+ProbeTypes.register_many(
+    {
+        # HTTP lifecycle
+        "request.entry": "HTTP request received",
+        "request.exit": "HTTP response sent",
+        # Django
+        "django.middleware.enter": "Django middleware chain entered",
+        "django.middleware.exit": "Django middleware chain exited",
+        "django.url.resolve": "URL resolved to view",
+        "django.view.enter": "View function entered",
+        "django.view.exit": "View function returned",
+        # asyncio
+        "asyncio.task.create": "asyncio.create_task() called",
+        "asyncio.task.block": "Coroutine blocked on awaitable",
+        "asyncio.task.wakeup": "Coroutine resumed from await",
+        "asyncio.loop.tick": "Event loop Task.__step fired",
+        "asyncio.timer.schedule": "Timer scheduled on event loop",
+        "asyncio.selector.event": "I/O selector event fired",
+        # Python function level
+        "function.call": "Traced function entered",
+        "function.return": "Traced function returned",
+        "function.exception": "Traced function raised exception",
+        # Kernel
+        "syscall.enter": "Syscall entered",
+        "syscall.exit": "Syscall returned",
+        "tcp.send": "TCP send (kernel level)",
+        "tcp.recv": "TCP receive (kernel level)",
+        # Database
+        "db.query.start": "Database query started",
+        "db.query.end": "Database query completed",
+        # Uvicorn
+        "uvicorn.request.receive": "ASGI scope ready, app about to be called",
+        "uvicorn.response.send": "Response headers sent",
+        "uvicorn.h11.cycle": "H11 request/response cycle complete",
+        "uvicorn.httptools.cycle": "httptools request/response cycle complete",
+        # Gunicorn
+        "gunicorn.worker.spawn": "Arbiter spawned a new worker",
+        "gunicorn.worker.init": "Worker process initialised",
+        "gunicorn.worker.exit": "Worker process exiting",
+        "gunicorn.request.handle": "Sync worker handling request",
+        "gunicorn.worker.heartbeat": "Worker heartbeat to master",
+        # Nginx
+        "nginx.connection.accept": "Connection accepted, waiting first byte",
+        "nginx.request.parse": "HTTP request parsing started",
+        "nginx.request.route": "Request routed to location block",
+        "nginx.recv": "nginx reading socket data",
+        "nginx.upstream.dispatch": "Dispatched to upstream",
+        "nginx.epoll.tick": "nginx epoll loop iteration",
+        # Generic
+        "custom": "User-defined event",
+    }
+)
+
 
 @dataclass
 class NormalizedEvent:
@@ -121,7 +127,7 @@ class NormalizedEvent:
     ------
     probe:
         Which type of observation this is.
-    service: 
+    service:
         Logical service name (e.g. "django", "nginx", "postgres").
     name        : The specific entity (route, function, syscall, query text…).
     trace_id    : Ties all events in one request together.
@@ -135,7 +141,7 @@ class NormalizedEvent:
     metadata    : Probe-specific payload. Anything that doesn't fit above.
     """
 
-    probe: str                           # ProbeType (kept as str for extensibility)
+    probe: str  # ProbeType (kept as str for extensibility)
     service: str
     name: str
     trace_id: str
@@ -144,7 +150,9 @@ class NormalizedEvent:
     wall_time: float = field(default_factory=time.time)
 
     duration_ns: Optional[int] = None
-    span_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    span_id: str = field(
+        default_factory=lambda: uuid.uuid4().hex[:16]
+    )
     parent_span_id: Optional[str] = None
 
     pid: Optional[int] = None
@@ -159,8 +167,12 @@ class NormalizedEvent:
         service: str,
         name: str,
         parent_span_id: Optional[str] = None,
-        duration_ns: Optional[int] = None,   # ← extract explicitly
-        pid: Optional[int] = None,           # ← same for pid/tid if probes pass them
+        duration_ns: Optional[
+            int
+        ] = None,  # ← extract explicitly
+        pid: Optional[
+            int
+        ] = None,  # ← same for pid/tid if probes pass them
         tid: Optional[int] = None,
         **metadata: Any,
     ) -> "NormalizedEvent":
@@ -168,17 +180,17 @@ class NormalizedEvent:
         Constructor which captures other metadata such as timestamps at call site.
         """
         return NormalizedEvent(
-            probe          = probe,
-            service        = service,
-            name           = name,
-            trace_id       = trace_id,
-            parent_span_id = parent_span_id,
-            duration_ns    = duration_ns,    # ← lands on the dataclass field
-            pid            = pid,
-            tid            = tid,
-            metadata       = metadata,       # ← only genuinely unknown kwargs
+            probe=probe,
+            service=service,
+            name=name,
+            trace_id=trace_id,
+            parent_span_id=parent_span_id,
+            duration_ns=duration_ns,  # ← lands on the dataclass field
+            pid=pid,
+            tid=tid,
+            metadata=metadata,  # ← only genuinely unknown kwargs
         )
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "probe": self.probe,
@@ -197,7 +209,11 @@ class NormalizedEvent:
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "NormalizedEvent":
-        meta = {k: v for k, v in d.items() if k not in NormalizedEvent.__dataclass_fields__}
+        meta = {
+            k: v
+            for k, v in d.items()
+            if k not in NormalizedEvent.__dataclass_fields__
+        }
         return NormalizedEvent(
             probe=d["probe"],
             service=d["service"],
@@ -214,5 +230,9 @@ class NormalizedEvent:
         )
 
     def __repr__(self) -> str:
-        dur = f" {self.duration_ns / 1_000:.1f}µs" if self.duration_ns else ""
+        dur = (
+            f" {self.duration_ns / 1_000:.1f}µs"
+            if self.duration_ns
+            else ""
+        )
         return f"<Event [{self.probe}] {self.service}::{self.name}{dur} trace={self.trace_id[:15]}>"

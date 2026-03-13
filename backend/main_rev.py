@@ -56,16 +56,18 @@ from pydantic import BaseModel
 logger = logging.getLogger("stacktracer.backend")
 
 app = FastAPI(
-    title       = "StackTracer API",
-    description = "Runtime observability backend for Python async services",
-    version     = "0.1.0",
+    title="StackTracer API",
+    description="Runtime observability backend for Python async services",
+    version="0.1.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins  = ["*"],   # tighten in production with explicit origins
-    allow_methods  = ["*"],
-    allow_headers  = ["*"],
+    allow_origins=[
+        "*"
+    ],  # tighten in production with explicit origins
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -76,8 +78,8 @@ app.add_middleware(
 # One deserialised RuntimeGraph per customer.
 # This is the cache in front of st_snapshots in the database.
 # Populated on startup (from DB) and updated on every POST /graph/snapshot.
-_graphs:      Dict[str, Any] = {}
-_graphs_lock  = threading.Lock()
+_graphs: Dict[str, Any] = {}
+_graphs_lock = threading.Lock()
 
 # Storage repository — set in _init_repository() at startup.
 # Implements insert_event(), insert_snapshot(), get_latest_snapshot(),
@@ -91,6 +93,7 @@ _valid_api_keys: Dict[str, str] = {}
 # ====================================================================== #
 # Startup
 # ====================================================================== #
+
 
 def _load_api_keys() -> None:
     global _valid_api_keys
@@ -116,32 +119,45 @@ def _init_repository() -> None:
     """
     global _repository
 
-    db_dsn  = os.getenv("STACKTRACER_DB_DSN")
+    db_dsn = os.getenv("STACKTRACER_DB_DSN")
     ch_host = os.getenv("STACKTRACER_CH_HOST")
 
     if db_dsn:
         try:
             import psycopg2
             from ..storage.repository import EventRepository
-            conn        = psycopg2.connect(db_dsn)
+
+            conn = psycopg2.connect(db_dsn)
             _repository = EventRepository(conn)
-            logger.info("Storage: PostgreSQL (%s)", db_dsn.split("@")[-1])
+            logger.info(
+                "Storage: PostgreSQL (%s)", db_dsn.split("@")[-1]
+            )
             return
         except Exception as exc:
-            logger.warning("PostgreSQL connect failed: %s — falling back", exc)
+            logger.warning(
+                "PostgreSQL connect failed: %s — falling back",
+                exc,
+            )
 
     if ch_host:
         try:
             from ..storage.repository import ClickHouseRepository
+
             _repository = ClickHouseRepository(host=ch_host)
             logger.info("Storage: ClickHouse (%s)", ch_host)
             return
         except Exception as exc:
-            logger.warning("ClickHouse connect failed: %s — falling back", exc)
+            logger.warning(
+                "ClickHouse connect failed: %s — falling back",
+                exc,
+            )
 
     from ..storage.repository import InMemoryRepository
+
     _repository = InMemoryRepository()
-    logger.info("Storage: InMemory (dev mode — data lost on restart)")
+    logger.info(
+        "Storage: InMemory (dev mode — data lost on restart)"
+    )
 
 
 def _load_snapshots_on_startup() -> None:
@@ -164,10 +180,15 @@ def _load_snapshots_on_startup() -> None:
             row = _repository.get_latest_snapshot(customer_id)
             if row is None:
                 continue
-            from ..core.graph_serializer import MsgpackSerializer, ProtobufSerializer
+            from ..core.graph_serializer import (
+                MsgpackSerializer,
+                ProtobufSerializer,
+            )
+
             serializer = (
                 ProtobufSerializer()
-                if row["content_type"] == "application/x-protobuf"
+                if row["content_type"]
+                == "application/x-protobuf"
                 else MsgpackSerializer()
             )
             graph = serializer.deserialize(row["data"])
@@ -182,7 +203,9 @@ def _load_snapshots_on_startup() -> None:
             )
         except Exception as exc:
             logger.warning(
-                "Startup snapshot load failed for %s: %s", customer_id, exc
+                "Startup snapshot load failed for %s: %s",
+                customer_id,
+                exc,
             )
 
 
@@ -207,20 +230,29 @@ async def _shutdown() -> None:
 # Auth
 # ====================================================================== #
 
+
 def _authenticate(authorization: Optional[str]) -> str:
     """Validate Bearer token, return customer_id."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    api_key     = authorization[7:]
+    if not authorization or not authorization.startswith(
+        "Bearer "
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header",
+        )
+    api_key = authorization[7:]
     customer_id = _valid_api_keys.get(api_key)
     if not customer_id:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(
+            status_code=401, detail="Invalid API key"
+        )
     return customer_id
 
 
 # ====================================================================== #
 # Graph helpers
 # ====================================================================== #
+
 
 def get_graph(customer_id: str) -> Optional[Any]:
     """Return the latest deserialised graph for this customer, or None."""
@@ -249,13 +281,14 @@ def _graph_or_engine(graph_or_engine: Any) -> Any:
     On the backend we only have a graph — this shim makes both work.
     """
     if hasattr(graph_or_engine, "graph"):
-        return graph_or_engine.graph   # Engine instance
-    return graph_or_engine             # bare RuntimeGraph
+        return graph_or_engine.graph  # Engine instance
+    return graph_or_engine  # bare RuntimeGraph
 
 
 # ====================================================================== #
 # Pydantic schemas
 # ====================================================================== #
+
 
 class IngestPayload(BaseModel):
     events: List[Dict[str, Any]]
@@ -273,6 +306,7 @@ class DeploymentMarkRequest(BaseModel):
 # Routes: Graph snapshot (agent → backend)
 # ====================================================================== #
 
+
 @app.post("/api/v1/graph/snapshot")
 async def receive_snapshot(
     request: Request,
@@ -284,15 +318,23 @@ async def receive_snapshot(
     Deserialises the graph into memory and persists the raw bytes to storage
     so FastAPI restarts can reload without waiting for the next agent snapshot.
     """
-    customer_id  = _authenticate(authorization)
-    body         = await request.body()
-    content_type = request.headers.get("content-type", "application/msgpack")
+    customer_id = _authenticate(authorization)
+    body = await request.body()
+    content_type = request.headers.get(
+        "content-type", "application/msgpack"
+    )
 
     if not body:
-        raise HTTPException(status_code=400, detail="Empty snapshot body")
+        raise HTTPException(
+            status_code=400, detail="Empty snapshot body"
+        )
 
     try:
-        from ..core.graph_serializer import MsgpackSerializer, ProtobufSerializer
+        from ..core.graph_serializer import (
+            MsgpackSerializer,
+            ProtobufSerializer,
+        )
+
         serializer = (
             ProtobufSerializer()
             if content_type == "application/x-protobuf"
@@ -305,13 +347,15 @@ async def receive_snapshot(
             _graphs[customer_id] = graph
 
         # 2. Persist to storage — survives FastAPI restarts
-        if _repository and hasattr(_repository, "insert_snapshot"):
+        if _repository and hasattr(
+            _repository, "insert_snapshot"
+        ):
             _repository.insert_snapshot(
-                customer_id  = customer_id,
-                data         = body,
-                content_type = content_type,
-                node_count   = len(graph._nodes),
-                edge_count   = len(graph._edge_index),
+                customer_id=customer_id,
+                data=body,
+                content_type=content_type,
+                node_count=len(graph._nodes),
+                edge_count=len(graph._edge_index),
             )
 
         node_count = len(graph._nodes)
@@ -319,17 +363,22 @@ async def receive_snapshot(
 
         logger.info(
             "Snapshot received: customer=%s nodes=%d edges=%d bytes=%d",
-            customer_id, node_count, edge_count, len(body),
+            customer_id,
+            node_count,
+            edge_count,
+            len(body),
         )
         return {
             "status": "ok",
-            "nodes":  node_count,
-            "edges":  edge_count,
-            "bytes":  len(body),
+            "nodes": node_count,
+            "edges": edge_count,
+            "bytes": len(body),
         }
 
     except Exception as exc:
-        logger.error("Snapshot deserialise failed: %s", exc, exc_info=True)
+        logger.error(
+            "Snapshot deserialise failed: %s", exc, exc_info=True
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Snapshot parse error: {exc}",
@@ -339,6 +388,7 @@ async def receive_snapshot(
 # ====================================================================== #
 # Routes: Event ingest (agent → backend, persistence only)
 # ====================================================================== #
+
 
 @app.post("/api/v1/events")
 async def ingest_events(
@@ -357,15 +407,20 @@ async def ingest_events(
     errors = 0
     for raw in payload.events:
         try:
-            raw.setdefault("metadata", {})["customer_id"] = customer_id
+            raw.setdefault("metadata", {})[
+                "customer_id"
+            ] = customer_id
             from ..core.event_schema import NormalizedEvent
+
             event = NormalizedEvent.from_dict(raw)
             if _repository:
                 _repository.insert_event(event)
             stored += 1
         except Exception as exc:
             errors += 1
-            logger.debug("Event store error: %s | raw=%s", exc, raw)
+            logger.debug(
+                "Event store error: %s | raw=%s", exc, raw
+            )
 
     return {"status": "ok", "stored": stored, "errors": errors}
 
@@ -383,6 +438,7 @@ async def ingest_events_compat(
 # Routes: Graph queries (all read from deserialised snapshot)
 # ====================================================================== #
 
+
 @app.post("/api/v1/query")
 async def query(
     request: QueryRequest,
@@ -390,31 +446,49 @@ async def query(
 ) -> Dict:
     """Execute a raw DSL query against the latest graph snapshot."""
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
+    graph = require_graph(customer_id)
 
     try:
-        from ..query.parser import parse as parse_query, execute as execute_query
+        from ..query.parser import (
+            parse as parse_query,
+            execute as execute_query,
+        )
+
         parsed = parse_query(request.query)
         return execute_query(parsed, graph)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Query parse error: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Query parse error: {exc}"
+        )
 
 
 @app.get("/api/v1/graph")
 async def get_graph_route(
-    service:       Optional[str] = None,
-    system:        Optional[str] = None,
+    service: Optional[str] = None,
+    system: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """Return the current graph, optionally filtered by service or system label."""
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
+    graph = require_graph(customer_id)
 
-    from ..query.parser import ParsedQuery, execute as execute_query
+    from ..query.parser import (
+        ParsedQuery,
+        execute as execute_query,
+    )
+
     if system:
-        q = ParsedQuery(verb="SHOW", metric="graph", filters={"system": system})
+        q = ParsedQuery(
+            verb="SHOW",
+            metric="graph",
+            filters={"system": system},
+        )
     elif service:
-        q = ParsedQuery(verb="SHOW", metric="graph", filters={"service": service})
+        q = ParsedQuery(
+            verb="SHOW",
+            metric="graph",
+            filters={"service": service},
+        )
     else:
         q = ParsedQuery(verb="SHOW", metric="graph")
 
@@ -423,7 +497,7 @@ async def get_graph_route(
 
 @app.get("/api/v1/causal")
 async def causal(
-    tags:          Optional[str] = None,
+    tags: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
@@ -433,8 +507,10 @@ async def causal(
     Use the REPL (connects to agent Unix socket) for live anomaly detection.
     """
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
-    tag_list    = [t.strip() for t in tags.split(",")] if tags else None
+    graph = require_graph(customer_id)
+    tag_list = (
+        [t.strip() for t in tags.split(",")] if tags else None
+    )
 
     from ..core.causal import build_default_registry
     from ..core.temporal import TemporalStore
@@ -443,32 +519,35 @@ async def causal(
     # build_default_registry(tracker=None) registers the anomaly rule
     # but its predicate returns False immediately, which is correct.
     registry = build_default_registry(tracker=None)
-    temporal = TemporalStore()   # empty — backend has no diffs
-    matches  = registry.evaluate(graph, temporal, tags=tag_list)
+    temporal = TemporalStore()  # empty — backend has no diffs
+    matches = registry.evaluate(graph, temporal, tags=tag_list)
 
     return {
         "match_count": len(matches),
-        "matches":     [m.to_dict() for m in matches],
+        "matches": [m.to_dict() for m in matches],
     }
 
 
 @app.get("/api/v1/hotspots")
 async def hotspots(
-    top:           int          = 10,
+    top: int = 10,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """Return the top N nodes by call count from the latest snapshot."""
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
+    graph = require_graph(customer_id)
 
     return {
         "data": [
             {
-                "node":            n.id,
-                "service":         n.service,
-                "call_count":      n.call_count,
-                "avg_duration_ms": round(n.avg_duration_ns / 1e6, 3)
-                                   if n.avg_duration_ns else None,
+                "node": n.id,
+                "service": n.service,
+                "call_count": n.call_count,
+                "avg_duration_ms": (
+                    round(n.avg_duration_ns / 1e6, 3)
+                    if n.avg_duration_ns
+                    else None
+                ),
             }
             for n in graph.hottest_nodes(top_n=top)
         ]
@@ -477,7 +556,7 @@ async def hotspots(
 
 @app.get("/api/v1/diff")
 async def diff(
-    since:         Optional[str] = None,
+    since: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
@@ -488,20 +567,24 @@ async def diff(
     For now, this endpoint returns what is available in the snapshot.
     """
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
+    graph = require_graph(customer_id)
 
-    from ..query.parser import ParsedQuery, execute as execute_query
+    from ..query.parser import (
+        ParsedQuery,
+        execute as execute_query,
+    )
+
     q = ParsedQuery(
-        verb    = "DIFF",
-        metric  = "edges",
-        filters = {"since": since} if since else {},
+        verb="DIFF",
+        metric="edges",
+        filters={"since": since} if since else {},
     )
     return execute_query(q, graph)
 
 
 @app.get("/api/v1/traces/{trace_id}")
 async def get_trace(
-    trace_id:      str,
+    trace_id: str,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
@@ -516,7 +599,9 @@ async def get_trace(
             detail="No storage backend configured — cannot retrieve traces.",
         )
 
-    events = _repository.query_events(trace_id=trace_id, limit=500)
+    events = _repository.query_events(
+        trace_id=trace_id, limit=500
+    )
     if not events:
         raise HTTPException(
             status_code=404,
@@ -532,20 +617,22 @@ async def get_trace(
         dur_ms = round(dur_ns / 1e6, 3) if dur_ns else None
         if dur_ms:
             total_ms += dur_ms
-        path.append({
-            "probe":      e.get("probe"),
-            "service":    e.get("service"),
-            "name":       e.get("name"),
-            "wall_time":  e.get("wall_time"),
-            "duration_ms": dur_ms,
-            "span_id":    e.get("span_id"),
-        })
+        path.append(
+            {
+                "probe": e.get("probe"),
+                "service": e.get("service"),
+                "name": e.get("name"),
+                "wall_time": e.get("wall_time"),
+                "duration_ms": dur_ms,
+                "span_id": e.get("span_id"),
+            }
+        )
 
     return {
         "trace_id": trace_id,
-        "stages":   len(path),
+        "stages": len(path),
         "total_ms": round(total_ms, 3),
-        "path":     path,
+        "path": path,
     }
 
 
@@ -553,9 +640,10 @@ async def get_trace(
 # Routes: Deployment markers
 # ====================================================================== #
 
+
 @app.post("/api/v1/deployment")
 async def mark_deployment(
-    body:          DeploymentMarkRequest,
+    body: DeploymentMarkRequest,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
@@ -571,21 +659,31 @@ async def mark_deployment(
         # Fallback: store as a synthetic event
         from ..core.event_schema import NormalizedEvent
         import uuid
+
         event = NormalizedEvent.now(
-            probe    = "stacktracer.deployment",
-            trace_id = str(uuid.uuid4()),
-            service  = "stacktracer",
-            name     = body.label,
+            probe="stacktracer.deployment",
+            trace_id=str(uuid.uuid4()),
+            service="stacktracer",
+            name=body.label,
         )
         _repository.insert_event(event)
 
-    logger.info("Deployment marked: customer=%s label=%s", customer_id, body.label)
-    return {"status": "ok", "label": body.label, "timestamp": time.time()}
+    logger.info(
+        "Deployment marked: customer=%s label=%s",
+        customer_id,
+        body.label,
+    )
+    return {
+        "status": "ok",
+        "label": body.label,
+        "timestamp": time.time(),
+    }
 
 
 # ====================================================================== #
 # Routes: Status and health
 # ====================================================================== #
+
 
 @app.get("/api/v1/status")
 async def status(
@@ -593,14 +691,16 @@ async def status(
 ) -> Dict:
     """Return snapshot metadata and system state for this customer."""
     customer_id = _authenticate(authorization)
-    graph       = get_graph(customer_id)   # None is OK here — status always responds
+    graph = get_graph(
+        customer_id
+    )  # None is OK here — status always responds
 
     snapshot_info: Dict[str, Any] = {"available": False}
     if graph is not None:
         snapshot_info = {
-            "available":    True,
-            "nodes":        len(graph._nodes),
-            "edges":        len(graph._edge_index),
+            "available": True,
+            "nodes": len(graph._nodes),
+            "edges": len(graph._edge_index),
             "last_updated": getattr(graph, "last_updated", None),
         }
 
@@ -610,9 +710,9 @@ async def status(
 
     return {
         "customer_id": customer_id,
-        "snapshot":    snapshot_info,
-        "storage":     storage_info,
-        "timestamp":   time.time(),
+        "snapshot": snapshot_info,
+        "storage": storage_info,
+        "timestamp": time.time(),
     }
 
 
@@ -626,10 +726,21 @@ async def health() -> Dict:
 # Error handling
 # ====================================================================== #
 
+
 @app.exception_handler(Exception)
-async def generic_error(request: Request, exc: Exception) -> JSONResponse:
-    logger.error("Unhandled error on %s: %s", request.url.path, exc, exc_info=True)
+async def generic_error(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    logger.error(
+        "Unhandled error on %s: %s",
+        request.url.path,
+        exc,
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)},
+        content={
+            "error": "Internal server error",
+            "detail": str(exc),
+        },
     )

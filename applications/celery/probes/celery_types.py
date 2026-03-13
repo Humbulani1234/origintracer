@@ -17,23 +17,22 @@ from stacktracer.core.event_schema import ProbeTypes
 # The return value of register() is the string itself,
 # so these are plain str constants usable anywhere.
 
-TASK_START   = ProbeTypes.register(
+TASK_START = ProbeTypes.register(
     "celery.task.start",
-    "Celery task execution started in a worker"
+    "Celery task execution started in a worker",
 )
-TASK_END     = ProbeTypes.register(
-    "celery.task.end",
-    "Celery task completed successfully"
+TASK_END = ProbeTypes.register(
+    "celery.task.end", "Celery task completed successfully"
 )
-TASK_RETRY   = ProbeTypes.register(
+TASK_RETRY = ProbeTypes.register(
     "celery.task.retry",
-    "Celery task scheduled for retry after failure"
+    "Celery task scheduled for retry after failure",
 )
 TASK_FAILURE = ProbeTypes.register(
     "celery.task.failure",
-    "Celery task raised an unhandled exception"
+    "Celery task raised an unhandled exception",
 )
-BEAT_TICK    = ProbeTypes.register(
+BEAT_TICK = ProbeTypes.register(
     "celery.beat.tick",
-    "Celery beat scheduler dispatched a periodic task"
+    "Celery beat scheduler dispatched a periodic task",
 )

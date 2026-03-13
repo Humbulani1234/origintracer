@@ -24,12 +24,15 @@ class IndexView(View):
     Demonstrates: request.entry → django.middleware → django.view → request.exit
     No async, no database. Fastest possible path through Django.
     """
+
     def get(self, request):
-        return JsonResponse({
-            "view": "index",
-            "message": "StackTracer Django demo",
-            "probe": "try /async/, /slow/, /db/ for more interesting traces",
-        })
+        return JsonResponse(
+            {
+                "view": "index",
+                "message": "StackTracer Django demo",
+                "probe": "try /async/, /slow/, /db/ for more interesting traces",
+            }
+        )
 
 
 class AsyncView(View):
@@ -38,13 +41,18 @@ class AsyncView(View):
     Demonstrates: asyncio.task.create fires twice, loop ticks stay fast.
     Both tasks yield properly so the event loop stays healthy.
     """
+
     async def get(self, request):
         async def fetch_a():
-            await asyncio.sleep(0.01)   # yields to event loop — healthy await
+            await asyncio.sleep(
+                0.01
+            )  # yields to event loop — healthy await
             return "result_a"
 
         async def fetch_b():
-            await asyncio.sleep(0.02)   # yields to event loop — healthy await
+            await asyncio.sleep(
+                0.02
+            )  # yields to event loop — healthy await
             return "result_b"
 
         result_a, result_b = await asyncio.gather(
@@ -52,12 +60,14 @@ class AsyncView(View):
             asyncio.create_task(fetch_b()),
         )
 
-        return JsonResponse({
-            "view": "async",
-            "result_a": result_a,
-            "result_b": result_b,
-            "note": "Two tasks ran concurrently. Check asyncio.loop.tick avg_duration_ns — should be < 1ms.",
-        })
+        return JsonResponse(
+            {
+                "view": "async",
+                "result_a": result_a,
+                "result_b": result_b,
+                "note": "Two tasks ran concurrently. Check asyncio.loop.tick avg_duration_ns — should be < 1ms.",
+            }
+        )
 
 
 class SlowView(View):
@@ -75,20 +85,25 @@ class SlowView(View):
         BLAME WHERE system = "django"     ← points to this view
         SHOW latency WHERE system = "django"  ← slow_view node stands out
     """
+
     async def get(self, request):
         # This blocks the event loop for 200ms.
         # Compare with /async/ which uses await asyncio.sleep() instead.
-        time.sleep(0.2)   # ← intentional blocking call for demonstration
+        time.sleep(
+            0.2
+        )  # ← intentional blocking call for demonstration
 
-        return JsonResponse({
-            "view": "slow",
-            "blocked_ms": 200,
-            "note": (
-                "time.sleep() blocked the event loop. "
-                "Run CAUSAL in the StackTracer REPL to detect it. "
-                "asyncio.loop.tick avg_duration_ns will be >> 10ms."
-            ),
-        })
+        return JsonResponse(
+            {
+                "view": "slow",
+                "blocked_ms": 200,
+                "note": (
+                    "time.sleep() blocked the event loop. "
+                    "Run CAUSAL in the StackTracer REPL to detect it. "
+                    "asyncio.loop.tick avg_duration_ns will be >> 10ms."
+                ),
+            }
+        )
 
 
 class DbView(View):
@@ -104,6 +119,7 @@ class DbView(View):
     sync_to_async, Django raises SynchronousOnlyOperation.
     StackTracer would detect the blocking call on the async path.
     """
+
     async def get(self, request):
         from django.contrib.auth import get_user_model
         from django.db import connection
@@ -119,17 +135,21 @@ class DbView(View):
 
         count = await get_user_count()
 
-        return JsonResponse({
-            "view": "db",
-            "user_count": count,
-            "note": (
-                "ORM query ran via sync_to_async. "
-                "Check db.query.start and db.query.end in the REPL. "
-                "Run: SHOW latency WHERE system = 'database'"
-            ),
-        })
-    
+        return JsonResponse(
+            {
+                "view": "db",
+                "user_count": count,
+                "note": (
+                    "ORM query ran via sync_to_async. "
+                    "Check db.query.start and db.query.end in the REPL. "
+                    "Run: SHOW latency WHERE system = 'database'"
+                ),
+            }
+        )
+
+
 # django_tracer/views.py
+
 
 class NPlusOneView(View):
     """
@@ -164,10 +184,13 @@ class NPlusOneView(View):
     """
 
     def get(self, request):
-        from django_tracer.models import Author  # adjust to your app
+        from django_tracer.models import (
+            Author,
+        )  # adjust to your app
 
         # Query 1 — fetch all authors
         from stacktracer.context.vars import get_trace_id
+
         print(f">>> trace_id in view: {get_trace_id()}")
         authors = list(Author.objects.all())
 
@@ -176,13 +199,17 @@ class NPlusOneView(View):
             # Query 2..N — one per author, fetching their books separately
             # This is the bug. Django does NOT batch these automatically.
             books = list(author.book_set.all())
-            results.append({
-                "author": author.name,
-                "book_count": len(books),
-            })
+            results.append(
+                {
+                    "author": author.name,
+                    "book_count": len(books),
+                }
+            )
 
         # The fix — replace the two lines above with:
         # authors = Author.objects.prefetch_related("book_set").all()
         # then the loop does zero extra queries
 
-        return JsonResponse({"authors": results, "query_count": len(authors) + 1})
+        return JsonResponse(
+            {"authors": results, "query_count": len(authors) + 1}
+        )

@@ -22,33 +22,54 @@ import time
 import textwrap
 
 # Make sure the project root is on the path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(
+    0,
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+)
 
 # ------------------------------------------------------------------ #
 # Colour helpers (no dependencies)
 # ------------------------------------------------------------------ #
 
-RESET  = "\033[0m"
-BOLD   = "\033[1m"
-DIM    = "\033[2m"
-RED    = "\033[31m"
-GREEN  = "\033[32m"
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RED = "\033[31m"
+GREEN = "\033[32m"
 YELLOW = "\033[33m"
-BLUE   = "\033[34m"
-CYAN   = "\033[36m"
-WHITE  = "\033[37m"
+BLUE = "\033[34m"
+CYAN = "\033[36m"
+WHITE = "\033[37m"
 
-def c(text, *codes): return "".join(codes) + str(text) + RESET
-def header(text):    print(c(f"\n  {text}", BOLD, CYAN))
-def ok(text):        print(c(f"  ✓ {text}", GREEN))
-def warn(text):      print(c(f"  ⚠ {text}", YELLOW))
-def err(text):       print(c(f"  ✗ {text}", RED))
-def dim(text):       print(c(f"  {text}", DIM))
+
+def c(text, *codes):
+    return "".join(codes) + str(text) + RESET
+
+
+def header(text):
+    print(c(f"\n  {text}", BOLD, CYAN))
+
+
+def ok(text):
+    print(c(f"  ✓ {text}", GREEN))
+
+
+def warn(text):
+    print(c(f"  ⚠ {text}", YELLOW))
+
+
+def err(text):
+    print(c(f"  ✗ {text}", RED))
+
+
+def dim(text):
+    print(c(f"  {text}", DIM))
 
 
 # ------------------------------------------------------------------ #
 # Result rendering
 # ------------------------------------------------------------------ #
+
 
 def render(result: dict) -> None:
     """Pretty-print a DSL query result to the terminal."""
@@ -71,35 +92,57 @@ def render(result: dict) -> None:
             pct = int(m["confidence"] * 100)
             bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
             colour = RED if pct >= 80 else YELLOW
-            print(c(f"  [{bar}] {pct}%  {m['rule']}", colour, BOLD))
-            wrapped = textwrap.fill(m["explanation"], width=72, initial_indent="        ", subsequent_indent="        ")
+            print(
+                c(f"  [{bar}] {pct}%  {m['rule']}", colour, BOLD)
+            )
+            wrapped = textwrap.fill(
+                m["explanation"],
+                width=72,
+                initial_indent="        ",
+                subsequent_indent="        ",
+            )
             print(c(wrapped, DIM))
             evidence = m.get("evidence", {})
             if evidence:
-                print(c(f"        Evidence: {json.dumps(evidence, indent=None)}", DIM))
+                print(
+                    c(
+                        f"        Evidence: {json.dumps(evidence, indent=None)}",
+                        DIM,
+                    )
+                )
             print()
         return
 
     # ---- DIFF ----
     if verb == "DIFF":
-        new  = result.get("new_edges", [])
+        new = result.get("new_edges", [])
         gone = result.get("removed_edges", [])
         if not new and not gone:
             dim("No graph changes detected.")
             return
         if new:
-            print(c(f"\n  + {len(new)} new edge(s):", GREEN, BOLD))
+            print(
+                c(f"\n  + {len(new)} new edge(s):", GREEN, BOLD)
+            )
             for e in new:
                 print(c(f"      {e}", GREEN))
         if gone:
-            print(c(f"\n  - {len(gone)} removed edge(s):", RED, BOLD))
+            print(
+                c(
+                    f"\n  - {len(gone)} removed edge(s):",
+                    RED,
+                    BOLD,
+                )
+            )
             for e in gone:
                 print(c(f"      {e}", RED))
         print()
         return
 
     # ---- HOTSPOT / tabular data ----
-    if verb in ("HOTSPOT",) or isinstance(result.get("data"), list):
+    if verb in ("HOTSPOT",) or isinstance(
+        result.get("data"), list
+    ):
         rows = result.get("data", [])
         if not rows:
             dim("No results.")
@@ -117,18 +160,36 @@ def render(result: dict) -> None:
         total = 0
         for stage in path:
             dur = stage.get("duration_ms")
-            dur_str = f"{dur:8.2f}ms" if dur is not None else "        —"
-            bar_len = int(min((dur or 0) / 5, 40))  # 5ms per block, max 40
+            dur_str = (
+                f"{dur:8.2f}ms"
+                if dur is not None
+                else "        —"
+            )
+            bar_len = int(
+                min((dur or 0) / 5, 40)
+            )  # 5ms per block, max 40
             bar = "▓" * bar_len
-            colour = RED if (dur or 0) > 100 else YELLOW if (dur or 0) > 20 else GREEN
+            colour = (
+                RED
+                if (dur or 0) > 100
+                else YELLOW if (dur or 0) > 20 else GREEN
+            )
             print(
-                c(f"  {dur_str}  ", WHITE) +
-                c(f"{bar:<40}", colour) +
-                c(f"  {stage['probe']}", BOLD) +
-                c(f"  {stage['service']}::{stage['name']}", DIM)
+                c(f"  {dur_str}  ", WHITE)
+                + c(f"{bar:<40}", colour)
+                + c(f"  {stage['probe']}", BOLD)
+                + c(
+                    f"  {stage['service']}::{stage['name']}", DIM
+                )
             )
             total += dur or 0
-        print(c(f"\n  Total: {total:.2f}ms  ·  {len(path)} stages", BOLD, CYAN))
+        print(
+            c(
+                f"\n  Total: {total:.2f}ms  ·  {len(path)} stages",
+                BOLD,
+                CYAN,
+            )
+        )
         print()
         return
 
@@ -142,7 +203,10 @@ def render(result: dict) -> None:
             return
         print()
         for row in data:
-            print(c(f"  {row['call_count']:6}x  ", YELLOW, BOLD) + c(row["caller"], WHITE))
+            print(
+                c(f"  {row['call_count']:6}x  ", YELLOW, BOLD)
+                + c(row["caller"], WHITE)
+            )
         print()
         return
 
@@ -151,17 +215,30 @@ def render(result: dict) -> None:
         g = result.get("data", {})
         nodes = g.get("nodes", [])
         edges = g.get("edges", [])
-        print(c(f"\n  {len(nodes)} nodes  ·  {len(edges)} edges\n", BOLD))
+        print(
+            c(
+                f"\n  {len(nodes)} nodes  ·  {len(edges)} edges\n",
+                BOLD,
+            )
+        )
         for n in nodes:
-            print(c(f"  [{n['type']:12}]  ", DIM) + c(n["id"], WHITE) +
-                  c(f"  ×{n['call_count']}", CYAN))
+            print(
+                c(f"  [{n['type']:12}]  ", DIM)
+                + c(n["id"], WHITE)
+                + c(f"  ×{n['call_count']}", CYAN)
+            )
         if edges:
             print()
             for e in edges:
-                print(c(f"  {e['source']}", YELLOW) +
-                      c(f"  →  ", DIM) +
-                      c(e["target"], YELLOW) +
-                      c(f"  [{e['type']} ×{e['call_count']}]", DIM))
+                print(
+                    c(f"  {e['source']}", YELLOW)
+                    + c(f"  →  ", DIM)
+                    + c(e["target"], YELLOW)
+                    + c(
+                        f"  [{e['type']} ×{e['call_count']}]",
+                        DIM,
+                    )
+                )
         print()
         return
 
@@ -173,13 +250,27 @@ def _render_table(rows: list) -> None:
     if not rows:
         return
     keys = list(rows[0].keys())
-    widths = {k: max(len(k), max(len(str(r.get(k, ""))) for r in rows)) for k in keys}
+    widths = {
+        k: max(len(k), max(len(str(r.get(k, ""))) for r in rows))
+        for k in keys
+    }
 
     # Header
-    header_line = "  " + "  ".join(c(k.upper().replace("_", " "), BOLD, DIM).ljust(widths[k] + 11) for k in keys)
+    header_line = "  " + "  ".join(
+        c(k.upper().replace("_", " "), BOLD, DIM).ljust(
+            widths[k] + 11
+        )
+        for k in keys
+    )
     print()
     print(header_line)
-    print(c("  " + "─" * (sum(widths.values()) + len(keys) * 2 + 2), DIM))
+    print(
+        c(
+            "  "
+            + "─" * (sum(widths.values()) + len(keys) * 2 + 2),
+            DIM,
+        )
+    )
 
     # Rows
     for row in rows:
@@ -189,7 +280,11 @@ def _render_table(rows: list) -> None:
             # Colour numbers
             try:
                 f = float(val)
-                colour = RED if f > 100 else YELLOW if f > 20 else GREEN
+                colour = (
+                    RED
+                    if f > 100
+                    else YELLOW if f > 20 else GREEN
+                )
                 parts.append(c(val.ljust(widths[k]), colour))
             except ValueError:
                 parts.append(val.ljust(widths[k]))
@@ -201,6 +296,7 @@ def _render_table(rows: list) -> None:
 # Built-in REPL commands (not DSL — prefixed with \)
 # ------------------------------------------------------------------ #
 
+
 def cmd_status(engine):
     s = engine.status()
     header("Engine Status")
@@ -208,8 +304,10 @@ def cmd_status(engine):
         print(f"  {c(k, DIM):<30} {c(v, WHITE)}")
     print()
 
+
 def cmd_probes():
     from stacktracer.sdk.base_probe import ProbeRegistry
+
     header("Registered Probes")
     available = ProbeRegistry.available()
     if not available:
@@ -219,11 +317,13 @@ def cmd_probes():
         ok(name)
     print()
 
+
 def cmd_rules(engine):
     header("Causal Rules")
     for name in engine.causal.rule_names():
         ok(name)
     print()
+
 
 def cmd_semantic(engine):
     header("Semantic Aliases")
@@ -233,8 +333,11 @@ def cmd_semantic(engine):
         return
     for label in labels:
         desc = engine.semantic.describe(label)
-        print(f"  {c(label, BOLD, CYAN):<20} {c(desc or '', DIM)}")
+        print(
+            f"  {c(label, BOLD, CYAN):<20} {c(desc or '', DIM)}"
+        )
     print()
+
 
 def cmd_emit(engine, args: str):
     """
@@ -247,11 +350,20 @@ def cmd_emit(engine, args: str):
         return
     from stacktracer.core.event_schema import NormalizedEvent
     import uuid
+
     probe, service, name = parts[0], parts[1], parts[2]
     trace_id = str(uuid.uuid4())
-    event = NormalizedEvent.now(probe=probe, trace_id=trace_id, service=service, name=name)
+    event = NormalizedEvent.now(
+        probe=probe,
+        trace_id=trace_id,
+        service=service,
+        name=name,
+    )
     engine.process(event)
-    ok(f"Emitted  {probe}  {service}::{name}  trace={trace_id[:8]}")
+    ok(
+        f"Emitted  {probe}  {service}::{name}  trace={trace_id[:8]}"
+    )
+
 
 def cmd_snapshot(engine, args: str):
     label = args.strip() or None
@@ -259,23 +371,47 @@ def cmd_snapshot(engine, args: str):
     header(f"Snapshot {'(' + label + ')' if label else ''}")
     new_n = len(diff.get("added_nodes", []))
     new_e = len(diff.get("added_edges", []))
-    print(f"  New nodes: {c(new_n, CYAN)}  New edges: {c(new_e, CYAN)}")
+    print(
+        f"  New nodes: {c(new_n, CYAN)}  New edges: {c(new_e, CYAN)}"
+    )
     print()
+
 
 def cmd_help():
     header("DSL Commands")
     queries = [
-        ('SHOW latency WHERE service = "django"',   'Latency by node, filtered'),
-        ('SHOW latency WHERE system = "export"',    'Latency scoped to semantic alias'),
-        ('SHOW graph',                              'Full runtime graph'),
-        ('SHOW graph WHERE system = "worker"',      'Subgraph for a system'),
-        ('SHOW events WHERE probe = "db.query.start" LIMIT 20', 'Raw event log'),
-        ('HOTSPOT TOP 10',                          'Busiest nodes by call count'),
-        ('CAUSAL',                                  'Run all causal rules'),
-        ('CAUSAL WHERE tags = "blocking,celery"',   'Filtered causal rules'),
-        ('BLAME WHERE system = "export"',           'Upstream callers of a system'),
-        ('DIFF SINCE deployment',                   'Graph changes after named event'),
-        ('TRACE <trace_id>',                        'Reconstruct critical path'),
+        (
+            'SHOW latency WHERE service = "django"',
+            "Latency by node, filtered",
+        ),
+        (
+            'SHOW latency WHERE system = "export"',
+            "Latency scoped to semantic alias",
+        ),
+        ("SHOW graph", "Full runtime graph"),
+        (
+            'SHOW graph WHERE system = "worker"',
+            "Subgraph for a system",
+        ),
+        (
+            'SHOW events WHERE probe = "db.query.start" LIMIT 20',
+            "Raw event log",
+        ),
+        ("HOTSPOT TOP 10", "Busiest nodes by call count"),
+        ("CAUSAL", "Run all causal rules"),
+        (
+            'CAUSAL WHERE tags = "blocking,celery"',
+            "Filtered causal rules",
+        ),
+        (
+            'BLAME WHERE system = "export"',
+            "Upstream callers of a system",
+        ),
+        (
+            "DIFF SINCE deployment",
+            "Graph changes after named event",
+        ),
+        ("TRACE <trace_id>", "Reconstruct critical path"),
     ]
     for q, desc in queries:
         print(f"  {c(q, CYAN)}")
@@ -283,14 +419,20 @@ def cmd_help():
     print()
     header("REPL Commands")
     cmds = [
-        ('\\status',               'Engine stats (graph size, rules, etc.)'),
-        ('\\probes',               'List registered probe adapters'),
-        ('\\rules',                'List registered causal rules'),
-        ('\\semantic',             'List semantic aliases'),
-        ('\\emit <probe> <svc> <name>', 'Inject a synthetic event'),
-        ('\\snapshot [label]',     'Capture a temporal diff snapshot'),
-        ('\\help',                 'This message'),
-        ('\\quit  or  Ctrl+C',     'Exit'),
+        ("\\status", "Engine stats (graph size, rules, etc.)"),
+        ("\\probes", "List registered probe adapters"),
+        ("\\rules", "List registered causal rules"),
+        ("\\semantic", "List semantic aliases"),
+        (
+            "\\emit <probe> <svc> <name>",
+            "Inject a synthetic event",
+        ),
+        (
+            "\\snapshot [label]",
+            "Capture a temporal diff snapshot",
+        ),
+        ("\\help", "This message"),
+        ("\\quit  or  Ctrl+C", "Exit"),
     ]
     for cmd, desc in cmds:
         print(f"  {c(cmd, YELLOW):<40} {c(desc, DIM)}")
@@ -301,18 +443,21 @@ def cmd_help():
 # Bootstrap: init engine with no probes so REPL starts fast
 # ------------------------------------------------------------------ #
 
+
 def bootstrap(sample_rate: float = 1.0) -> object:
     """Start a minimal engine — no probes, InMemoryRepository."""
     from stacktracer.core.engine import Engine
     from stacktracer.core.causal import build_default_registry
-    from stacktracer.core.active_requests import ActiveRequestTracker
+    from stacktracer.core.active_requests import (
+        ActiveRequestTracker,
+    )
     from stacktracer.storage.repository import InMemoryRepository
     from stacktracer.sdk.emitter import bind_engine
 
     tracker = ActiveRequestTracker()
-    engine  = Engine(
+    engine = Engine(
         causal_registry=build_default_registry(tracker=tracker),
-        snapshot_interval_s=9999,   # manual snapshots only in REPL
+        snapshot_interval_s=9999,  # manual snapshots only in REPL
     )
     engine.tracker = tracker
     engine.repository = InMemoryRepository()
@@ -326,10 +471,12 @@ def bootstrap(sample_rate: float = 1.0) -> object:
 
 HISTORY_FILE = os.path.expanduser("~/.stacktracer_history")
 
+
 def main():
     # readline for history + arrow keys
     try:
         import readline
+
         try:
             readline.read_history_file(HISTORY_FILE)
         except FileNotFoundError:
@@ -338,7 +485,10 @@ def main():
     except ImportError:
         pass  # Windows — fine without it
 
-    print(c("\n  StackTracer REPL", BOLD, CYAN) + c("  development mode", DIM))
+    print(
+        c("\n  StackTracer REPL", BOLD, CYAN)
+        + c("  development mode", DIM)
+    )
     print(c("  Type \\help for commands, Ctrl+C to exit\n", DIM))
 
     engine = bootstrap()
@@ -359,6 +509,7 @@ def main():
         # Save to readline history
         try:
             import readline
+
             readline.write_history_file(HISTORY_FILE)
         except Exception:
             pass
@@ -393,6 +544,7 @@ def main():
         # ---- DSL query ----
         try:
             from stacktracer.query.parser import parse, execute
+
             t0 = time.perf_counter()
             parsed = parse(raw)
             result = execute(parsed, engine)
@@ -404,6 +556,7 @@ def main():
         except Exception as exc:
             err(f"Error: {exc}")
             import traceback
+
             traceback.print_exc()
 
 

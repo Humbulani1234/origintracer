@@ -62,34 +62,29 @@ logger = logging.getLogger("stacktracer.normalizer")
 
 _BUILTIN_PATTERNS: List[Tuple[str, str]] = [
     # UUIDs  e.g. /api/orders/550e8400-e29b-41d4-a716-446655440000/
-    (r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "{uuid}"),
-
+    (
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        "{uuid}",
+    ),
     # Numeric IDs in URL segments  e.g. /api/users/1234/profile
     (r"/(\d{2,})/", "/{id}/"),
     (r"/(\d{2,})$", "/{id}"),
-
     # Numeric ID at path end without trailing slash
     (r"=(\d{2,})", "={id}"),
-
     # Hex object IDs (MongoDB style)  e.g. /api/docs/507f1f77bcf86cd799439011
     (r"/([0-9a-f]{24})/", "/{oid}/"),
     (r"/([0-9a-f]{24})$", "/{oid}"),
-
     # Memory addresses in coroutine repr  e.g. "coro at 0x7f3a2b4c1d0"
     (r"\s+at\s+0x[0-9a-f]+", ""),
-
     # Python object repr addresses  e.g. "<Task pending coro=<...> cb=[...] at 0x...>"
     (r"0x[0-9a-f]{8,}", "{addr}"),
-
     # SQL query normalization — collapse literal values to ?
     # SELECT * FROM users WHERE id = 1234  →  SELECT * FROM users WHERE id = ?
     (r"(?<==\s)(\d+)", "?"),
     (r"(?<==\s)'[^']*'", "?"),
     (r"(?<==\s)\"[^\"]*\"", "?"),
-
     # Celery task instance IDs embedded in names  e.g. "process_report[abc-123]"
     (r"\[[0-9a-f-]{8,}\]", ""),
-
     # Timestamp-like segments  e.g. /logs/2024-01-15/
     (r"/\d{4}-\d{2}-\d{2}/", "/{date}/"),
     (r"/\d{4}-\d{2}-\d{2}$", "/{date}"),
@@ -106,6 +101,7 @@ _BUILTIN_COMPILED: List[Tuple[re.Pattern, str]] = [
 # Per-service normalization rules
 # ====================================================================== #
 
+
 @dataclass
 class NormalizationRule:
     """
@@ -114,7 +110,8 @@ class NormalizationRule:
     Either `pattern` + `replacement` (regex substitution)
     or `fn` (arbitrary function) must be provided.
     """
-    service: str                            # "django", "celery", "*" for all
+
+    service: str  # "django", "celery", "*" for all
     description: str = ""
 
     # Regex approach
@@ -125,7 +122,9 @@ class NormalizationRule:
     fn: Optional[Callable[[str], str]] = None
 
     # Internal compiled pattern
-    _compiled: Optional[re.Pattern] = field(default=None, repr=False, compare=False)
+    _compiled: Optional[re.Pattern] = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self):
         if self.pattern:
@@ -142,6 +141,7 @@ class NormalizationRule:
 # ====================================================================== #
 # GraphNormalizer
 # ====================================================================== #
+
 
 class GraphNormalizer:
     """
@@ -217,7 +217,7 @@ class GraphNormalizer:
             replacement=replacement,
         )
         self._rules.setdefault(service, []).append(rule)
-        self._cache.clear()   # invalidate cache on new rule
+        self._cache.clear()  # invalidate cache on new rule
 
     def add_rule(
         self,
@@ -266,7 +266,9 @@ class GraphNormalizer:
                     "Service '%s' exceeded %d unique node names. "
                     "New name '%s' bucketed to 'high_cardinality_overflow'. "
                     "Add a normalization rule to collapse these names.",
-                    service, self._max_unique, result,
+                    service,
+                    self._max_unique,
+                    result,
                 )
                 result = "high_cardinality_overflow"
             else:
@@ -282,7 +284,9 @@ class GraphNormalizer:
         self._cache[cache_key] = result
         return result
 
-    def _normalize_uncached(self, service: str, name: str) -> str:
+    def _normalize_uncached(
+        self, service: str, name: str
+    ) -> str:
         result = name
 
         # Step 1 — built-in patterns (applied to all services)
@@ -300,7 +304,7 @@ class GraphNormalizer:
 
         # Step 4 — truncate to max length
         if len(result) > self._max_name_length:
-            result = result[:self._max_name_length] + "…"
+            result = result[: self._max_name_length] + "…"
 
         return result.strip()
 
@@ -325,7 +329,9 @@ class GraphNormalizer:
         if not config:
             return cls()
 
-        max_unique = config.get("max_unique_names_per_service", 500)
+        max_unique = config.get(
+            "max_unique_names_per_service", 500
+        )
         normalizer = cls(max_unique_names_per_service=max_unique)
 
         for rule_cfg in config.get("rules", []):

@@ -32,7 +32,9 @@ def process_report(self, report_id: int, **kwargs):
 
 
 @shared_task(name="myapp.tasks.send_notification", bind=True)
-def send_notification(self, user_id: int, message: str = "", **kwargs):
+def send_notification(
+    self, user_id: int, message: str = "", **kwargs
+):
     """
     Individual notification task.
     BulkNotifyView dispatches one of these per user_id — fan-out pattern.
@@ -54,7 +56,9 @@ def export_data(self, export_id: int, **kwargs):
     Exercises: celery_sync_db_call causal rule
     REPL: CAUSAL WHERE tags = "celery"
     """
-    db_path = os.path.join(os.path.dirname(__file__), "..", "demo.db")
+    db_path = os.path.join(
+        os.path.dirname(__file__), "..", "demo.db"
+    )
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -66,7 +70,9 @@ def export_data(self, export_id: int, **kwargs):
             (export_id, "pending"),
         )
         conn.commit()
-        time.sleep(random.uniform(0.2, 0.4))   # simulate slow query
+        time.sleep(
+            random.uniform(0.2, 0.4)
+        )  # simulate slow query
         conn.execute(
             "UPDATE exports SET status = ? WHERE id = ?",
             ("done", export_id),
@@ -104,9 +110,11 @@ def risky_job(self, should_fail: bool = True, **kwargs):
 
     return {"status": "ok"}
 
+
 import time
+
 
 @shared_task(name="myapp.tasks.generate_report", bind=True)
 def generate_report(self, report_id: int, **kwargs):
-    time.sleep(0.2)   # simulate work
+    time.sleep(0.2)  # simulate work
     return {"report_id": report_id, "status": "done"}

@@ -24,7 +24,9 @@ current_span_id: ContextVar[Optional[str]] = ContextVar(
 )
 
 
-def set_trace(trace_id: str, span_id: Optional[str] = None) -> Token:
+def set_trace(
+    trace_id: str, span_id: Optional[str] = None
+) -> Token:
     """
     Set the current trace context. Returns a Token for reset().
     Use inside a try/finally to guarantee cleanup:

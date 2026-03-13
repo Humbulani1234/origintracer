@@ -80,25 +80,29 @@ _patched = False
 # Arbiter patches — worker lifecycle in the master process
 # ====================================================================== #
 
+
 def _make_spawn_worker_wrapper(original):
     """
     Wraps Arbiter.spawn_worker to emit an event each time the master
     forks a new worker. Fires in the master process before the fork.
     """
-    def _traced_spawn_worker(self):
-        pid = original(self)   # returns the new worker PID
 
-        emit(NormalizedEvent.now(
-            probe="gunicorn.worker.spawn",
-            trace_id=f"gunicorn-master-{os.getpid()}",
-            service="gunicorn",
-            name="arbiter",
-            worker_pid=pid,
-            master_pid=os.getpid(),
-            worker_class=self.cfg.worker_class_str,
-            num_workers=self.cfg.workers,
-            worker_count=len(self.WORKERS),
-        ))
+    def _traced_spawn_worker(self):
+        pid = original(self)  # returns the new worker PID
+
+        emit(
+            NormalizedEvent.now(
+                probe="gunicorn.worker.spawn",
+                trace_id=f"gunicorn-master-{os.getpid()}",
+                service="gunicorn",
+                name="arbiter",
+                worker_pid=pid,
+                master_pid=os.getpid(),
+                worker_class=self.cfg.worker_class_str,
+                num_workers=self.cfg.workers,
+                worker_count=len(self.WORKERS),
+            )
+        )
         return pid
 
     return _traced_spawn_worker
@@ -109,19 +113,27 @@ def _make_kill_worker_wrapper(original):
     Wraps Arbiter._kill_worker to detect intentional worker termination.
     This fires on graceful shutdown, rolling restart, and scale-down.
     """
+
     def _traced_kill_worker(self, pid, sig):
         import signal as signal_mod
-        emit(NormalizedEvent.now(
-            probe="gunicorn.worker.exit",
-            trace_id=f"gunicorn-master-{os.getpid()}",
-            service="gunicorn",
-            name="arbiter",
-            worker_pid=pid,
-            master_pid=os.getpid(),
-            signal=sig,
-            signal_name=signal_mod.Signals(sig).name if hasattr(signal_mod, 'Signals') else str(sig),
-            reason="killed_by_master",
-        ))
+
+        emit(
+            NormalizedEvent.now(
+                probe="gunicorn.worker.exit",
+                trace_id=f"gunicorn-master-{os.getpid()}",
+                service="gunicorn",
+                name="arbiter",
+                worker_pid=pid,
+                master_pid=os.getpid(),
+                signal=sig,
+                signal_name=(
+                    signal_mod.Signals(sig).name
+                    if hasattr(signal_mod, "Signals")
+                    else str(sig)
+                ),
+                reason="killed_by_master",
+            )
+        )
         original(self, pid, sig)
 
     return _traced_kill_worker
@@ -130,6 +142,7 @@ def _make_kill_worker_wrapper(original):
 # ====================================================================== #
 # Worker patches — per-worker lifecycle and request handling
 # ====================================================================== #
+
 
 def _make_init_process_wrapper(original):
     """
@@ -144,48 +157,55 @@ def _make_init_process_wrapper(original):
     since the probe was applied in the parent process pre-fork and
     the uvicorn event loop is created fresh in each worker.
     """
+
     def _traced_init_process(self):
         worker_pid = os.getpid()
         master_pid = os.getppid()
         worker_class = type(self).__name__
 
-        emit(NormalizedEvent.now(
-            probe="gunicorn.worker.init",
-            trace_id=f"gunicorn-worker-{worker_pid}",
-            service="gunicorn",
-            name=worker_class,
-            worker_pid=worker_pid,
-            master_pid=master_pid,
-            worker_class=worker_class,
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="gunicorn.worker.init",
+                trace_id=f"gunicorn-worker-{worker_pid}",
+                service="gunicorn",
+                name=worker_class,
+                worker_pid=worker_pid,
+                master_pid=master_pid,
+                worker_class=worker_class,
+            )
+        )
 
         try:
             original(self)
         except SystemExit as exc:
             # Worker exiting normally
-            emit(NormalizedEvent.now(
-                probe="gunicorn.worker.exit",
-                trace_id=f"gunicorn-worker-{worker_pid}",
-                service="gunicorn",
-                name=worker_class,
-                worker_pid=worker_pid,
-                master_pid=master_pid,
-                reason="system_exit",
-                exit_code=exc.code,
-            ))
+            emit(
+                NormalizedEvent.now(
+                    probe="gunicorn.worker.exit",
+                    trace_id=f"gunicorn-worker-{worker_pid}",
+                    service="gunicorn",
+                    name=worker_class,
+                    worker_pid=worker_pid,
+                    master_pid=master_pid,
+                    reason="system_exit",
+                    exit_code=exc.code,
+                )
+            )
             raise
         except Exception as exc:
             # Worker crashed
-            emit(NormalizedEvent.now(
-                probe="gunicorn.worker.exit",
-                trace_id=f"gunicorn-worker-{worker_pid}",
-                service="gunicorn",
-                name=worker_class,
-                worker_pid=worker_pid,
-                master_pid=master_pid,
-                reason="exception",
-                exception=str(exc)[:200],
-            ))
+            emit(
+                NormalizedEvent.now(
+                    probe="gunicorn.worker.exit",
+                    trace_id=f"gunicorn-worker-{worker_pid}",
+                    service="gunicorn",
+                    name=worker_class,
+                    worker_pid=worker_pid,
+                    master_pid=master_pid,
+                    reason="exception",
+                    exception=str(exc)[:200],
+                )
+            )
             raise
 
     return _traced_init_process
@@ -200,39 +220,46 @@ def _make_handle_request_wrapper(original):
 
     environ is the WSGI environ dict — contains method, path, headers.
     """
-    def _traced_handle_request(self, listener, req, client, addr):
+
+    def _traced_handle_request(
+        self, listener, req, client, addr
+    ):
         # Extract path and method from the request object
         # gunicorn's Request object has .path and .method
-        path   = getattr(req, "path",   "/")
+        path = getattr(req, "path", "/")
         method = getattr(req, "method", "")
 
         trace_id = str(uuid.uuid4())
         token = set_trace(trace_id)
 
-        emit(NormalizedEvent.now(
-            probe="gunicorn.request.handle",
-            trace_id=trace_id,
-            service="gunicorn",
-            name=path,
-            method=method,
-            worker_pid=os.getpid(),
-            client=str(addr),
-        ))
-
-        t0 = time.perf_counter()
-        try:
-            original(self, listener, req, client, addr)
-        finally:
-            duration_ns = int((time.perf_counter() - t0) * 1e9)
-            emit(NormalizedEvent.now(
+        emit(
+            NormalizedEvent.now(
                 probe="gunicorn.request.handle",
                 trace_id=trace_id,
                 service="gunicorn",
                 name=path,
                 method=method,
                 worker_pid=os.getpid(),
-                duration_ns=duration_ns,
-            ))
+                client=str(addr),
+            )
+        )
+
+        t0 = time.perf_counter()
+        try:
+            original(self, listener, req, client, addr)
+        finally:
+            duration_ns = int((time.perf_counter() - t0) * 1e9)
+            emit(
+                NormalizedEvent.now(
+                    probe="gunicorn.request.handle",
+                    trace_id=trace_id,
+                    service="gunicorn",
+                    name=path,
+                    method=method,
+                    worker_pid=os.getpid(),
+                    duration_ns=duration_ns,
+                )
+            )
             reset_trace(token)
 
     return _traced_handle_request
@@ -259,14 +286,16 @@ def _make_notify_wrapper(original):
 
         # Emit every 10th heartbeat — enough signal without flooding the graph
         if _notify_count["n"] % 10 == 0:
-            emit(NormalizedEvent.now(
-                probe="gunicorn.worker.heartbeat",
-                trace_id=f"gunicorn-worker-{os.getpid()}",
-                service="gunicorn",
-                name="heartbeat",
-                worker_pid=os.getpid(),
-                heartbeat_count=_notify_count["n"],
-            ))
+            emit(
+                NormalizedEvent.now(
+                    probe="gunicorn.worker.heartbeat",
+                    trace_id=f"gunicorn-worker-{os.getpid()}",
+                    service="gunicorn",
+                    name="heartbeat",
+                    worker_pid=os.getpid(),
+                    heartbeat_count=_notify_count["n"],
+                )
+            )
 
     return _traced_notify
 
@@ -301,13 +330,16 @@ class GunicornProbe(BaseProbe):
               - asyncio
               - django
     """
+
     name = "gunicorn"
 
     def start(self) -> None:
         global _originals, _patched
 
         if _patched:
-            logger.warning("gunicorn probe already patched — skipping")
+            logger.warning(
+                "gunicorn probe already patched — skipping"
+            )
             return
 
         patched_any = False
@@ -316,13 +348,23 @@ class GunicornProbe(BaseProbe):
         try:
             from gunicorn.arbiter import Arbiter
 
-            _originals["arbiter_spawn_worker"] = Arbiter.spawn_worker
-            Arbiter.spawn_worker = _make_spawn_worker_wrapper(Arbiter.spawn_worker)
+            _originals["arbiter_spawn_worker"] = (
+                Arbiter.spawn_worker
+            )
+            Arbiter.spawn_worker = _make_spawn_worker_wrapper(
+                Arbiter.spawn_worker
+            )
 
-            _originals["arbiter_kill_worker"] = Arbiter._kill_worker
-            Arbiter._kill_worker = _make_kill_worker_wrapper(Arbiter._kill_worker)
+            _originals["arbiter_kill_worker"] = (
+                Arbiter._kill_worker
+            )
+            Arbiter._kill_worker = _make_kill_worker_wrapper(
+                Arbiter._kill_worker
+            )
 
-            logger.info("gunicorn probe patched Arbiter (spawn_worker, _kill_worker)")
+            logger.info(
+                "gunicorn probe patched Arbiter (spawn_worker, _kill_worker)"
+            )
             patched_any = True
 
         except ImportError:
@@ -338,13 +380,19 @@ class GunicornProbe(BaseProbe):
         try:
             from gunicorn.workers.base import Worker
 
-            _originals["worker_init_process"] = Worker.init_process
-            Worker.init_process = _make_init_process_wrapper(Worker.init_process)
+            _originals["worker_init_process"] = (
+                Worker.init_process
+            )
+            Worker.init_process = _make_init_process_wrapper(
+                Worker.init_process
+            )
 
             _originals["worker_notify"] = Worker.notify
             Worker.notify = _make_notify_wrapper(Worker.notify)
 
-            logger.info("gunicorn probe patched Worker (init_process, notify)")
+            logger.info(
+                "gunicorn probe patched Worker (init_process, notify)"
+            )
             patched_any = True
 
         except AttributeError as exc:
@@ -355,11 +403,17 @@ class GunicornProbe(BaseProbe):
         try:
             from gunicorn.workers.sync import SyncWorker
 
-            _originals["sync_handle_request"] = SyncWorker.handle_request
-            SyncWorker.handle_request = _make_handle_request_wrapper(
+            _originals["sync_handle_request"] = (
                 SyncWorker.handle_request
             )
-            logger.info("gunicorn probe patched SyncWorker.handle_request")
+            SyncWorker.handle_request = (
+                _make_handle_request_wrapper(
+                    SyncWorker.handle_request
+                )
+            )
+            logger.info(
+                "gunicorn probe patched SyncWorker.handle_request"
+            )
 
         except (ImportError, AttributeError) as exc:
             logger.debug("SyncWorker patch skipped: %s", exc)
@@ -368,11 +422,17 @@ class GunicornProbe(BaseProbe):
         try:
             from gunicorn.workers.gthread import ThreadWorker
 
-            _originals["gthread_handle_request"] = ThreadWorker.handle_request
-            ThreadWorker.handle_request = _make_handle_request_wrapper(
+            _originals["gthread_handle_request"] = (
                 ThreadWorker.handle_request
             )
-            logger.info("gunicorn probe patched ThreadWorker.handle_request")
+            ThreadWorker.handle_request = (
+                _make_handle_request_wrapper(
+                    ThreadWorker.handle_request
+                )
+            )
+            logger.info(
+                "gunicorn probe patched ThreadWorker.handle_request"
+            )
 
         except (ImportError, AttributeError) as exc:
             logger.debug("ThreadWorker patch skipped: %s", exc)
@@ -387,23 +447,54 @@ class GunicornProbe(BaseProbe):
             return
 
         restore_map = {
-            "arbiter_spawn_worker":   ("gunicorn.arbiter",         "Arbiter",      "spawn_worker"),
-            "arbiter_kill_worker":    ("gunicorn.arbiter",         "Arbiter",      "_kill_worker"),
-            "worker_init_process":    ("gunicorn.workers.base",    "Worker",       "init_process"),
-            "worker_notify":          ("gunicorn.workers.base",    "Worker",       "notify"),
-            "sync_handle_request":    ("gunicorn.workers.sync",    "SyncWorker",   "handle_request"),
-            "gthread_handle_request": ("gunicorn.workers.gthread", "ThreadWorker", "handle_request"),
+            "arbiter_spawn_worker": (
+                "gunicorn.arbiter",
+                "Arbiter",
+                "spawn_worker",
+            ),
+            "arbiter_kill_worker": (
+                "gunicorn.arbiter",
+                "Arbiter",
+                "_kill_worker",
+            ),
+            "worker_init_process": (
+                "gunicorn.workers.base",
+                "Worker",
+                "init_process",
+            ),
+            "worker_notify": (
+                "gunicorn.workers.base",
+                "Worker",
+                "notify",
+            ),
+            "sync_handle_request": (
+                "gunicorn.workers.sync",
+                "SyncWorker",
+                "handle_request",
+            ),
+            "gthread_handle_request": (
+                "gunicorn.workers.gthread",
+                "ThreadWorker",
+                "handle_request",
+            ),
         }
 
-        for key, (module_path, class_name, attr) in restore_map.items():
+        for key, (
+            module_path,
+            class_name,
+            attr,
+        ) in restore_map.items():
             if key in _originals:
                 try:
                     import importlib
+
                     module = importlib.import_module(module_path)
                     cls = getattr(module, class_name)
                     setattr(cls, attr, _originals.pop(key))
                 except Exception as exc:
-                    logger.debug("Failed to restore %s: %s", key, exc)
+                    logger.debug(
+                        "Failed to restore %s: %s", key, exc
+                    )
 
         _patched = False
         logger.info("gunicorn probe removed")

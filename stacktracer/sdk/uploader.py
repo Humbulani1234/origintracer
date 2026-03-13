@@ -40,6 +40,7 @@ logger = logging.getLogger("stacktracer.uploader")
 # Internal buffers
 # ====================================================================== #
 
+
 class _EventBuffer:
     """
     Thread-safe bounded FIFO buffer of event dicts.
@@ -76,23 +77,27 @@ class _SnapshotSlot:
     """
 
     def __init__(self) -> None:
-        self._data:         Optional[bytes] = None
-        self._content_type: str             = "application/msgpack"
-        self._pending:      bool            = False
+        self._data: Optional[bytes] = None
+        self._content_type: str = "application/msgpack"
+        self._pending: bool = False
         self._lock = Lock()
 
-    def put(self, data: bytes, content_type: str = "application/msgpack") -> None:
+    def put(
+        self,
+        data: bytes,
+        content_type: str = "application/msgpack",
+    ) -> None:
         with self._lock:
-            self._data         = data
+            self._data = data
             self._content_type = content_type
-            self._pending      = True
+            self._pending = True
 
     def take(self) -> Optional[tuple]:
         """Return (data, content_type) and clear pending flag. None if nothing waiting."""
         with self._lock:
             if not self._pending or self._data is None:
                 return None
-            result        = (self._data, self._content_type)
+            result = (self._data, self._content_type)
             self._pending = False
             return result
 
@@ -106,19 +111,26 @@ class _SnapshotSlot:
 # Serialisation helpers
 # ====================================================================== #
 
+
 def _serialize_events(payload: Dict) -> tuple:
     """Serialise event batch to msgpack (preferred) or JSON (fallback)."""
     try:
         import msgpack
-        return msgpack.packb(payload, use_bin_type=True), "application/msgpack"
+
+        return (
+            msgpack.packb(payload, use_bin_type=True),
+            "application/msgpack",
+        )
     except ImportError:
         import json
+
         return json.dumps(payload).encode(), "application/json"
 
 
 def _serialize_graph(graph: Any) -> tuple:
     """Serialise RuntimeGraph to msgpack bytes using GraphSerializer."""
     from ..core.graph_serializer import MsgpackSerializer
+
     data = MsgpackSerializer().serialize(graph)
     return data, "application/msgpack"
 
@@ -126,6 +138,7 @@ def _serialize_graph(graph: Any) -> tuple:
 # ====================================================================== #
 # Uploader
 # ====================================================================== #
+
 
 class Uploader:
     """
@@ -148,35 +161,37 @@ class Uploader:
 
     def __init__(
         self,
-        endpoint:          str,
-        api_key:           str,
-        flush_interval:    int   = 10,    # seconds between event batch flushes
-        snapshot_interval: int   = 60,    # seconds between graph snapshot flushes
-        max_batch_size:    int   = 500,
+        endpoint: str,
+        api_key: str,
+        flush_interval: int = 10,  # seconds between event batch flushes
+        snapshot_interval: int = 60,  # seconds between graph snapshot flushes
+        max_batch_size: int = 500,
     ) -> None:
-        self._endpoint          = endpoint.rstrip("/")
-        self._api_key           = api_key
-        self._flush_interval    = flush_interval
+        self._endpoint = endpoint.rstrip("/")
+        self._api_key = api_key
+        self._flush_interval = flush_interval
         self._snapshot_interval = snapshot_interval
-        self._max_batch         = max_batch_size
+        self._max_batch = max_batch_size
 
-        self._event_buffer   = _EventBuffer()
-        self._snapshot_slot  = _SnapshotSlot()
+        self._event_buffer = _EventBuffer()
+        self._snapshot_slot = _SnapshotSlot()
 
-        self._engine: Optional[Any] = None   # set by bind_engine()
+        self._engine: Optional[Any] = (
+            None  # set by bind_engine()
+        )
 
-        self._thread:  Optional[threading.Thread] = None
+        self._thread: Optional[threading.Thread] = None
         self._running: bool = False
 
         # Timing
-        self._last_event_flush_s:    float = 0.0
+        self._last_event_flush_s: float = 0.0
         self._last_snapshot_flush_s: float = 0.0
 
         # Stats
-        self._events_sent_total:  int = 0
-        self._snapshots_sent:     int = 0
+        self._events_sent_total: int = 0
+        self._snapshots_sent: int = 0
         self._failed_event_sends: int = 0
-        self._failed_snap_sends:  int = 0
+        self._failed_snap_sends: int = 0
 
     # ------------------------------------------------------------------ #
     # BaseRepository interface — Engine calls this per event
@@ -212,10 +227,10 @@ class Uploader:
         if self._running:
             return
         self._running = True
-        self._thread  = threading.Thread(
-            target  = self._run,
-            daemon  = True,
-            name    = "stacktracer-uploader",
+        self._thread = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name="stacktracer-uploader",
         )
         self._thread.start()
         logger.info(
@@ -252,15 +267,21 @@ class Uploader:
         Checks whether each flush interval has elapsed on every wake.
         """
         while self._running:
-            time.sleep(1)   # wake every second to check intervals
+            time.sleep(1)  # wake every second to check intervals
 
             now = time.time()
 
-            if now - self._last_event_flush_s >= self._flush_interval:
+            if (
+                now - self._last_event_flush_s
+                >= self._flush_interval
+            ):
                 self._flush_events()
                 self._last_event_flush_s = now
 
-            if now - self._last_snapshot_flush_s >= self._snapshot_interval:
+            if (
+                now - self._last_snapshot_flush_s
+                >= self._snapshot_interval
+            ):
                 self._flush_snapshot()
                 self._last_snapshot_flush_s = now
 
@@ -281,23 +302,25 @@ class Uploader:
 
         try:
             import httpx
+
             body, content_type = _serialize_events(payload)
 
             response = httpx.post(
                 f"{self._endpoint}/api/v1/events",
-                content = body,
-                headers = {
+                content=body,
+                headers={
                     "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type":  content_type,
+                    "Content-Type": content_type,
                 },
-                timeout = 10.0,
+                timeout=10.0,
             )
 
             if response.status_code == 200:
                 self._events_sent_total += len(batch)
                 logger.debug(
                     "Events uploaded: %d  total=%d",
-                    len(batch), self._events_sent_total,
+                    len(batch),
+                    self._events_sent_total,
                 )
             else:
                 self._failed_event_sends += 1
@@ -336,7 +359,9 @@ class Uploader:
             return
 
         try:
-            data, content_type = _serialize_graph(self._engine.graph)
+            data, content_type = _serialize_graph(
+                self._engine.graph
+            )
         except Exception as exc:
             logger.debug("Graph serialisation failed: %s", exc)
             return
@@ -346,12 +371,12 @@ class Uploader:
 
             response = httpx.post(
                 f"{self._endpoint}/api/v1/graph/snapshot",
-                content = data,
-                headers = {
+                content=data,
+                headers={
                     "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type":  content_type,
+                    "Content-Type": content_type,
                 },
-                timeout = 30.0,   # snapshot can be ~1MB — allow more time
+                timeout=30.0,  # snapshot can be ~1MB — allow more time
             )
 
             if response.status_code == 200:
@@ -372,7 +397,7 @@ class Uploader:
                 )
 
         except ImportError:
-            pass   # already warned by _flush_events
+            pass  # already warned by _flush_events
         except Exception as exc:
             self._failed_snap_sends += 1
             logger.debug("Snapshot upload error: %s", exc)
@@ -383,12 +408,12 @@ class Uploader:
 
     def stats(self) -> Dict[str, Any]:
         return {
-            "events_sent_total":  self._events_sent_total,
-            "snapshots_sent":     self._snapshots_sent,
+            "events_sent_total": self._events_sent_total,
+            "snapshots_sent": self._snapshots_sent,
             "failed_event_sends": self._failed_event_sends,
-            "failed_snap_sends":  self._failed_snap_sends,
-            "event_buffer_size":  len(self._event_buffer),
-            "snapshot_pending":   self._snapshot_slot.pending,
-            "engine_bound":       self._engine is not None,
-            "running":            self._running,
+            "failed_snap_sends": self._failed_snap_sends,
+            "event_buffer_size": len(self._event_buffer),
+            "snapshot_pending": self._snapshot_slot.pending,
+            "engine_bound": self._engine is not None,
+            "running": self._running,
         }

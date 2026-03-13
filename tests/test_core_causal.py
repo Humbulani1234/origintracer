@@ -23,16 +23,22 @@ import time
 import pytest
 
 from stacktracer.core.causal import (
-    PatternRegistry, CausalRule,
-    RETRY_AMPLIFICATION, NEW_SYNC_CALL, LOOP_STARVATION,
-    DB_HOTSPOT, N_PLUS_ONE, WORKER_IMBALANCE, build_default_registry,
+    PatternRegistry,
+    CausalRule,
+    RETRY_AMPLIFICATION,
+    NEW_SYNC_CALL,
+    LOOP_STARVATION,
+    DB_HOTSPOT,
+    N_PLUS_ONE,
+    WORKER_IMBALANCE,
+    build_default_registry,
 )
 from stacktracer.core.runtime_graph import RuntimeGraph
 from stacktracer.core.temporal import TemporalStore
 from stacktracer.core.active_requests import ActiveRequestTracker
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────
+
 
 def fresh():
     """Return a clean (graph, temporal) pair."""
@@ -43,25 +49,31 @@ def fresh():
 # PatternRegistry
 # ====================================================================== #
 
+
 class TestPatternRegistry:
 
     def test_register_and_list(self):
         r = PatternRegistry()
-        r.register(CausalRule(
-            name="test_rule",
-            description="test",
-            predicate=lambda g, t: (False, {}),
-        ))
+        r.register(
+            CausalRule(
+                name="test_rule",
+                description="test",
+                predicate=lambda g, t: (False, {}),
+            )
+        )
         assert "test_rule" in r.rule_names()
 
     def test_evaluate_calls_predicate(self):
         fired = []
+
         def pred(g, t):
             fired.append(True)
             return True, {"key": "value"}
 
         r = PatternRegistry()
-        r.register(CausalRule(name="r", description="d", predicate=pred))
+        r.register(
+            CausalRule(name="r", description="d", predicate=pred)
+        )
         g, t = fresh()
         matches = r.evaluate(g, t)
         assert len(matches) == 1
@@ -70,8 +82,22 @@ class TestPatternRegistry:
 
     def test_tag_filtering_excludes_unmatched(self):
         r = PatternRegistry()
-        r.register(CausalRule(name="a", description="", predicate=lambda g,t: (True, {}), tags=["latency"]))
-        r.register(CausalRule(name="b", description="", predicate=lambda g,t: (True, {}), tags=["db"]))
+        r.register(
+            CausalRule(
+                name="a",
+                description="",
+                predicate=lambda g, t: (True, {}),
+                tags=["latency"],
+            )
+        )
+        r.register(
+            CausalRule(
+                name="b",
+                description="",
+                predicate=lambda g, t: (True, {}),
+                tags=["db"],
+            )
+        )
         g, t = fresh()
         matches = r.evaluate(g, t, tags=["latency"])
         assert all(m.rule_name == "a" for m in matches)
@@ -81,7 +107,13 @@ class TestPatternRegistry:
             raise RuntimeError("rule is broken")
 
         r = PatternRegistry()
-        r.register(CausalRule(name="broken", description="", predicate=exploding))
+        r.register(
+            CausalRule(
+                name="broken",
+                description="",
+                predicate=exploding,
+            )
+        )
         g, t = fresh()
         matches = r.evaluate(g, t)
         # Returns a zero-confidence match explaining the error rather than raising
@@ -90,8 +122,22 @@ class TestPatternRegistry:
 
     def test_results_sorted_by_confidence_descending(self):
         r = PatternRegistry()
-        r.register(CausalRule(name="low",  description="", predicate=lambda g,t: (True, {}), confidence=0.3))
-        r.register(CausalRule(name="high", description="", predicate=lambda g,t: (True, {}), confidence=0.9))
+        r.register(
+            CausalRule(
+                name="low",
+                description="",
+                predicate=lambda g, t: (True, {}),
+                confidence=0.3,
+            )
+        )
+        r.register(
+            CausalRule(
+                name="high",
+                description="",
+                predicate=lambda g, t: (True, {}),
+                confidence=0.9,
+            )
+        )
         g, t = fresh()
         matches = r.evaluate(g, t)
         assert matches[0].confidence >= matches[1].confidence
@@ -99,15 +145,17 @@ class TestPatternRegistry:
     def test_build_default_registry_includes_all_rules(self):
         r = build_default_registry()
         names = r.rule_names()
-        assert "n_plus_one"                    in names
+        assert "n_plus_one" in names
         assert "new_sync_call_after_deployment" in names
-        assert "asyncio_event_loop_starvation"  in names
-        assert "worker_imbalance"              in names
-        assert "retry_amplification"           in names
-        assert "db_query_hotspot"              in names
-        assert "request_duration_anomaly"      in names
+        assert "asyncio_event_loop_starvation" in names
+        assert "worker_imbalance" in names
+        assert "retry_amplification" in names
+        assert "db_query_hotspot" in names
+        assert "request_duration_anomaly" in names
 
-    def test_build_default_registry_order_confidence_descending(self):
+    def test_build_default_registry_order_confidence_descending(
+        self,
+    ):
         """
         Rules must be registered highest-confidence first so the REPL
         shows the most actionable match at the top.
@@ -116,15 +164,25 @@ class TestPatternRegistry:
         """
         r = build_default_registry()
         names = r.rule_names()
-        assert names.index("n_plus_one") < names.index("db_query_hotspot")
-        assert names.index("new_sync_call_after_deployment") < names.index("retry_amplification")
+        assert names.index("n_plus_one") < names.index(
+            "db_query_hotspot"
+        )
+        assert names.index(
+            "new_sync_call_after_deployment"
+        ) < names.index("retry_amplification")
 
-    def test_build_default_registry_without_tracker_is_safe(self):
+    def test_build_default_registry_without_tracker_is_safe(
+        self,
+    ):
         """tracker=None means anomaly rule registers but never fires — no crash."""
         r = build_default_registry(tracker=None)
         g, t = fresh()
         matches = r.evaluate(g, t)
-        anomalies = [m for m in matches if m.rule_name == "request_duration_anomaly"]
+        anomalies = [
+            m
+            for m in matches
+            if m.rule_name == "request_duration_anomaly"
+        ]
         assert anomalies == []
 
 
@@ -132,12 +190,13 @@ class TestPatternRegistry:
 # retry_amplification rule
 # ====================================================================== #
 
+
 class TestRetryAmplification:
 
     def test_fires_when_retry_count_high(self):
         g, t = fresh()
-        g.upsert_node("django::view",   "fn", "django")
-        g.upsert_node("redis::get",     "fn", "redis")
+        g.upsert_node("django::view", "fn", "django")
+        g.upsert_node("redis::get", "fn", "redis")
         g.upsert_edge("django::view", "redis::get", "calls")
         # Inject retry metadata onto the edge
         edge_key = list(g._edge_index.keys())[0]
@@ -146,7 +205,9 @@ class TestRetryAmplification:
         r = PatternRegistry()
         r.register(RETRY_AMPLIFICATION)
         matches = r.evaluate(g, t)
-        assert any(m.rule_name == "retry_amplification" for m in matches)
+        assert any(
+            m.rule_name == "retry_amplification" for m in matches
+        )
 
     def test_silent_when_no_retries(self):
         g, t = fresh()
@@ -161,6 +222,7 @@ class TestRetryAmplification:
 # ====================================================================== #
 # new_sync_call_after_deployment rule
 # ====================================================================== #
+
 
 class TestNewSyncCallAfterDeployment:
 
@@ -181,7 +243,10 @@ class TestNewSyncCallAfterDeployment:
         r = PatternRegistry()
         r.register(NEW_SYNC_CALL)
         matches = r.evaluate(g, t)
-        assert any(m.rule_name == "new_sync_call_after_deployment" for m in matches)
+        assert any(
+            m.rule_name == "new_sync_call_after_deployment"
+            for m in matches
+        )
 
     def test_silent_without_deployment_marker(self):
         g, t = fresh()
@@ -199,6 +264,7 @@ class TestNewSyncCallAfterDeployment:
 # asyncio_event_loop_starvation rule
 # ====================================================================== #
 
+
 class TestLoopStarvation:
 
     def test_fires_when_loop_tick_avg_high(self):
@@ -213,13 +279,18 @@ class TestLoopStarvation:
         r = PatternRegistry()
         r.register(LOOP_STARVATION)
         matches = r.evaluate(g, t)
-        assert any(m.rule_name == "asyncio_event_loop_starvation" for m in matches)
+        assert any(
+            m.rule_name == "asyncio_event_loop_starvation"
+            for m in matches
+        )
 
     def test_silent_when_loop_tick_fast(self):
         g, t = fresh()
         g.upsert_node("asyncio::loop.tick", "asyncio", "asyncio")
         node = g._nodes["asyncio::loop.tick"]
-        node.total_duration_ns = 1_000_000   # 1ms — well below 10ms threshold
+        node.total_duration_ns = (
+            1_000_000  # 1ms — well below 10ms threshold
+        )
         node.call_count = 1
         node.node_type = "asyncio"
 
@@ -232,6 +303,7 @@ class TestLoopStarvation:
 # db_query_hotspot rule
 # ====================================================================== #
 
+
 class TestDbQueryHotspot:
     """
     _is_db_node() checks metadata["probe"].endswith(".db.query"),
@@ -239,30 +311,44 @@ class TestDbQueryHotspot:
     Threshold: a single query node call_count > 30% of total and > 5.
     """
 
-    def _db_node(self, g: RuntimeGraph, node_id: str, call_count: int) -> None:
+    def _db_node(
+        self, g: RuntimeGraph, node_id: str, call_count: int
+    ) -> None:
         """Add a DB query node with correct probe metadata."""
         for _ in range(call_count):
             g.upsert_node(
                 node_id,
-                node_type = "django",
-                service   = "django",
-                metadata  = {"probe": "django.db.query"},
+                node_type="django",
+                service="django",
+                metadata={"probe": "django.db.query"},
             )
 
     def test_fires_when_single_query_dominates(self):
         g, t = fresh()
         # 10 book queries + 1 author query + 1 view node
         # book query = 10 / (10+1+1) = 83% — well above 30% threshold
-        self._db_node(g, "django::SELECT book WHERE author_id=%s", call_count=10)
-        self._db_node(g, "django::SELECT author",                  call_count=1)
-        g.upsert_node("django::NPlusOneView", "django", "django")  # no probe metadata
+        self._db_node(
+            g,
+            "django::SELECT book WHERE author_id=%s",
+            call_count=10,
+        )
+        self._db_node(g, "django::SELECT author", call_count=1)
+        g.upsert_node(
+            "django::NPlusOneView", "django", "django"
+        )  # no probe metadata
 
         r = PatternRegistry()
         r.register(DB_HOTSPOT)
         matches = r.evaluate(g, t)
-        assert any(m.rule_name == "db_query_hotspot" for m in matches)
+        assert any(
+            m.rule_name == "db_query_hotspot" for m in matches
+        )
         # Evidence must name the hotspot query
-        evidence = next(m for m in matches if m.rule_name == "db_query_hotspot").evidence
+        evidence = next(
+            m
+            for m in matches
+            if m.rule_name == "db_query_hotspot"
+        ).evidence
         assert any(
             "SELECT book" in q["node"]
             for q in evidence.get("hotspot_queries", [])
@@ -272,7 +358,9 @@ class TestDbQueryHotspot:
         g, t = fresh()
         # Ten DB queries with equal counts — none exceeds 30%
         for i in range(10):
-            self._db_node(g, f"django::SELECT table_{i}", call_count=2)
+            self._db_node(
+                g, f"django::SELECT table_{i}", call_count=2
+            )
 
         r = PatternRegistry()
         r.register(DB_HOTSPOT)
@@ -295,6 +383,7 @@ class TestDbQueryHotspot:
 # n_plus_one rule
 # ====================================================================== #
 
+
 class TestNPlusOne:
     """
     N_PLUS_ONE fires when a DB query node is called N times per view call
@@ -304,34 +393,40 @@ class TestNPlusOne:
     view parents. Ratio = db.call_count / view.call_count.
     """
 
-    def _build_nplusone_graph(self, db_calls: int = 10, view_calls: int = 1) -> RuntimeGraph:
+    def _build_nplusone_graph(
+        self, db_calls: int = 10, view_calls: int = 1
+    ) -> RuntimeGraph:
         g = RuntimeGraph()
         # View node
         g.upsert_node(
             "django::NPlusOneView",
-            node_type = "django",
-            service   = "django",
-            metadata  = {"probe": "django.view.enter"},
+            node_type="django",
+            service="django",
+            metadata={"probe": "django.view.enter"},
         )
         # Force call_count
         for _ in range(view_calls - 1):
-            g.upsert_node("django::NPlusOneView", "django", "django",
-                          metadata={"probe": "django.view.enter"})
+            g.upsert_node(
+                "django::NPlusOneView",
+                "django",
+                "django",
+                metadata={"probe": "django.view.enter"},
+            )
 
         # DB query node called N times
         for _ in range(db_calls):
             g.upsert_node(
                 "django::SELECT book WHERE author_id=%s",
-                node_type = "django",
-                service   = "django",
-                metadata  = {"probe": "django.db.query"},
+                node_type="django",
+                service="django",
+                metadata={"probe": "django.db.query"},
             )
 
         # Edge: view → db (structural) and reverse (callers)
         g.upsert_edge(
-            source    = "django::NPlusOneView",
-            target    = "django::SELECT book WHERE author_id=%s",
-            edge_type = "calls",
+            source="django::NPlusOneView",
+            target="django::SELECT book WHERE author_id=%s",
+            edge_type="calls",
         )
         return g
 
@@ -351,7 +446,9 @@ class TestNPlusOne:
         r = PatternRegistry()
         r.register(N_PLUS_ONE)
         matches = r.evaluate(g, t)
-        m = next(m for m in matches if m.rule_name == "n_plus_one")
+        m = next(
+            m for m in matches if m.rule_name == "n_plus_one"
+        )
         # Ratio should be reported
         assert m.evidence.get("ratio", 0) >= 5
 
@@ -370,9 +467,9 @@ class TestNPlusOne:
         for _ in range(10):
             g.upsert_node(
                 "django::SELECT orphan",
-                node_type = "django",
-                service   = "django",
-                metadata  = {"probe": "django.db.query"},
+                node_type="django",
+                service="django",
+                metadata={"probe": "django.db.query"},
             )
         r = PatternRegistry()
         r.register(N_PLUS_ONE)
@@ -387,6 +484,7 @@ class TestNPlusOne:
 # worker_imbalance rule
 # ====================================================================== #
 
+
 class TestWorkerImbalance:
     """
     WORKER_IMBALANCE fires when one gunicorn worker handles significantly
@@ -398,7 +496,7 @@ class TestWorkerImbalance:
 
     def _build_imbalanced_workers(
         self,
-        worker_loads: list,   # e.g. [10, 2] means worker0 handled 10, worker1 handled 2
+        worker_loads: list,  # e.g. [10, 2] means worker0 handled 10, worker1 handled 2
     ) -> RuntimeGraph:
         g = RuntimeGraph()
 
@@ -406,9 +504,12 @@ class TestWorkerImbalance:
             worker_id = f"gunicorn::worker-{i}"
             g.upsert_node(
                 worker_id,
-                node_type = "gunicorn",
-                service   = "gunicorn",
-                metadata  = {"probe": "gunicorn.worker.fork", "worker_pid": 1000 + i},
+                node_type="gunicorn",
+                service="gunicorn",
+                metadata={
+                    "probe": "gunicorn.worker.fork",
+                    "worker_pid": 1000 + i,
+                },
             )
             # Each "handled" edge represents requests routed to this worker
             request_id = f"uvicorn::/api/"
@@ -421,16 +522,20 @@ class TestWorkerImbalance:
 
     def test_fires_when_one_worker_handles_much_more(self):
         g, t = fresh()
-        g = self._build_imbalanced_workers([10, 2])   # ratio = 5x
+        g = self._build_imbalanced_workers([10, 2])  # ratio = 5x
 
         r = PatternRegistry()
         r.register(WORKER_IMBALANCE)
         matches = r.evaluate(g, t)
-        assert any(m.rule_name == "worker_imbalance" for m in matches)
+        assert any(
+            m.rule_name == "worker_imbalance" for m in matches
+        )
 
     def test_silent_when_workers_balanced(self):
         g, t = fresh()
-        g = self._build_imbalanced_workers([5, 5, 4])   # ratio ≈ 1.25 — balanced
+        g = self._build_imbalanced_workers(
+            [5, 5, 4]
+        )  # ratio ≈ 1.25 — balanced
 
         r = PatternRegistry()
         r.register(WORKER_IMBALANCE)
@@ -452,9 +557,13 @@ class TestWorkerImbalance:
         r = PatternRegistry()
         r.register(WORKER_IMBALANCE)
         matches = r.evaluate(g, t)
-        m = next(m for m in matches if m.rule_name == "worker_imbalance")
+        m = next(
+            m
+            for m in matches
+            if m.rule_name == "worker_imbalance"
+        )
         assert "busiest_worker" in m.evidence
-        assert "ratio"          in m.evidence
+        assert "ratio" in m.evidence
         assert m.evidence["ratio"] >= 2.0
 
 
@@ -462,29 +571,44 @@ class TestWorkerImbalance:
 # request_duration_anomaly rule
 # ====================================================================== #
 
+
 class TestRequestDurationAnomaly:
 
-    def _make_tracker_with_history(self, pattern: str, fast_avg_ms: float, slow_p99_ms: float):
+    def _make_tracker_with_history(
+        self,
+        pattern: str,
+        fast_avg_ms: float,
+        slow_p99_ms: float,
+    ):
         """
         Build a tracker with:
           - 50+ historical completions at fast_avg_ms (stored in graph node)
           - Recent completions at slow_p99_ms (stored in tracker)
         """
-        from stacktracer.core.active_requests import ActiveRequestTracker
+        from stacktracer.core.active_requests import (
+            ActiveRequestTracker,
+        )
+
         tracker = ActiveRequestTracker()
 
         # Simulate 50 historical completions
         for i in range(50):
             tid = f"hist-{i}"
-            tracker.start(trace_id=tid, service="django", pattern=pattern)
+            tracker.start(
+                trace_id=tid, service="django", pattern=pattern
+            )
             span = tracker._active[tid]
-            span.start_time -= fast_avg_ms / 1000   # fast completion
+            span.start_time -= (
+                fast_avg_ms / 1000
+            )  # fast completion
             tracker.complete(trace_id=tid)
 
         # Simulate 10 recent slow completions
         for i in range(10):
             tid = f"slow-{i}"
-            tracker.start(trace_id=tid, service="django", pattern=pattern)
+            tracker.start(
+                trace_id=tid, service="django", pattern=pattern
+            )
             span = tracker._active[tid]
             span.start_time -= slow_p99_ms / 1000
             tracker.complete(trace_id=tid)
@@ -492,13 +616,15 @@ class TestRequestDurationAnomaly:
         return tracker
 
     def test_fires_when_p99_exceeds_3x_avg(self):
-        from stacktracer.core.causal import _make_request_duration_anomaly
+        from stacktracer.core.causal import (
+            _make_request_duration_anomaly,
+        )
 
         pattern = "django::/api/users/{id}/"
         tracker = self._make_tracker_with_history(
-            pattern      = pattern,
-            fast_avg_ms  = 50,    # historical average
-            slow_p99_ms  = 200,   # 4x — above threshold
+            pattern=pattern,
+            fast_avg_ms=50,  # historical average
+            slow_p99_ms=200,  # 4x — above threshold
         )
 
         g, t = fresh()
@@ -506,23 +632,28 @@ class TestRequestDurationAnomaly:
         g.upsert_node(pattern, "fn", "django")
         node = g._nodes[pattern]
         for _ in range(50):
-            node.total_duration_ns += 50_000_000   # 50ms
+            node.total_duration_ns += 50_000_000  # 50ms
             node.call_count += 1
 
         rule = _make_request_duration_anomaly(tracker)
         r = PatternRegistry()
         r.register(rule)
         matches = r.evaluate(g, t)
-        assert any(m.rule_name == "request_duration_anomaly" for m in matches)
+        assert any(
+            m.rule_name == "request_duration_anomaly"
+            for m in matches
+        )
 
     def test_silent_when_latency_within_normal_range(self):
-        from stacktracer.core.causal import _make_request_duration_anomaly
+        from stacktracer.core.causal import (
+            _make_request_duration_anomaly,
+        )
 
         pattern = "django::/api/users/{id}/"
         tracker = self._make_tracker_with_history(
-            pattern     = pattern,
-            fast_avg_ms = 50,
-            slow_p99_ms = 60,   # only 1.2x — well within threshold
+            pattern=pattern,
+            fast_avg_ms=50,
+            slow_p99_ms=60,  # only 1.2x — well within threshold
         )
 
         g, t = fresh()
@@ -539,7 +670,10 @@ class TestRequestDurationAnomaly:
 
     def test_silent_when_tracker_is_none(self):
         """Anomaly rule with tracker=None must never crash."""
-        from stacktracer.core.causal import _make_request_duration_anomaly
+        from stacktracer.core.causal import (
+            _make_request_duration_anomaly,
+        )
+
         rule = _make_request_duration_anomaly(None)
         g, t = fresh()
         matched, evidence = rule.predicate(g, t)
@@ -550,6 +684,7 @@ class TestRequestDurationAnomaly:
 # ====================================================================== #
 # User rule discovery convention
 # ====================================================================== #
+
 
 class TestUserRuleConvention:
 
@@ -563,11 +698,13 @@ class TestUserRuleConvention:
 
         def register(registry):
             called_with.append(registry)
-            registry.register(CausalRule(
-                name="user_custom_rule",
-                description="user defined",
-                predicate=lambda g, t: (False, {}),
-            ))
+            registry.register(
+                CausalRule(
+                    name="user_custom_rule",
+                    description="user defined",
+                    predicate=lambda g, t: (False, {}),
+                )
+            )
 
         register(r)
 

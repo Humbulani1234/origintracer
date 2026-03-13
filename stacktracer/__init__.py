@@ -65,6 +65,7 @@ def _register_post_init_callback(fn: Callable) -> None:
 # Step 1 — Raw config loading and merging
 # ====================================================================== #
 
+
 def _load_package_defaults() -> Dict[str, Any]:
     """
     Load the package-shipped defaults.yaml.
@@ -74,6 +75,7 @@ def _load_package_defaults() -> Dict[str, Any]:
     hardcoded in Python anymore.
     """
     import yaml
+
     defaults_path = os.path.join(
         os.path.dirname(__file__), "config", "defaults.yaml"
     )
@@ -87,11 +89,15 @@ def _load_package_defaults() -> Dict[str, Any]:
         return {}
     with open(defaults_path) as f:
         data = yaml.safe_load(f) or {}
-    logger.debug("Package defaults loaded from %s", defaults_path)
+    logger.debug(
+        "Package defaults loaded from %s", defaults_path
+    )
     return data
 
 
-def _find_user_config(explicit_path: Optional[str]) -> Optional[str]:
+def _find_user_config(
+    explicit_path: Optional[str],
+) -> Optional[str]:
     """
     Locate the user's stacktracer.yaml.
 
@@ -103,7 +109,9 @@ def _find_user_config(explicit_path: Optional[str]) -> Optional[str]:
     if explicit_path:
         if os.path.exists(explicit_path):
             return explicit_path
-        logger.warning("Explicit config path not found: %s", explicit_path)
+        logger.warning(
+            "Explicit config path not found: %s", explicit_path
+        )
         return None
 
     env_path = os.getenv("STACKTRACER_CONFIG")
@@ -129,12 +137,15 @@ def _load_user_config(path: Optional[str]) -> Dict[str, Any]:
         return {}
     try:
         import yaml
+
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         logger.info("User config loaded from %s", path)
         return data
     except Exception as exc:
-        logger.warning("Could not load user config %s: %s", path, exc)
+        logger.warning(
+            "Could not load user config %s: %s", path, exc
+        )
         return {}
 
 
@@ -146,7 +157,11 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
     """
     result = dict(base)
     for key, val in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+        if (
+            key in result
+            and isinstance(result[key], dict)
+            and isinstance(val, dict)
+        ):
             result[key] = _deep_merge(result[key], val)
         else:
             result[key] = val
@@ -164,7 +179,7 @@ def _merge_semantic(
     """
     merged: Dict[str, Dict] = {}
     for source in (defaults, user_yaml, init_kwarg or []):
-        for entry in (source or []):
+        for entry in source or []:
             label = entry.get("label", "")
             if label:
                 merged[label] = entry
@@ -189,6 +204,7 @@ def _extend_normalize(
 # Step 2 — ResolvedConfig
 # ====================================================================== #
 
+
 @dataclass
 class ResolvedConfig:
     """
@@ -196,28 +212,34 @@ class ResolvedConfig:
     user stacktracer.yaml, and init() kwargs.
     Built once in init() and stored as _config.
     """
-    api_key:           str
-    endpoint:          str
-    sample_rate:       float
-    buffer_size:       int
-    flush_interval:    int
+
+    api_key: str
+    endpoint: str
+    sample_rate: float
+    buffer_size: int
+    flush_interval: int
     snapshot_interval: float
-    redact_fields:     List[str]
-    probes:            List[str]
-    builtin_probes:    List[str]   # module paths — from defaults.yaml
-    semantic:          List[Dict]
-    normalize:         List[Dict]
-    compactor:         Dict[str, Any]
-    nginx:             Dict[str, Any]
-    gunicorn:          Dict[str, Any]
-    active_requests:   Dict[str, Any]
-    observe:           Dict[str, Any]
-    debug:             bool
-    enabled:           bool
-    config_path:       Optional[str]
+    redact_fields: List[str]
+    probes: List[str]
+    builtin_probes: List[
+        str
+    ]  # module paths — from defaults.yaml
+    semantic: List[Dict]
+    normalize: List[Dict]
+    compactor: Dict[str, Any]
+    nginx: Dict[str, Any]
+    gunicorn: Dict[str, Any]
+    active_requests: Dict[str, Any]
+    observe: Dict[str, Any]
+    debug: bool
+    enabled: bool
+    config_path: Optional[str]
 
     def __post_init__(self) -> None:
-        if os.getenv("DJANGO_DEBUG", "false").lower() == "true" and not self.debug:
+        if (
+            os.getenv("DJANGO_DEBUG", "false").lower() == "true"
+            and not self.debug
+        ):
             logger.info(
                 "StackTracer: DJANGO_DEBUG=True — disabling. "
                 "Pass debug=True to stacktracer.init() to enable in dev."
@@ -227,55 +249,78 @@ class ResolvedConfig:
 
 
 def _build_resolved_config(
-    merged_yaml:       Dict[str, Any],
-    api_key:           str,
-    endpoint:          str,
-    sample_rate:       Optional[float],
-    probes:            Optional[List[str]],
-    semantic:          Optional[List[Dict]],
+    merged_yaml: Dict[str, Any],
+    api_key: str,
+    endpoint: str,
+    sample_rate: Optional[float],
+    probes: Optional[List[str]],
+    semantic: Optional[List[Dict]],
     snapshot_interval: Optional[float],
-    flush_interval:    Optional[int],
-    debug:             bool,
-    config_path:       Optional[str],
-    normalize:         Optional[List[Dict]],
-    compactor:         Optional[Dict],
-    active_requests:   Optional[Dict],
-    observe:           Optional[Dict],
+    flush_interval: Optional[int],
+    debug: bool,
+    config_path: Optional[str],
+    normalize: Optional[List[Dict]],
+    compactor: Optional[Dict],
+    active_requests: Optional[Dict],
+    observe: Optional[Dict],
 ) -> ResolvedConfig:
     """
     Apply init() kwargs as the final override layer on top of merged yaml.
     merged_yaml = _deep_merge(defaults.yaml, user stacktracer.yaml).
     """
     resolved_semantic = _merge_semantic(
-        defaults   = merged_yaml.get("semantic", []),
-        user_yaml  = [],          # already in merged_yaml
-        init_kwarg = semantic,
+        defaults=merged_yaml.get("semantic", []),
+        user_yaml=[],  # already in merged_yaml
+        init_kwarg=semantic,
     )
     resolved_normalize = _extend_normalize(
-        merged_yaml_rules = merged_yaml.get("normalize", []),
-        init_kwarg_rules  = normalize,
+        merged_yaml_rules=merged_yaml.get("normalize", []),
+        init_kwarg_rules=normalize,
     )
 
     return ResolvedConfig(
-        api_key           = api_key,
-        endpoint          = endpoint,
-        sample_rate       = sample_rate       if sample_rate       is not None else merged_yaml.get("sample_rate",       0.01),
-        buffer_size       = merged_yaml.get("buffer_size",      10_000),
-        flush_interval    = flush_interval    if flush_interval    is not None else merged_yaml.get("flush_interval",    10),
-        snapshot_interval = snapshot_interval if snapshot_interval is not None else merged_yaml.get("snapshot_interval", 15.0),
-        redact_fields     = merged_yaml.get("redact_fields",    []),
-        probes            = probes            if probes            is not None else merged_yaml.get("probes",            []),
-        builtin_probes    = merged_yaml.get("builtin_probes",   []),
-        semantic          = resolved_semantic,
-        normalize         = resolved_normalize,
-        compactor         = _deep_merge(merged_yaml.get("compactor",        {}), compactor        or {}),
-        nginx             = merged_yaml.get("nginx",             {}),
-        gunicorn          = merged_yaml.get("gunicorn",          {}),
-        active_requests   = _deep_merge(merged_yaml.get("active_requests",  {}), active_requests  or {}),
-        observe           = _deep_merge(merged_yaml.get("observe",          {}), observe          or {}),
-        debug             = debug,
-        enabled           = True,
-        config_path       = config_path,
+        api_key=api_key,
+        endpoint=endpoint,
+        sample_rate=(
+            sample_rate
+            if sample_rate is not None
+            else merged_yaml.get("sample_rate", 0.01)
+        ),
+        buffer_size=merged_yaml.get("buffer_size", 10_000),
+        flush_interval=(
+            flush_interval
+            if flush_interval is not None
+            else merged_yaml.get("flush_interval", 10)
+        ),
+        snapshot_interval=(
+            snapshot_interval
+            if snapshot_interval is not None
+            else merged_yaml.get("snapshot_interval", 15.0)
+        ),
+        redact_fields=merged_yaml.get("redact_fields", []),
+        probes=(
+            probes
+            if probes is not None
+            else merged_yaml.get("probes", [])
+        ),
+        builtin_probes=merged_yaml.get("builtin_probes", []),
+        semantic=resolved_semantic,
+        normalize=resolved_normalize,
+        compactor=_deep_merge(
+            merged_yaml.get("compactor", {}), compactor or {}
+        ),
+        nginx=merged_yaml.get("nginx", {}),
+        gunicorn=merged_yaml.get("gunicorn", {}),
+        active_requests=_deep_merge(
+            merged_yaml.get("active_requests", {}),
+            active_requests or {},
+        ),
+        observe=_deep_merge(
+            merged_yaml.get("observe", {}), observe or {}
+        ),
+        debug=debug,
+        enabled=True,
+        config_path=config_path,
     )
 
 
@@ -283,61 +328,71 @@ def _build_resolved_config(
 # Step 3 — Component initialisation
 # ====================================================================== #
 
+
 def _init_normalizer(cfg: ResolvedConfig) -> Any:
     from .core.graph_normalizer import GraphNormalizer
+
     normalizer = GraphNormalizer(
-        enable_builtins              = True,
-        max_name_length              = 200,
-        max_unique_names_per_service = 500,
+        enable_builtins=True,
+        max_name_length=200,
+        max_unique_names_per_service=500,
     )
     for rule in cfg.normalize:
-        svc     = rule.get("service", "*")
+        svc = rule.get("service", "*")
         pattern = rule.get("pattern")
-        repl    = rule.get("replacement")
-        desc    = rule.get("description", "")
+        repl = rule.get("replacement")
+        desc = rule.get("description", "")
         if pattern and repl:
-            normalizer.add_pattern(service=svc, pattern=pattern,
-                                   replacement=repl, description=desc)
+            normalizer.add_pattern(
+                service=svc,
+                pattern=pattern,
+                replacement=repl,
+                description=desc,
+            )
     return normalizer
 
 
 def _init_compactor(cfg: ResolvedConfig) -> Any:
     from .core.graph_compactor import GraphCompactor
+
     c = cfg.compactor
     return GraphCompactor(
-        max_nodes      = c.get("max_nodes",      5_000),
-        evict_to_ratio = c.get("evict_to_ratio", 0.80),
-        node_ttl_s     = c.get("node_ttl_s",     3600.0),
-        min_call_count = c.get("min_call_count", 5),
+        max_nodes=c.get("max_nodes", 5_000),
+        evict_to_ratio=c.get("evict_to_ratio", 0.80),
+        node_ttl_s=c.get("node_ttl_s", 3600.0),
+        min_call_count=c.get("min_call_count", 5),
     )
 
 
 def _init_semantic(cfg: ResolvedConfig) -> Any:
     from .core.semantic import load_from_dict
+
     return load_from_dict(cfg.semantic)
 
 
 def _init_tracker(cfg: ResolvedConfig) -> Any:
     from .core.active_requests import ActiveRequestTracker
+
     ar = cfg.active_requests
     return ActiveRequestTracker(
-        ttl_s    = ar.get("ttl_s",    30.0),
-        max_size = ar.get("max_size", 10_000),
+        ttl_s=ar.get("ttl_s", 30.0),
+        max_size=ar.get("max_size", 10_000),
     )
 
 
 def _init_pattern_registry(tracker: Any) -> Any:
     from .core.causal import build_default_registry
+
     return build_default_registry(tracker=tracker)
 
 
 def _init_engine(
-    cfg:        ResolvedConfig,
+    cfg: ResolvedConfig,
     normalizer: Any,
-    compactor:  Any,
-    semantic:   Any,
-    registry:   Any,
-    tracker:    Any,
+    compactor: Any,
+    semantic: Any,
+    registry: Any,
+    tracker: Any,
     repository: Optional[Any],
 ) -> Any:
     from .core.engine import Engine
@@ -348,13 +403,13 @@ def _init_engine(
     graph.normalizer = normalizer
 
     engine = Engine(
-        causal_registry     = registry,
-        semantic_layer      = semantic,
-        snapshot_interval_s = cfg.snapshot_interval,
+        causal_registry=registry,
+        semantic_layer=semantic,
+        snapshot_interval_s=cfg.snapshot_interval,
     )
-    engine.graph      = graph
-    engine.compactor  = compactor
-    engine.tracker    = tracker
+    engine.graph = graph
+    engine.compactor = compactor
+    engine.tracker = tracker
 
     if repository:
         engine.repository = repository
@@ -364,7 +419,9 @@ def _init_engine(
     return engine
 
 
-def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
+def _init_probes(
+    cfg: ResolvedConfig, engine: Any, app_root: str
+) -> List[Any]:
     """
     1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
        Side-effect: each module registers its BaseProbe subclass with ProbeRegistry.
@@ -381,15 +438,23 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
     # Builtin modules from defaults.yaml — no hardcoded list
     for module_path in cfg.builtin_probes:
         try:
-            importlib.import_module(module_path, package=__name__)
+            importlib.import_module(
+                module_path, package=__name__
+            )
         except ImportError as exc:
-            logger.debug("Builtin probe module not available: %s — %s", module_path, exc)
+            logger.debug(
+                "Builtin probe module not available: %s — %s",
+                module_path,
+                exc,
+            )
 
     # User probes — auto-discovered from app directory
     _discover_user_probes(app_root)
 
     # Start probes named in cfg.probes
-    probes  = ProbeRegistry.load_from_config({"probes": cfg.probes})
+    probes = ProbeRegistry.load_from_config(
+        {"probes": cfg.probes}
+    )
     started = []
     for probe in probes:
         try:
@@ -397,7 +462,9 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
             started.append(probe)
             logger.info("Probe started: %s", probe.name)
         except Exception as exc:
-            logger.warning("Probe %s failed to start: %s", probe.name, exc)
+            logger.warning(
+                "Probe %s failed to start: %s", probe.name, exc
+            )
 
     return started
 
@@ -423,23 +490,32 @@ def _discover_user_probes(app_root: str) -> None:
 
     probes_dir = os.path.join(app_root, "stacktracer", "probes")
     if not os.path.isdir(probes_dir):
-        logger.debug("User probe directory not found: %s", probes_dir)
+        logger.debug(
+            "User probe directory not found: %s", probes_dir
+        )
         return
 
     for fname in sorted(os.listdir(probes_dir)):
-        if not fname.endswith("_probe.py") or fname.startswith("__"):
+        if not fname.endswith("_probe.py") or fname.startswith(
+            "__"
+        ):
             continue
-        full_path   = os.path.join(probes_dir, fname)
+        full_path = os.path.join(probes_dir, fname)
         module_name = f"_stacktracer_user_probe_{fname[:-3]}"
         try:
-            spec   = importlib.util.spec_from_file_location(module_name, full_path)
-            module = importlib.util.module_from_spec(spec)    # type: ignore[arg-type]
+            spec = importlib.util.spec_from_file_location(
+                module_name, full_path
+            )
+            module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
             sys.modules[module_name] = module
-            spec.loader.exec_module(module)                   # type: ignore[union-attr]
+            spec.loader.exec_module(module)  # type: ignore[union-attr]
             logger.info("User probe discovered: %s", fname)
         except Exception:
-            logger.warning("User probe %s failed to load:\n%s",
-                           fname, traceback.format_exc())
+            logger.warning(
+                "User probe %s failed to load:\n%s",
+                fname,
+                traceback.format_exc(),
+            )
             sys.modules.pop(module_name, None)
 
 
@@ -456,59 +532,82 @@ def _discover_user_rules(registry: Any, app_root: str) -> None:
         return
 
     for fname in sorted(os.listdir(rules_dir)):
-        if not fname.endswith("_rules.py") or fname.startswith("__"):
+        if not fname.endswith("_rules.py") or fname.startswith(
+            "__"
+        ):
             continue
-        full_path   = os.path.join(rules_dir, fname)
+        full_path = os.path.join(rules_dir, fname)
         module_name = f"_stacktracer_user_rule_{fname[:-3]}"
         try:
-            spec   = importlib.util.spec_from_file_location(module_name, full_path)
-            module = importlib.util.module_from_spec(spec)    # type: ignore[arg-type]
+            spec = importlib.util.spec_from_file_location(
+                module_name, full_path
+            )
+            module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
             sys.modules[module_name] = module
-            spec.loader.exec_module(module)                   # type: ignore[union-attr]
+            spec.loader.exec_module(module)  # type: ignore[union-attr]
 
             register_fn = getattr(module, "register", None)
             if register_fn is None:
-                logger.warning("User rules file %s has no register(registry) — skipped", fname)
+                logger.warning(
+                    "User rules file %s has no register(registry) — skipped",
+                    fname,
+                )
                 sys.modules.pop(module_name, None)
                 continue
 
             register_fn(registry)
-            logger.info("User rules loaded from %s (registry now has %d rules)",
-                        fname, len(registry.rule_names()))
+            logger.info(
+                "User rules loaded from %s (registry now has %d rules)",
+                fname,
+                len(registry.rule_names()),
+            )
         except Exception:
-            logger.warning("User rules %s failed to load:\n%s",
-                           fname, traceback.format_exc())
+            logger.warning(
+                "User rules %s failed to load:\n%s",
+                fname,
+                traceback.format_exc(),
+            )
             sys.modules.pop(module_name, None)
 
 
 def _init_local_server(engine: Any) -> Any:
     try:
         from .core.local_server import LocalQueryServer
+
         server = LocalQueryServer(engine)
         server.start()
         return server
     except Exception as exc:
-        logger.warning("Local query server failed to start: %s", exc)
+        logger.warning(
+            "Local query server failed to start: %s", exc
+        )
         return None
 
 
-def _init_uploader(cfg: ResolvedConfig, engine: Any) -> Optional[Any]:
+def _init_uploader(
+    cfg: ResolvedConfig, engine: Any
+) -> Optional[Any]:
     global _uploader
     if not cfg.api_key:
         logger.debug("Uploader: no api_key — skipping")
         return None
     try:
         from .buffer.uploader import Uploader
+
         uploader = Uploader(
-            endpoint       = cfg.endpoint,
-            api_key        = cfg.api_key,
-            flush_interval = cfg.flush_interval,
-            max_batch_size = 500,
+            endpoint=cfg.endpoint,
+            api_key=cfg.api_key,
+            flush_interval=cfg.flush_interval,
+            max_batch_size=500,
         )
         uploader.start()
         engine.repository = uploader
         _uploader = uploader
-        logger.info("Uploader active → %s (interval=%ds)", cfg.endpoint, cfg.flush_interval)
+        logger.info(
+            "Uploader active → %s (interval=%ds)",
+            cfg.endpoint,
+            cfg.flush_interval,
+        )
         return uploader
     except Exception as exc:
         logger.warning("Uploader failed to start: %s", exc)
@@ -519,21 +618,22 @@ def _init_uploader(cfg: ResolvedConfig, engine: Any) -> Optional[Any]:
 # Public init()
 # ====================================================================== #
 
+
 def init(
-    api_key:           str                  = "",
-    endpoint:          str                  = "https://api.stacktracer.io",
-    config:            Optional[str]        = None,
-    probes:            Optional[List[str]]  = None,
-    semantic:          Optional[List[Dict]] = None,
-    sample_rate:       Optional[float]      = None,
-    snapshot_interval: Optional[float]      = None,
-    flush_interval:    Optional[int]        = None,
-    debug:             bool                 = False,
-    repository:        Optional[Any]        = None,
-    normalize:         Optional[List[Dict]] = None,
-    compactor:         Optional[Dict]       = None,
-    active_requests:   Optional[Dict]       = None,
-    observe:           Optional[Dict]       = None,
+    api_key: str = "",
+    endpoint: str = "https://api.stacktracer.io",
+    config: Optional[str] = None,
+    probes: Optional[List[str]] = None,
+    semantic: Optional[List[Dict]] = None,
+    sample_rate: Optional[float] = None,
+    snapshot_interval: Optional[float] = None,
+    flush_interval: Optional[int] = None,
+    debug: bool = False,
+    repository: Optional[Any] = None,
+    normalize: Optional[List[Dict]] = None,
+    compactor: Optional[Dict] = None,
+    active_requests: Optional[Dict] = None,
+    observe: Optional[Dict] = None,
 ) -> None:
     """
     Initialise StackTracer.
@@ -551,7 +651,7 @@ def init(
             config  = str(BASE_DIR / "stacktracer.yaml"),
             debug   = True,
         )
-    
+
          Parameters
     ----------
     api_key
@@ -610,26 +710,26 @@ def init(
     # ── 1. Load and merge ─────────────────────────────────────────────
     package_defaults = _load_package_defaults()
     user_config_path = _find_user_config(config)
-    user_yaml        = _load_user_config(user_config_path)
-    merged_yaml      = _deep_merge(package_defaults, user_yaml)
-    app_root         = _app_root_from_config(user_config_path)
+    user_yaml = _load_user_config(user_config_path)
+    merged_yaml = _deep_merge(package_defaults, user_yaml)
+    app_root = _app_root_from_config(user_config_path)
 
     # ── 2. Build ResolvedConfig ───────────────────────────────────────
     _config = _build_resolved_config(
-        merged_yaml       = merged_yaml,
-        api_key           = api_key,
-        endpoint          = endpoint,
-        sample_rate       = sample_rate,
-        probes            = probes,
-        semantic          = semantic,
-        snapshot_interval = snapshot_interval,
-        flush_interval    = flush_interval,
-        debug             = debug,
-        config_path       = user_config_path,
-        normalize         = normalize,
-        compactor         = compactor,
-        active_requests   = active_requests,
-        observe           = observe,
+        merged_yaml=merged_yaml,
+        api_key=api_key,
+        endpoint=endpoint,
+        sample_rate=sample_rate,
+        probes=probes,
+        semantic=semantic,
+        snapshot_interval=snapshot_interval,
+        flush_interval=flush_interval,
+        debug=debug,
+        config_path=user_config_path,
+        normalize=normalize,
+        compactor=compactor,
+        active_requests=active_requests,
+        observe=observe,
     )
 
     if not _config.enabled:
@@ -637,22 +737,22 @@ def init(
         return
 
     # ── 3. Initialise components ──────────────────────────────────────
-    normalizer     = _init_normalizer(_config)
-    compactor_     = _init_compactor(_config)
+    normalizer = _init_normalizer(_config)
+    compactor_ = _init_compactor(_config)
     semantic_layer = _init_semantic(_config)
-    tracker        = _init_tracker(_config)
-    registry       = _init_pattern_registry(tracker)
+    tracker = _init_tracker(_config)
+    registry = _init_pattern_registry(tracker)
 
     _discover_user_rules(registry, app_root)
 
     _engine = _init_engine(
-        cfg        = _config,
-        normalizer = normalizer,
-        compactor  = compactor_,
-        semantic   = semantic_layer,
-        registry   = registry,
-        tracker    = tracker,
-        repository = repository,
+        cfg=_config,
+        normalizer=normalizer,
+        compactor=compactor_,
+        semantic=semantic_layer,
+        registry=registry,
+        tracker=tracker,
+        repository=repository,
     )
 
     _init_local_server(_engine)
@@ -683,9 +783,12 @@ def init(
 # Public accessors
 # ====================================================================== #
 
+
 def get_config() -> "ResolvedConfig":
     if _config is None:
-        raise RuntimeError("stacktracer.init() has not been called")
+        raise RuntimeError(
+            "stacktracer.init() has not been called"
+        )
     return _config
 
 
@@ -697,6 +800,7 @@ def get_engine() -> Any:
 # Shutdown
 # ====================================================================== #
 
+
 def shutdown() -> None:
     global _active_probes, _engine, _uploader, _config
 
@@ -704,7 +808,9 @@ def shutdown() -> None:
         try:
             probe.stop()
         except Exception as exc:
-            logger.debug("Probe %s stop error: %s", probe.name, exc)
+            logger.debug(
+                "Probe %s stop error: %s", probe.name, exc
+            )
     _active_probes = []
 
     if _uploader:
@@ -726,6 +832,7 @@ def shutdown() -> None:
 # Decorators and helpers
 # ====================================================================== #
 
+
 def trace(name: Optional[str] = None):
     """
     Decorator for explicit function-level tracing.
@@ -736,24 +843,38 @@ def trace(name: Optional[str] = None):
     import functools
 
     def decorator(fn: Any) -> Any:
-        fn_name  = name or fn.__qualname__
+        fn_name = name or fn.__qualname__
         is_async = _is_async_fn(fn)
         if is_async:
+
             @functools.wraps(fn)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                return await _traced_call(fn, fn_name, args, kwargs, is_async=True)
+            async def async_wrapper(
+                *args: Any, **kwargs: Any
+            ) -> Any:
+                return await _traced_call(
+                    fn, fn_name, args, kwargs, is_async=True
+                )
+
             return async_wrapper
         else:
+
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                return _traced_call(fn, fn_name, args, kwargs, is_async=False)
+                return _traced_call(
+                    fn, fn_name, args, kwargs, is_async=False
+                )
+
             return sync_wrapper
+
     return decorator
 
 
 def _is_async_fn(fn: Any) -> bool:
     import asyncio, inspect
-    return asyncio.iscoroutinefunction(fn) or inspect.iscoroutinefunction(fn)
+
+    return asyncio.iscoroutinefunction(
+        fn
+    ) or inspect.iscoroutinefunction(fn)
 
 
 def _traced_call(fn, fn_name, args, kwargs, is_async):
@@ -766,21 +887,41 @@ def _traced_call(fn, fn_name, args, kwargs, is_async):
     if not trace_id:
         return fn(*args, **kwargs)
 
-    emit(NormalizedEvent.now(probe="function.call", trace_id=trace_id,
-                             service="user", name=fn_name,
-                             parent_span_id=get_span_id()))
+    emit(
+        NormalizedEvent.now(
+            probe="function.call",
+            trace_id=trace_id,
+            service="user",
+            name=fn_name,
+            parent_span_id=get_span_id(),
+        )
+    )
     start = _time.perf_counter()
     try:
         return fn(*args, **kwargs)
     except Exception as exc:
-        emit(NormalizedEvent.now(probe="function.exception", trace_id=trace_id,
-                                 service="user", name=fn_name,
-                                 exception_type=type(exc).__name__))
+        emit(
+            NormalizedEvent.now(
+                probe="function.exception",
+                trace_id=trace_id,
+                service="user",
+                name=fn_name,
+                exception_type=type(exc).__name__,
+            )
+        )
         raise
     finally:
-        emit(NormalizedEvent.now(probe="function.return", trace_id=trace_id,
-                                 service="user", name=fn_name,
-                                 duration_ns=int((_time.perf_counter() - start) * 1e9)))
+        emit(
+            NormalizedEvent.now(
+                probe="function.return",
+                trace_id=trace_id,
+                service="user",
+                name=fn_name,
+                duration_ns=int(
+                    (_time.perf_counter() - start) * 1e9
+                ),
+            )
+        )
 
 
 def mark_deployment(label: str = "deployment") -> None:
@@ -795,12 +936,19 @@ def mark_deployment(label: str = "deployment") -> None:
 # ====================================================================== #
 
 from .core.event_schema import NormalizedEvent  # noqa: F401
-from .sdk.emitter import emit                    # noqa: F401
-from .context.vars import get_trace_id           # noqa: F401
+from .sdk.emitter import emit  # noqa: F401
+from .context.vars import get_trace_id  # noqa: F401
 
 __version__ = "0.1.0"
 __all__ = [
-    "init", "shutdown", "get_config", "get_engine",
-    "trace", "mark_deployment", "emit", "NormalizedEvent",
-    "get_trace_id", "ResolvedConfig",
+    "init",
+    "shutdown",
+    "get_config",
+    "get_engine",
+    "trace",
+    "mark_deployment",
+    "emit",
+    "NormalizedEvent",
+    "get_trace_id",
+    "ResolvedConfig",
 ]

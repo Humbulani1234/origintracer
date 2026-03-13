@@ -59,14 +59,16 @@ from ..context.vars import set_trace, reset_trace
 
 logger = logging.getLogger("stacktracer.probes.celery")
 
-ProbeTypes.register_many({
-    "celery.task.dispatch":  "Django view dispatched a Celery task",
-    "celery.task.start":     "Celery task execution started in worker",
-    "celery.task.end":       "Celery task completed (success or failure)",
-    "celery.task.retry":     "Celery task scheduled for retry",
-    "celery.task.failure":   "Celery task raised permanently",
-    "celery.worker.fork":    "Celery worker process forked and re-initialised",
-})
+ProbeTypes.register_many(
+    {
+        "celery.task.dispatch": "Django view dispatched a Celery task",
+        "celery.task.start": "Celery task execution started in worker",
+        "celery.task.end": "Celery task completed (success or failure)",
+        "celery.task.retry": "Celery task scheduled for retry",
+        "celery.task.failure": "Celery task raised permanently",
+        "celery.worker.fork": "Celery worker process forked and re-initialised",
+    }
+)
 
 # Per-task state — keyed by task_id, one dict per process (prefork safe)
 _task_state: dict[str, dict] = {}
@@ -76,8 +78,10 @@ _task_state: dict[str, dict] = {}
 # Signal handlers — plain functions, connected in CeleryProbe.start()
 # ====================================================================== #
 
-def _on_task_start(task_id: str, task: Any, args: tuple,
-                   kwargs: dict, **_) -> None:
+
+def _on_task_start(
+    task_id: str, task: Any, args: tuple, kwargs: dict, **_
+) -> None:
     """
     Fires inside the worker process before task execution.
     Reads _trace_id forwarded from the Django view, or falls back
@@ -85,86 +89,122 @@ def _on_task_start(task_id: str, task: Any, args: tuple,
     outside a request (management commands, beat scheduler).
     """
     import time
+
     trace_id = kwargs.get("_trace_id") or task_id
-    token    = set_trace(trace_id)
+    token = set_trace(trace_id)
 
     _task_state[task_id] = {
         "trace_id": trace_id,
-        "token":    token,
-        "name":     task.name,
-        "t0":       time.perf_counter(),
+        "token": token,
+        "name": task.name,
+        "t0": time.perf_counter(),
     }
 
-    emit(NormalizedEvent.now(
-        probe       = "celery.task.start",
-        trace_id    = trace_id,
-        service     = "celery",
-        name        = task.name,
-        task_id     = task_id,
-        worker_pid  = os.getpid(),
-        retries     = task.request.retries,
-        max_retries = task.max_retries,
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="celery.task.start",
+            trace_id=trace_id,
+            service="celery",
+            name=task.name,
+            task_id=task_id,
+            worker_pid=os.getpid(),
+            retries=task.request.retries,
+            max_retries=task.max_retries,
+        )
+    )
 
 
-def _on_task_end(task_id: str, task: Any, args: tuple, kwargs: dict,
-                 retval: Any, state: str, **_) -> None:
+def _on_task_end(
+    task_id: str,
+    task: Any,
+    args: tuple,
+    kwargs: dict,
+    retval: Any,
+    state: str,
+    **_,
+) -> None:
     """
     Fires inside the worker process after task execution regardless of outcome.
     """
     import time
-    state_data  = _task_state.pop(task_id, {})
-    trace_id    = state_data.get("trace_id") or kwargs.get("_trace_id") or task_id
-    t0          = state_data.get("t0")
-    duration_ns = int((time.perf_counter() - t0) * 1e9) if t0 else None
 
-    emit(NormalizedEvent.now(
-        probe       = "celery.task.end",
-        trace_id    = trace_id,
-        service     = "celery",
-        name        = task.name,
-        task_id     = task_id,
-        worker_pid  = os.getpid(),
-        state       = state,
-        retries     = task.request.retries,
-        duration_ns = duration_ns,
-    ))
+    state_data = _task_state.pop(task_id, {})
+    trace_id = (
+        state_data.get("trace_id")
+        or kwargs.get("_trace_id")
+        or task_id
+    )
+    t0 = state_data.get("t0")
+    duration_ns = (
+        int((time.perf_counter() - t0) * 1e9) if t0 else None
+    )
+
+    emit(
+        NormalizedEvent.now(
+            probe="celery.task.end",
+            trace_id=trace_id,
+            service="celery",
+            name=task.name,
+            task_id=task_id,
+            worker_pid=os.getpid(),
+            state=state,
+            retries=task.request.retries,
+            duration_ns=duration_ns,
+        )
+    )
 
     token = state_data.get("token")
     if token is not None:
         reset_trace(token)
 
 
-def _on_task_retry(request: Any, reason: Any, einfo: Any, **_) -> None:
-    emit(NormalizedEvent.now(
-        probe      = "celery.task.retry",
-        trace_id   = request.id,
-        service    = "celery",
-        name       = request.task,
-        task_id    = request.id,
-        worker_pid = os.getpid(),
-        reason     = str(reason)[:200],
-        retries    = request.retries,
-    ))
+def _on_task_retry(
+    request: Any, reason: Any, einfo: Any, **_
+) -> None:
+    emit(
+        NormalizedEvent.now(
+            probe="celery.task.retry",
+            trace_id=request.id,
+            service="celery",
+            name=request.task,
+            task_id=request.id,
+            worker_pid=os.getpid(),
+            reason=str(reason)[:200],
+            retries=request.retries,
+        )
+    )
 
 
-def _on_task_failure(task_id: str, exception: Exception, traceback: Any,
-                     einfo: Any, args: tuple, kwargs: dict, **_) -> None:
+def _on_task_failure(
+    task_id: str,
+    exception: Exception,
+    traceback: Any,
+    einfo: Any,
+    args: tuple,
+    kwargs: dict,
+    **_,
+) -> None:
     # task name stored at prerun — _on_task_failure has no Task instance
     state_data = _task_state.pop(task_id, {})
-    trace_id   = state_data.get("trace_id") or kwargs.get("_trace_id") or task_id
-    task_name  = state_data.get("name", task_id)
+    trace_id = (
+        state_data.get("trace_id")
+        or kwargs.get("_trace_id")
+        or task_id
+    )
+    task_name = state_data.get("name", task_id)
 
-    emit(NormalizedEvent.now(
-        probe          = "celery.task.failure",
-        trace_id       = trace_id,
-        service        = "celery",
-        name           = task_name,
-        task_id        = task_id,
-        worker_pid     = os.getpid(),
-        exception_type = type(exception).__name__,
-        exception_msg  = str(exception)[:200],
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="celery.task.failure",
+            trace_id=trace_id,
+            service="celery",
+            name=task_name,
+            task_id=task_id,
+            worker_pid=os.getpid(),
+            exception_type=type(exception).__name__,
+            exception_msg=str(exception)[:200],
+        )
+    )
 
     token = state_data.get("token")
     if token is not None:
@@ -179,43 +219,54 @@ def _on_worker_fork(**_) -> None:
     """
     import stacktracer
 
-    worker_pid  = os.getpid()
-    master_pid  = os.getppid()
-    config_path = os.environ.get("STACKTRACER_CONFIG", "stacktracer.yaml")
+    worker_pid = os.getpid()
+    master_pid = os.getppid()
+    config_path = os.environ.get(
+        "STACKTRACER_CONFIG", "stacktracer.yaml"
+    )
 
     try:
         stacktracer.init(config=config_path)
     except Exception as exc:
         logger.warning(
             "celery probe: StackTracer re-init failed in worker pid=%d: %s",
-            worker_pid, exc,
+            worker_pid,
+            exc,
         )
         return
 
-    emit(NormalizedEvent.now(
-        probe      = "celery.worker.fork",
-        trace_id   = f"celery-worker-{worker_pid}",
-        service    = "celery",
-        name       = "ForkPoolWorker",
-        worker_pid = worker_pid,
-        master_pid = master_pid,
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="celery.worker.fork",
+            trace_id=f"celery-worker-{worker_pid}",
+            service="celery",
+            name="ForkPoolWorker",
+            worker_pid=worker_pid,
+            master_pid=master_pid,
+        )
+    )
 
     logger.info(
         "celery probe: worker forked and re-initialised (pid=%d master=%d)",
-        worker_pid, master_pid,
+        worker_pid,
+        master_pid,
     )
 
 
 def _on_worker_exit(**_) -> None:
-    logger.info("celery probe: worker exiting (pid=%d)", os.getpid())
+    logger.info(
+        "celery probe: worker exiting (pid=%d)", os.getpid()
+    )
 
 
 # ====================================================================== #
 # Convenience helper for Django views
 # ====================================================================== #
 
-def dispatch(task_func: Any, trace_id: str, **task_kwargs) -> None:
+
+def dispatch(
+    task_func: Any, trace_id: str, **task_kwargs
+) -> None:
     """
     Emit celery.task.dispatch then call task.delay().
 
@@ -229,19 +280,22 @@ def dispatch(task_func: Any, trace_id: str, **task_kwargs) -> None:
 
         dispatch(send_notification, get_trace_id(), user_id=42)
     """
-    emit(NormalizedEvent.now(
-        probe     = "celery.task.dispatch",
-        trace_id  = trace_id,
-        service   = "django",
-        name      = task_func.name,
-        task_name = task_func.name,
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="celery.task.dispatch",
+            trace_id=trace_id,
+            service="django",
+            name=task_func.name,
+            task_name=task_func.name,
+        )
+    )
     task_func.delay(**task_kwargs, _trace_id=trace_id)
 
 
 # ====================================================================== #
 # CeleryProbe
 # ====================================================================== #
+
 
 class CeleryProbe(BaseProbe):
     """
@@ -263,6 +317,7 @@ class CeleryProbe(BaseProbe):
         probes:
           - celery
     """
+
     name = "celery"
 
     def start(self, **kwargs) -> None:
@@ -282,12 +337,14 @@ class CeleryProbe(BaseProbe):
             )
             return
 
-        task_prerun.connect(_on_task_start,          weak=False)
-        task_postrun.connect(_on_task_end,           weak=False)
-        task_retry.connect(_on_task_retry,           weak=False)
-        task_failure.connect(_on_task_failure,       weak=False)
+        task_prerun.connect(_on_task_start, weak=False)
+        task_postrun.connect(_on_task_end, weak=False)
+        task_retry.connect(_on_task_retry, weak=False)
+        task_failure.connect(_on_task_failure, weak=False)
         worker_process_init.connect(_on_worker_fork, weak=False)
-        worker_process_shutdown.connect(_on_worker_exit, weak=False)
+        worker_process_shutdown.connect(
+            _on_worker_exit, weak=False
+        )
 
         logger.info(
             "celery probe: signals connected "
@@ -298,8 +355,12 @@ class CeleryProbe(BaseProbe):
     def stop(self, **kwargs) -> None:
         try:
             from celery.signals import (
-                task_prerun, task_postrun, task_retry, task_failure,
-                worker_process_init, worker_process_shutdown,
+                task_prerun,
+                task_postrun,
+                task_retry,
+                task_failure,
+                worker_process_init,
+                worker_process_shutdown,
             )
         except ImportError:
             return

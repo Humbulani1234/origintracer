@@ -74,6 +74,7 @@ class KernelProbe(BaseProbe):
     Real kernel probe using eBPF.
     Falls back to KernelProbeStub if BCC is unavailable.
     """
+
     name = "kernel"
 
     def __init__(self) -> None:
@@ -94,14 +95,22 @@ class KernelProbe(BaseProbe):
             return
 
         if os.geteuid() != 0:
-            logger.warning("kernel probe requires root or CAP_BPF — skipping")
+            logger.warning(
+                "kernel probe requires root or CAP_BPF — skipping"
+            )
             return
 
         try:
             self._bpf = BPF(text=_BPF_PROGRAM)
-            self._bpf.attach_kprobe(event="tcp_sendmsg", fn_name="trace_tcp_send")
-            self._bpf.attach_kprobe(event="tcp_recvmsg", fn_name="trace_tcp_recv")
-            self._bpf["tcp_events"].open_perf_buffer(self._handle_event)
+            self._bpf.attach_kprobe(
+                event="tcp_sendmsg", fn_name="trace_tcp_send"
+            )
+            self._bpf.attach_kprobe(
+                event="tcp_recvmsg", fn_name="trace_tcp_recv"
+            )
+            self._bpf["tcp_events"].open_perf_buffer(
+                self._handle_event
+            )
 
             self._running = True
             self._thread = threading.Thread(
@@ -110,10 +119,15 @@ class KernelProbe(BaseProbe):
                 name="stacktracer-kernel-probe",
             )
             self._thread.start()
-            logger.info("kernel probe installed via eBPF (pid=%d)", self._pid)
+            logger.info(
+                "kernel probe installed via eBPF (pid=%d)",
+                self._pid,
+            )
 
         except Exception as exc:
-            logger.error("kernel probe failed to attach: %s", exc)
+            logger.error(
+                "kernel probe failed to attach: %s", exc
+            )
 
     def stop(self) -> None:
         self._running = False
@@ -128,7 +142,9 @@ class KernelProbe(BaseProbe):
             except Exception as exc:
                 logger.debug("kernel probe poll error: %s", exc)
 
-    def _handle_event(self, cpu: int, data: Any, size: int) -> None:
+    def _handle_event(
+        self, cpu: int, data: Any, size: int
+    ) -> None:
         """Called by BCC perf buffer for each kernel event."""
         if self._bpf is None:
             return
@@ -142,29 +158,39 @@ class KernelProbe(BaseProbe):
             if not trace_id:
                 return
 
-            direction = "tcp.send" if event.direction == 0 else "tcp.recv"
-            emit(NormalizedEvent.now(
-                probe=direction,
-                trace_id=trace_id,
-                service="kernel",
-                name=event.comm.decode("utf-8", errors="replace"),
-                pid=event.pid,
-                tid=event.tid,
-                bytes=event.size,
-            ))
+            direction = (
+                "tcp.send"
+                if event.direction == 0
+                else "tcp.recv"
+            )
+            emit(
+                NormalizedEvent.now(
+                    probe=direction,
+                    trace_id=trace_id,
+                    service="kernel",
+                    name=event.comm.decode(
+                        "utf-8", errors="replace"
+                    ),
+                    pid=event.pid,
+                    tid=event.tid,
+                    bytes=event.size,
+                )
+            )
         except Exception as exc:
             logger.debug("kernel event handling error: %s", exc)
 
     def _stub_mode(self) -> None:
         """Emit a single synthetic event to show the probe is alive."""
         trace_id = get_trace_id() or "stub"
-        emit(NormalizedEvent.now(
-            probe="tcp.send",
-            trace_id=trace_id,
-            service="kernel",
-            name="stub",
-            note="bcc unavailable — synthetic event",
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="tcp.send",
+                trace_id=trace_id,
+                service="kernel",
+                name="stub",
+                note="bcc unavailable — synthetic event",
+            )
+        )
 
 
 class KernelProbeStub(BaseProbe):
@@ -173,10 +199,13 @@ class KernelProbeStub(BaseProbe):
     Useful on macOS or in CI environments without eBPF.
     Not registered automatically; instantiate manually.
     """
+
     name = "kernel_stub"
 
     def start(self) -> None:
-        logger.info("KernelProbeStub started (synthetic events only)")
+        logger.info(
+            "KernelProbeStub started (synthetic events only)"
+        )
 
     def stop(self) -> None:
         pass

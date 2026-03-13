@@ -55,23 +55,31 @@ import time
 from typing import Any, Optional
 
 from stacktracer.sdk.emitter import emit
-from stacktracer.core.event_schema import NormalizedEvent, ProbeTypes
+from stacktracer.core.event_schema import (
+    NormalizedEvent,
+    ProbeTypes,
+)
 from stacktracer.context.vars import get_trace_id, get_span_id
 
 logger = logging.getLogger("stacktracer.probes.redis")
 
-ProbeTypes.register_many({
-    "redis.command.execute": "Redis command executed (any command type)",
-    "redis.pipeline.execute": "Redis pipeline flushed (batch of commands)",
-})
+ProbeTypes.register_many(
+    {
+        "redis.command.execute": "Redis command executed (any command type)",
+        "redis.pipeline.execute": "Redis pipeline flushed (batch of commands)",
+    }
+)
 
 
 def _get_redis():
     try:
         import redis
+
         return redis
     except ImportError:
-        raise ImportError("redis not installed. pip install redis")
+        raise ImportError(
+            "redis not installed. pip install redis"
+        )
 
 
 # ====================================================================== #
@@ -79,6 +87,7 @@ def _get_redis():
 # ====================================================================== #
 
 redis = _get_redis()
+
 
 class TracedRedis(redis.Redis):
     """
@@ -91,8 +100,8 @@ class TracedRedis(redis.Redis):
 
     def execute_command(self, *args, **options) -> Any:
         trace_id = get_trace_id()
-        command  = args[0] if args else "UNKNOWN"
-        key      = str(args[1])[:100] if len(args) > 1 else ""
+        command = args[0] if args else "UNKNOWN"
+        key = str(args[1])[:100] if len(args) > 1 else ""
 
         t0 = time.perf_counter()
         try:
@@ -100,40 +109,47 @@ class TracedRedis(redis.Redis):
         except Exception as exc:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe       = "redis.command.execute",
-                    trace_id    = trace_id,
-                    service     = "redis",
-                    name        = command,
-                    duration_ns = duration_ns,
-                    key         = key,
-                    error       = str(exc)[:200],
-                    success     = False,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="redis.command.execute",
+                        trace_id=trace_id,
+                        service="redis",
+                        name=command,
+                        duration_ns=duration_ns,
+                        key=key,
+                        error=str(exc)[:200],
+                        success=False,
+                    )
+                )
             raise
         else:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe       = "redis.command.execute",
-                    trace_id    = trace_id,
-                    service     = "redis",
-                    name        = command,
-                    duration_ns = duration_ns,
-                    key         = key,
-                    success     = True,
-                    result_type = type(result).__name__,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="redis.command.execute",
+                        trace_id=trace_id,
+                        service="redis",
+                        name=command,
+                        duration_ns=duration_ns,
+                        key=key,
+                        success=True,
+                        result_type=type(result).__name__,
+                    )
+                )
             return result
 
     def pipeline(self, transaction=True, shard_hint=None):
-        raw_pipe = super().pipeline(transaction=transaction, shard_hint=shard_hint)
+        raw_pipe = super().pipeline(
+            transaction=transaction, shard_hint=shard_hint
+        )
         return TracedPipeline(raw_pipe)
 
 
 # ====================================================================== #
 # TracedPipeline
 # ====================================================================== #
+
 
 class TracedPipeline:
     """
@@ -148,38 +164,44 @@ class TracedPipeline:
         self._pipeline = pipeline
 
     def execute(self, raise_on_error: bool = True) -> Any:
-        trace_id      = get_trace_id()
+        trace_id = get_trace_id()
         command_count = len(self._pipeline.command_stack)
 
         t0 = time.perf_counter()
         try:
-            result = self._pipeline.execute(raise_on_error=raise_on_error)
+            result = self._pipeline.execute(
+                raise_on_error=raise_on_error
+            )
         except Exception as exc:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe="redis.pipeline.execute",
-                    trace_id=trace_id,
-                    service="redis",
-                    name="pipeline",
-                    duration_ns=duration_ns,
-                    command_count=command_count,
-                    error=str(exc)[:200],
-                    success=False,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="redis.pipeline.execute",
+                        trace_id=trace_id,
+                        service="redis",
+                        name="pipeline",
+                        duration_ns=duration_ns,
+                        command_count=command_count,
+                        error=str(exc)[:200],
+                        success=False,
+                    )
+                )
             raise
         else:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe="redis.pipeline.execute",
-                    trace_id=trace_id,
-                    service="redis",
-                    name="pipeline",
-                    duration_ns=duration_ns,
-                    command_count=command_count,
-                    success=True,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="redis.pipeline.execute",
+                        trace_id=trace_id,
+                        service="redis",
+                        name="pipeline",
+                        duration_ns=duration_ns,
+                        command_count=command_count,
+                        success=True,
+                    )
+                )
             return result
 
     def __getattr__(self, name: str) -> Any:
@@ -199,6 +221,7 @@ class TracedPipeline:
 
 from ..sdk.base_probe import BaseProbe
 
+
 def make_traced_pool(**kwargs) -> Any:
     """
     Create a ConnectionPool for use with TracedRedis.
@@ -210,11 +233,14 @@ def make_traced_pool(**kwargs) -> Any:
     redis_lib = _get_redis()
     return redis_lib.ConnectionPool(**kwargs)
 
+
 class RedisProbe(BaseProbe):
     name = "redis"
 
     def start(self, **kwargs) -> None:
-        logger.info("redis probe: TracedRedis ready — use TracedRedis() in your views")
+        logger.info(
+            "redis probe: TracedRedis ready — use TracedRedis() in your views"
+        )
 
     def stop(self, **kwargs) -> None:
         pass

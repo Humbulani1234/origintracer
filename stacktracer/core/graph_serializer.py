@@ -62,18 +62,18 @@ class GraphCompactor:
     def __init__(
         self,
         max_nodes: int = 5_000,
-        evict_to_ratio: float = 0.80,   # evict to 80% of max when cap hit
-        node_ttl_s: float = 3600.0,     # evict nodes not seen in 1 hour
-        min_call_count: int = 1,         # never evict nodes called >= this often
-                                          # (protects hot nodes from TTL eviction)
+        evict_to_ratio: float = 0.80,  # evict to 80% of max when cap hit
+        node_ttl_s: float = 3600.0,  # evict nodes not seen in 1 hour
+        min_call_count: int = 1,  # never evict nodes called >= this often
+        # (protects hot nodes from TTL eviction)
     ) -> None:
-        self.max_nodes     = max_nodes
-        self.evict_to      = int(max_nodes * evict_to_ratio)
-        self.node_ttl_s    = node_ttl_s
+        self.max_nodes = max_nodes
+        self.evict_to = int(max_nodes * evict_to_ratio)
+        self.node_ttl_s = node_ttl_s
         self.min_call_count = min_call_count
 
         self._total_evictions = 0
-        self._compact_runs    = 0
+        self._compact_runs = 0
 
     def compact(self, graph: Any) -> Dict[str, Any]:
         """
@@ -120,7 +120,10 @@ class GraphCompactor:
                     key=lambda t: t[0],
                 )
 
-                cap_evictions = [node_id for _, node_id in cold_nodes[:over_by]]
+                cap_evictions = [
+                    node_id
+                    for _, node_id in cold_nodes[:over_by]
+                ]
                 evicted_nodes.update(cap_evictions)
                 reasons.append(f"cap({len(cap_evictions)})")
 
@@ -134,7 +137,9 @@ class GraphCompactor:
                 }
 
             # ---- Remove nodes and all incident edges ----
-            evicted_edge_count = self._remove_nodes(graph, evicted_nodes)
+            evicted_edge_count = self._remove_nodes(
+                graph, evicted_nodes
+            )
 
         self._total_evictions += len(evicted_nodes)
 
@@ -148,15 +153,17 @@ class GraphCompactor:
         )
 
         return {
-            "evicted_nodes":    len(evicted_nodes),
-            "evicted_edges":    evicted_edge_count,
+            "evicted_nodes": len(evicted_nodes),
+            "evicted_edges": evicted_edge_count,
             "node_count_after": len(graph._nodes),
-            "reason":           "+".join(reasons),
-            "compact_runs":     self._compact_runs,
-            "total_evictions":  self._total_evictions,
+            "reason": "+".join(reasons),
+            "compact_runs": self._compact_runs,
+            "total_evictions": self._total_evictions,
         }
 
-    def _remove_nodes(self, graph: Any, node_ids: Set[str]) -> int:
+    def _remove_nodes(
+        self, graph: Any, node_ids: Set[str]
+    ) -> int:
         """
         Remove `node_ids` from the graph and all incident edges.
         Caller must hold graph._lock.
@@ -169,7 +176,8 @@ class GraphCompactor:
 
         # Remove all edges where source or target was evicted
         dead_edge_keys = [
-            key for key, edge in graph._edge_index.items()
+            key
+            for key, edge in graph._edge_index.items()
             if edge.source in node_ids or edge.target in node_ids
         ]
 
@@ -199,7 +207,9 @@ class GraphCompactor:
 
         return edges_removed
 
-    def estimate_memory_bytes(self, graph: Any) -> Dict[str, int]:
+    def estimate_memory_bytes(
+        self, graph: Any
+    ) -> Dict[str, int]:
         """
         Rough memory estimate for the current graph.
         Useful for \status in the REPL.
@@ -216,14 +226,18 @@ class GraphCompactor:
         #   Dict overhead per entry: ~50-80 bytes
         node_bytes = node_count * 280
         edge_bytes = edge_count * 220
-        index_bytes = (node_count + edge_count) * 70   # dict key overhead
+        index_bytes = (
+            node_count + edge_count
+        ) * 70  # dict key overhead
 
         return {
-            "nodes":          node_count,
-            "edges":          edge_count,
-            "node_bytes":     node_bytes,
-            "edge_bytes":     edge_bytes,
-            "index_bytes":    index_bytes,
-            "total_bytes":    node_bytes + edge_bytes + index_bytes,
-            "total_mb":       round((node_bytes + edge_bytes + index_bytes) / 1e6, 2),
+            "nodes": node_count,
+            "edges": edge_count,
+            "node_bytes": node_bytes,
+            "edge_bytes": edge_bytes,
+            "index_bytes": index_bytes,
+            "total_bytes": node_bytes + edge_bytes + index_bytes,
+            "total_mb": round(
+                (node_bytes + edge_bytes + index_bytes) / 1e6, 2
+            ),
         }

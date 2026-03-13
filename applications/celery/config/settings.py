@@ -14,7 +14,7 @@ Run celery worker separately:
 import os
 
 SECRET_KEY = "celery-demo-not-for-production"
-DEBUG      = True
+DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
@@ -29,30 +29,34 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
 ]
 
-ROOT_URLCONF  = "config.urls"
+ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME":   os.path.join(os.path.dirname(__file__), "..", "demo.db"),
+        "NAME": os.path.join(
+            os.path.dirname(__file__), "..", "demo.db"
+        ),
     }
 }
 
 # ── Celery ─────────────────────────────────────────────────────────────────
-CELERY_BROKER_URL        = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND    = "redis://localhost:6379/0"
-CELERY_ACCEPT_CONTENT    = ["json"]
-CELERY_TASK_SERIALIZER   = "json"
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
-CELERY_TIMEZONE          = "UTC"
-CELERY_RESULT_EXPIRES    = 3600
+CELERY_TIMEZONE = "UTC"
+CELERY_RESULT_EXPIRES = 3600
 
 # ── StackTracer ────────────────────────────────────────────────────────────
 # Config path is passed to stacktracer.init() in config/celery.py and
 # gunicorn.conf.py. Expose here so both entry points can read it.
 STACKTRACER_CONFIG = os.environ.get(
     "STACKTRACER_CONFIG",
-    os.path.join(os.path.dirname(__file__), "..", "stacktracer.yaml"),
+    os.path.join(
+        os.path.dirname(__file__), "..", "stacktracer.yaml"
+    ),
 )

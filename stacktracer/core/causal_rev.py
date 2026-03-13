@@ -26,7 +26,9 @@ from .temporal import TemporalStore
 @dataclass
 class CausalMatch:
     rule_name: str
-    confidence: float           # 0.0 – 1.0 (rule-assigned, not learned yet)
+    confidence: (
+        float  # 0.0 – 1.0 (rule-assigned, not learned yet)
+    )
     explanation: str
     evidence: Dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
@@ -42,7 +44,9 @@ class CausalMatch:
 
 
 # Type alias: a rule predicate returns (matched: bool, evidence: dict)
-RuleFn = Callable[[RuntimeGraph, TemporalStore], Tuple[bool, Dict[str, Any]]]
+RuleFn = Callable[
+    [RuntimeGraph, TemporalStore], Tuple[bool, Dict[str, Any]]
+]
 
 
 @dataclass
@@ -84,21 +88,27 @@ class PatternRegistry:
             if tags and not set(tags) & set(rule.tags):
                 continue
             try:
-                matched, evidence = rule.predicate(graph, temporal)
+                matched, evidence = rule.predicate(
+                    graph, temporal
+                )
                 if matched:
-                    results.append(CausalMatch(
-                        rule_name=rule.name,
-                        confidence=rule.confidence,
-                        explanation=rule.description,
-                        evidence=evidence,
-                    ))
+                    results.append(
+                        CausalMatch(
+                            rule_name=rule.name,
+                            confidence=rule.confidence,
+                            explanation=rule.description,
+                            evidence=evidence,
+                        )
+                    )
             except Exception as exc:
                 # Rules must never crash the engine
-                results.append(CausalMatch(
-                    rule_name=rule.name,
-                    confidence=0.0,
-                    explanation=f"Rule evaluation error: {exc}",
-                ))
+                results.append(
+                    CausalMatch(
+                        rule_name=rule.name,
+                        confidence=0.0,
+                        explanation=f"Rule evaluation error: {exc}",
+                    )
+                )
 
         results.sort(key=lambda m: m.confidence, reverse=True)
         return results
@@ -111,6 +121,7 @@ class PatternRegistry:
 # Built-in Rules
 # ====================================================================== #
 
+
 def _retry_amplification(
     graph: RuntimeGraph,
     temporal: TemporalStore,
@@ -120,14 +131,19 @@ def _retry_amplification(
     a symptom of upstream latency being amplified by retry loops.
     """
     hot_edges = [
-        e for e in graph.all_edges()
+        e
+        for e in graph.all_edges()
         if e.metadata.get("retries", 0) > 3
     ]
     if not hot_edges:
         return False, {}
     evidence = {
         "edges": [
-            {"source": e.source, "target": e.target, "retries": e.metadata.get("retries")}
+            {
+                "source": e.source,
+                "target": e.target,
+                "retries": e.metadata.get("retries"),
+            }
             for e in hot_edges[:5]
         ]
     }
@@ -160,7 +176,9 @@ def _new_sync_call_after_deployment(
     if not deployment_diff:
         return False, {}
 
-    new_edges = temporal.new_edges_since(deployment_diff.timestamp)
+    new_edges = temporal.new_edges_since(
+        deployment_diff.timestamp
+    )
     sync_call_edges = [k for k in new_edges if ":calls" in k]
 
     if not sync_call_edges:
@@ -195,18 +213,25 @@ def _asyncio_event_loop_starvation(
     missing await, or a slow synchronous call on the hot path).
     """
     loop_ticks = [
-        n for n in graph.all_nodes()
+        n
+        for n in graph.all_nodes()
         if n.node_type == "asyncio" and "loop.tick" in n.id
     ]
     stalled = [
-        n for n in loop_ticks
-        if n.avg_duration_ns and n.avg_duration_ns > 10_000_000  # >10ms per tick
+        n
+        for n in loop_ticks
+        if n.avg_duration_ns
+        and n.avg_duration_ns > 10_000_000  # >10ms per tick
     ]
     if not stalled:
         return False, {}
     return True, {
         "stalled_ticks": [
-            {"node": n.id, "avg_ms": n.avg_duration_ns / 1e6, "count": n.call_count}
+            {
+                "node": n.id,
+                "avg_ms": n.avg_duration_ns / 1e6,
+                "count": n.call_count,
+            }
             for n in stalled[:5]
         ]
     }
@@ -231,19 +256,30 @@ def _db_query_hotspot(
 ) -> Tuple[bool, Dict]:
     """Detect database query nodes that are called far more than expected."""
     db_nodes = [
-        n for n in graph.all_nodes()
+        n
+        for n in graph.all_nodes()
         if n.node_type == "db" and n.call_count > 100
     ]
-    total_calls = sum(n.call_count for n in graph.all_nodes()) or 1
+    total_calls = (
+        sum(n.call_count for n in graph.all_nodes()) or 1
+    )
     hotspots = [
-        n for n in db_nodes
-        if n.call_count / total_calls > 0.3   # >30% of all calls are this query
+        n
+        for n in db_nodes
+        if n.call_count / total_calls
+        > 0.3  # >30% of all calls are this query
     ]
     if not hotspots:
         return False, {}
     return True, {
         "hotspot_queries": [
-            {"node": n.id, "call_count": n.call_count, "pct": round(n.call_count / total_calls * 100, 1)}
+            {
+                "node": n.id,
+                "call_count": n.call_count,
+                "pct": round(
+                    n.call_count / total_calls * 100, 1
+                ),
+            }
             for n in hotspots
         ]
     }
@@ -264,6 +300,7 @@ DB_HOTSPOT = CausalRule(
 # ====================================================================== #
 # request_duration_anomaly — requires ActiveRequestTracker
 # ====================================================================== #
+
 
 def _make_request_duration_anomaly(tracker: Any) -> CausalRule:
     """
@@ -298,7 +335,7 @@ def _make_request_duration_anomaly(tracker: Any) -> CausalRule:
         summary = tracker.all_patterns_summary()
         for pattern, stats in summary.items():
             recent_p99_ms = stats.get("p99_ms", 0.0)
-            recent_count  = stats.get("count", 0)
+            recent_count = stats.get("count", 0)
 
             if recent_count < 10:
                 # Not enough recent completions to be meaningful
@@ -323,20 +360,26 @@ def _make_request_duration_anomaly(tracker: Any) -> CausalRule:
                 # Find the probe sequence of a currently slow in-flight
                 # request matching this pattern — the smoking gun
                 probe_sequence = None
-                slow = tracker.slow_in_flight(threshold_ms=historical_avg_ms * 2)
+                slow = tracker.slow_in_flight(
+                    threshold_ms=historical_avg_ms * 2
+                )
                 for span in slow:
                     if span.pattern == pattern:
                         probe_sequence = span.probe_sequence
                         break
 
-                anomalies.append({
-                    "pattern":           pattern,
-                    "recent_p99_ms":     round(recent_p99_ms, 2),
-                    "historical_avg_ms": round(historical_avg_ms, 2),
-                    "ratio":             round(ratio, 2),
-                    "recent_samples":    recent_count,
-                    "probe_sequence":    probe_sequence,
-                })
+                anomalies.append(
+                    {
+                        "pattern": pattern,
+                        "recent_p99_ms": round(recent_p99_ms, 2),
+                        "historical_avg_ms": round(
+                            historical_avg_ms, 2
+                        ),
+                        "ratio": round(ratio, 2),
+                        "recent_samples": recent_count,
+                        "probe_sequence": probe_sequence,
+                    }
+                )
 
         if not anomalies:
             return False, {}
@@ -365,7 +408,11 @@ def _make_request_duration_anomaly(tracker: Any) -> CausalRule:
 # ====================================================================== #
 
 _DB_SERVICES = {"postgres", "mysql", "sqlite", "redis"}
-_DB_PROBES   = {"django.db.query", "psycopg2.query.execute", "redis.command.execute"}
+_DB_PROBES = {
+    "django.db.query",
+    "psycopg2.query.execute",
+    "redis.command.execute",
+}
 
 
 def _is_db_node(node: Any) -> bool:
@@ -379,6 +426,7 @@ def _is_db_node(node: Any) -> bool:
 # Rule 5 — gunicorn_worker_churn
 # ====================================================================== #
 
+
 def _gunicorn_worker_churn(
     graph: RuntimeGraph,
     temporal: TemporalStore,
@@ -390,12 +438,15 @@ def _gunicorn_worker_churn(
 
     Fires when crash_count / total_gunicorn_events > 10%.
     """
-    worker_nodes = [n for n in graph.all_nodes() if n.service == "gunicorn"]
+    worker_nodes = [
+        n for n in graph.all_nodes() if n.service == "gunicorn"
+    ]
     if not worker_nodes:
         return False, {}
 
     crash_nodes = [
-        n for n in worker_nodes
+        n
+        for n in worker_nodes
         if n.metadata.get("probe") == "gunicorn.worker.crash"
     ]
     if not crash_nodes:
@@ -403,7 +454,9 @@ def _gunicorn_worker_churn(
 
     total_events = sum(n.call_count for n in worker_nodes)
     crash_events = sum(n.call_count for n in crash_nodes)
-    crash_rate   = crash_events / total_events if total_events else 0
+    crash_rate = (
+        crash_events / total_events if total_events else 0
+    )
 
     if crash_rate < 0.10:
         return False, {}
@@ -411,12 +464,14 @@ def _gunicorn_worker_churn(
     crash_reasons: Dict[str, int] = {}
     for n in crash_nodes:
         reason = n.metadata.get("reason", "unknown")
-        crash_reasons[reason] = crash_reasons.get(reason, 0) + n.call_count
+        crash_reasons[reason] = (
+            crash_reasons.get(reason, 0) + n.call_count
+        )
 
     return True, {
-        "crash_rate":    round(crash_rate, 2),
-        "crash_events":  crash_events,
-        "total_events":  total_events,
+        "crash_rate": round(crash_rate, 2),
+        "crash_events": crash_events,
+        "total_events": total_events,
         "crash_reasons": crash_reasons,
         "hint": (
             "SIGABRT_timeout means workers stopped sending heartbeat — "
@@ -444,6 +499,7 @@ WORKER_CHURN = CausalRule(
 # Rule 6 — cache_miss_amplification
 # ====================================================================== #
 
+
 def _cache_miss_amplification(
     graph: RuntimeGraph,
     temporal: TemporalStore,
@@ -462,7 +518,10 @@ def _cache_miss_amplification(
 
     for node in graph.all_nodes():
         if node.service == "redis" and "GET" in node.id.upper():
-            if redis_get_node is None or node.call_count > redis_get_node.call_count:
+            if (
+                redis_get_node is None
+                or node.call_count > redis_get_node.call_count
+            ):
                 redis_get_node = node
         if _is_db_node(node) and node.call_count >= 10:
             db_nodes.append(node)
@@ -471,7 +530,7 @@ def _cache_miss_amplification(
         return False, {}
 
     redis_gets = redis_get_node.call_count or 0
-    total_db   = sum(n.call_count for n in db_nodes)
+    total_db = sum(n.call_count for n in db_nodes)
 
     if redis_gets < 10:
         return False, {}
@@ -482,10 +541,10 @@ def _cache_miss_amplification(
 
     return True, {
         "redis_get_count": redis_gets,
-        "db_call_count":   total_db,
-        "miss_ratio":      round(miss_ratio, 2),
-        "redis_node":      redis_get_node.id,
-        "db_nodes":        [n.id for n in db_nodes[:5]],
+        "db_call_count": total_db,
+        "miss_ratio": round(miss_ratio, 2),
+        "redis_node": redis_get_node.id,
+        "db_nodes": [n.id for n in db_nodes[:5]],
         "hint": (
             "Cache hit rate is low — most requests fall through to the database. "
             "Check: TTL too short, incorrect cache key construction, "
@@ -552,56 +611,73 @@ def make_anomaly_rule(tracker) -> CausalRule:
 
         for pattern, stats in recent_summary.items():
             if stats["count"] < 10:
-                continue   # not enough recent data
+                continue  # not enough recent data
 
             # Find the corresponding RuntimeGraph node
             # Pattern format from tracker is "service::normalized_name"
             # Try to find by matching the normalized name part
             node = None
             for n in graph.all_nodes():
-                if n.id.endswith(f"::{pattern}") or n.id == pattern:
+                if (
+                    n.id.endswith(f"::{pattern}")
+                    or n.id == pattern
+                ):
                     node = n
                     break
                 # Also match by just the name portion after ::
-                if "::" in n.id and n.id.split("::", 1)[1] == pattern:
+                if (
+                    "::" in n.id
+                    and n.id.split("::", 1)[1] == pattern
+                ):
                     node = n
                     break
 
             if node is None or (node.call_count or 0) < 50:
-                continue   # not enough historical data to trust the average
+                continue  # not enough historical data to trust the average
 
             historical_avg_ms = (node.avg_duration_ns or 0) / 1e6
             if historical_avg_ms < 1.0:
-                continue   # sub-millisecond operations — noise floor too low
+                continue  # sub-millisecond operations — noise floor too low
 
             recent_p99_ms = stats["p99_ms"]
-            ratio         = recent_p99_ms / historical_avg_ms if historical_avg_ms else 0
+            ratio = (
+                recent_p99_ms / historical_avg_ms
+                if historical_avg_ms
+                else 0
+            )
 
             if ratio > 3.0:
                 anomaly = {
-                    "pattern":         pattern,
-                    "service":         node.service,
-                    "historical_avg_ms": round(historical_avg_ms, 1),
-                    "recent_p99_ms":   recent_p99_ms,
-                    "recent_avg_ms":   stats["avg_ms"],
-                    "ratio":           round(ratio, 1),
+                    "pattern": pattern,
+                    "service": node.service,
+                    "historical_avg_ms": round(
+                        historical_avg_ms, 1
+                    ),
+                    "recent_p99_ms": recent_p99_ms,
+                    "recent_avg_ms": stats["avg_ms"],
+                    "ratio": round(ratio, 1),
                     "recent_sample_n": stats["count"],
-                    "historical_n":    node.call_count,
+                    "historical_n": node.call_count,
                 }
 
                 # Find a slow in-flight request for this pattern
                 # to show the probe sequence (what was it doing?)
                 slow = [
-                    s for s in tracker.slow_in_flight(
+                    s
+                    for s in tracker.slow_in_flight(
                         threshold_ms=historical_avg_ms * 2
                     )
                     if s.pattern == pattern
                 ]
                 if slow:
-                    worst = max(slow, key=lambda s: s.in_flight_ms)
+                    worst = max(
+                        slow, key=lambda s: s.in_flight_ms
+                    )
                     anomaly["slow_in_flight"] = {
-                        "trace_id":     worst.trace_id,
-                        "in_flight_ms": round(worst.in_flight_ms, 1),
+                        "trace_id": worst.trace_id,
+                        "in_flight_ms": round(
+                            worst.in_flight_ms, 1
+                        ),
                         # probe_sequence shows what the slow request was doing:
                         # e.g. ["request.entry", "django.db.query",
                         #        "django.db.query", "django.db.query"]
@@ -639,11 +715,15 @@ def make_anomaly_rule(tracker) -> CausalRule:
         tags=["latency", "anomaly", "live"],
     )
 
+
 # ====================================================================== #
 # Registry builder
 # ====================================================================== #
 
-def build_default_registry(tracker: Optional[Any] = None) -> PatternRegistry:
+
+def build_default_registry(
+    tracker: Optional[Any] = None,
+) -> PatternRegistry:
     """
     Return a PatternRegistry pre-loaded with all built-in rules.
 

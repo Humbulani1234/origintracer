@@ -74,21 +74,29 @@ from typing import Any, Callable, Optional
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
 from ..core.event_schema import NormalizedEvent, ProbeTypes
-from ..context.vars import get_trace_id, set_trace, reset_trace, get_span_id
+from ..context.vars import (
+    get_trace_id,
+    set_trace,
+    reset_trace,
+    get_span_id,
+)
 
 logger = logging.getLogger("stacktracer.probes.uvicorn")
 
-ProbeTypes.register_many({
-    "uvicorn.request.receive":   "ASGI scope constructed, app call starting",
-    "uvicorn.response.start":    "HTTP response status and headers sent",
-    "uvicorn.response.body":     "HTTP response body sent",
-    "uvicorn.request.complete":  "Full ASGI request/response cycle complete",
-})
+ProbeTypes.register_many(
+    {
+        "uvicorn.request.receive": "ASGI scope constructed, app call starting",
+        "uvicorn.response.start": "HTTP response status and headers sent",
+        "uvicorn.response.body": "HTTP response body sent",
+        "uvicorn.request.complete": "Full ASGI request/response cycle complete",
+    }
+)
 
 
 # ====================================================================== #
 # ASGI middleware — the primary observation point
 # ====================================================================== #
+
 
 class StackTracerASGIMiddleware:
     """
@@ -127,7 +135,9 @@ class StackTracerASGIMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
-    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+    async def __call__(
+        self, scope: dict, receive: Callable, send: Callable
+    ) -> None:
         if scope["type"] != "http":
             # WebSocket and lifespan scopes pass through unmodified
             await self.app(scope, receive, send)
@@ -151,26 +161,34 @@ class StackTracerASGIMiddleware:
             .strip()
         )
         trace_id = request_id or str(uuid.uuid4())
-        token    = set_trace(trace_id)
+        token = set_trace(trace_id)
 
-        method  = scope.get("method", "")
-        path    = scope.get("path", "/")
-        client  = scope.get("client")   # (host, port) tuple or None
-        http_v  = scope.get("http_version", "1.1")
+        method = scope.get("method", "")
+        path = scope.get("path", "/")
+        client = scope.get(
+            "client"
+        )  # (host, port) tuple or None
+        http_v = scope.get("http_version", "1.1")
 
-        emit(NormalizedEvent.now(
-            probe="uvicorn.request.receive",
-            trace_id=trace_id,
-            service="uvicorn",
-            name=path,
-            method=method,
-            http_version=http_v,
-            client=f"{client[0]}:{client[1]}" if client else None,
-            worker_pid=os.getpid(),
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="uvicorn.request.receive",
+                trace_id=trace_id,
+                service="uvicorn",
+                name=path,
+                method=method,
+                http_version=http_v,
+                client=(
+                    f"{client[0]}:{client[1]}"
+                    if client
+                    else None
+                ),
+                worker_pid=os.getpid(),
+            )
+        )
 
-        t0            = time.perf_counter()
-        status_code   = 0
+        t0 = time.perf_counter()
+        status_code = 0
         response_size = 0
 
         # ── Wrap send() to capture response events ──
@@ -183,13 +201,15 @@ class StackTracerASGIMiddleware:
 
             if mtype == "http.response.start":
                 status_code = message.get("status", 0)
-                emit(NormalizedEvent.now(
-                    probe="uvicorn.response.start",
-                    trace_id=trace_id,
-                    service="uvicorn",
-                    name=path,
-                    status_code=status_code,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="uvicorn.response.start",
+                        trace_id=trace_id,
+                        service="uvicorn",
+                        name=path,
+                        status_code=status_code,
+                    )
+                )
 
             elif mtype == "http.response.body":
                 body = message.get("body", b"")
@@ -197,13 +217,15 @@ class StackTracerASGIMiddleware:
                 more_body = message.get("more_body", False)
 
                 if not more_body:
-                    emit(NormalizedEvent.now(
-                        probe="uvicorn.response.body",
-                        trace_id=trace_id,
-                        service="uvicorn",
-                        name=path,
-                        response_bytes=response_size,
-                    ))
+                    emit(
+                        NormalizedEvent.now(
+                            probe="uvicorn.response.body",
+                            trace_id=trace_id,
+                            service="uvicorn",
+                            name=path,
+                            response_bytes=response_size,
+                        )
+                    )
 
             await send(message)
 
@@ -213,17 +235,19 @@ class StackTracerASGIMiddleware:
         finally:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
 
-            emit(NormalizedEvent.now(
-                probe="uvicorn.request.complete",
-                trace_id=trace_id,
-                service="uvicorn",
-                name=path,
-                method=method,
-                status_code=status_code,
-                response_bytes=response_size,
-                duration_ns=duration_ns,
-                worker_pid=os.getpid(),
-            ))
+            emit(
+                NormalizedEvent.now(
+                    probe="uvicorn.request.complete",
+                    trace_id=trace_id,
+                    service="uvicorn",
+                    name=path,
+                    method=method,
+                    status_code=status_code,
+                    response_bytes=response_size,
+                    duration_ns=duration_ns,
+                    worker_pid=os.getpid(),
+                )
+            )
 
             reset_trace(token)
 
@@ -231,6 +255,7 @@ class StackTracerASGIMiddleware:
 # ====================================================================== #
 # UvicornProbe — for the probe registry
 # ====================================================================== #
+
 
 class UvicornProbe(BaseProbe):
     """
@@ -259,13 +284,16 @@ class UvicornProbe(BaseProbe):
         uvicorn.response.start     → headers sent
         uvicorn.request.complete   → full cycle with duration
     """
+
     name = "uvicorn"
 
     def start(self) -> None:
         try:
             import uvicorn  # noqa: F401
         except ImportError:
-            logger.info("uvicorn not installed — uvicorn probe inactive")
+            logger.info(
+                "uvicorn not installed — uvicorn probe inactive"
+            )
             return
 
         logger.info(

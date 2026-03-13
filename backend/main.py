@@ -46,7 +46,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Tighten in production
+    allow_origins=["*"],  # Tighten in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -56,13 +56,15 @@ app.add_middleware(
 # ------------------------------------------------------------------ #
 
 _engine: Optional[Engine] = None
-_valid_api_keys: Dict[str, str] = {}    # api_key → customer_id
+_valid_api_keys: Dict[str, str] = {}  # api_key → customer_id
 
 
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
-        _engine = Engine(causal_registry=build_default_registry())
+        _engine = Engine(
+            causal_registry=build_default_registry()
+        )
         _engine.start_background_tasks()
     return _engine
 
@@ -78,7 +80,9 @@ def _load_api_keys() -> None:
     if not _valid_api_keys:
         # Development fallback
         _valid_api_keys["dev-key-00000000"] = "dev_customer"
-        logger.warning("No API keys configured — dev-key-00000000 accepted")
+        logger.warning(
+            "No API keys configured — dev-key-00000000 accepted"
+        )
 
 
 _load_api_keys()
@@ -88,20 +92,29 @@ _load_api_keys()
 # Auth middleware
 # ------------------------------------------------------------------ #
 
+
 def _authenticate(authorization: Optional[str]) -> str:
     """Validate Bearer token and return customer_id."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if not authorization or not authorization.startswith(
+        "Bearer "
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header",
+        )
     api_key = authorization[7:]
     customer_id = _valid_api_keys.get(api_key)
     if not customer_id:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(
+            status_code=401, detail="Invalid API key"
+        )
     return customer_id
 
 
 # ------------------------------------------------------------------ #
 # Pydantic schemas
 # ------------------------------------------------------------------ #
+
 
 class IngestPayload(BaseModel):
     events: List[Dict[str, Any]]
@@ -118,6 +131,7 @@ class DeploymentMarkRequest(BaseModel):
 # ------------------------------------------------------------------ #
 # Routes: Ingest
 # ------------------------------------------------------------------ #
+
 
 @app.post("/api/v1/ingest")
 async def ingest(
@@ -138,7 +152,9 @@ async def ingest(
             accepted += 1
         except Exception as exc:
             errors += 1
-            logger.debug("Ingest parse error: %s | raw=%s", exc, raw)
+            logger.debug(
+                "Ingest parse error: %s | raw=%s", exc, raw
+            )
 
     return {
         "status": "ok",
@@ -151,6 +167,7 @@ async def ingest(
 # Routes: Query
 # ------------------------------------------------------------------ #
 
+
 @app.post("/api/v1/query")
 async def query(
     request: QueryRequest,
@@ -162,7 +179,9 @@ async def query(
     try:
         parsed = parse_query(request.query)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Query parse error: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Query parse error: {exc}"
+        )
 
     result = execute_query(parsed, engine)
     return result
@@ -178,10 +197,19 @@ async def get_graph(
     engine = get_engine()
 
     from ..query.parser import ParsedQuery
+
     if system:
-        q = ParsedQuery(verb="SHOW", metric="graph", filters={"system": system})
+        q = ParsedQuery(
+            verb="SHOW",
+            metric="graph",
+            filters={"system": system},
+        )
     elif service:
-        q = ParsedQuery(verb="SHOW", metric="graph", filters={"service": service})
+        q = ParsedQuery(
+            verb="SHOW",
+            metric="graph",
+            filters={"service": service},
+        )
     else:
         q = ParsedQuery(verb="SHOW", metric="graph")
 
@@ -197,7 +225,10 @@ async def get_trace(
     engine = get_engine()
     path = engine.critical_path(trace_id)
     if not path:
-        raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trace '{trace_id}' not found",
+        )
     return {
         "trace_id": trace_id,
         "stages": len(path),
@@ -213,7 +244,9 @@ async def causal(
 ) -> Dict:
     _authenticate(authorization)
     engine = get_engine()
-    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    tag_list = (
+        [t.strip() for t in tags.split(",")] if tags else None
+    )
     matches = engine.evaluate(tags=tag_list)
     return {
         "match_count": len(matches),
@@ -247,8 +280,13 @@ async def diff(
 ) -> Dict:
     _authenticate(authorization)
     engine = get_engine()
-    q = ParsedQuery(verb="DIFF", metric="edges", filters={"since": since} if since else {})
+    q = ParsedQuery(
+        verb="DIFF",
+        metric="edges",
+        filters={"since": since} if since else {},
+    )
     from ..query.parser import _exec_diff
+
     return _exec_diff(q, engine)
 
 
@@ -256,8 +294,11 @@ async def diff(
 # Routes: Status
 # ------------------------------------------------------------------ #
 
+
 @app.get("/api/v1/status")
-async def status(authorization: Optional[str] = Header(None)) -> Dict:
+async def status(
+    authorization: Optional[str] = Header(None),
+) -> Dict:
     _authenticate(authorization)
     return get_engine().status()
 
@@ -271,10 +312,16 @@ async def health() -> Dict:
 # Error handling
 # ------------------------------------------------------------------ #
 
+
 @app.exception_handler(Exception)
-async def generic_error(request: Request, exc: Exception) -> JSONResponse:
+async def generic_error(
+    request: Request, exc: Exception
+) -> JSONResponse:
     logger.error("Unhandled error: %s", exc, exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)},
+        content={
+            "error": "Internal server error",
+            "detail": str(exc),
+        },
     )

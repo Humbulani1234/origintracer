@@ -79,14 +79,16 @@ import uuid
 
 logger = logging.getLogger("stacktracer.probes.gunicorn")
 
-ProbeTypes.register_many({
-    "gunicorn.master.start":   "gunicorn master process starting",
-    "gunicorn.worker.fork":    "gunicorn worker process forked",
-    "gunicorn.worker.ready":   "gunicorn worker ready to serve requests",
-    "gunicorn.worker.exit":    "gunicorn worker exiting normally",
-    "gunicorn.worker.crash":   "gunicorn worker aborting or interrupted",
-    "gunicorn.master.reload":  "gunicorn master reloading via exec()",
-})
+ProbeTypes.register_many(
+    {
+        "gunicorn.master.start": "gunicorn master process starting",
+        "gunicorn.worker.fork": "gunicorn worker process forked",
+        "gunicorn.worker.ready": "gunicorn worker ready to serve requests",
+        "gunicorn.worker.exit": "gunicorn worker exiting normally",
+        "gunicorn.worker.crash": "gunicorn worker aborting or interrupted",
+        "gunicorn.master.reload": "gunicorn master reloading via exec()",
+    }
+)
 
 
 # ====================================================================== #
@@ -95,6 +97,7 @@ ProbeTypes.register_many({
 # directly as documented in its configuration reference.
 # ====================================================================== #
 
+
 def st_on_starting(server: Any) -> None:
     """
     Fires in the master process just before it starts.
@@ -102,66 +105,87 @@ def st_on_starting(server: Any) -> None:
     we only read stable public attributes (address, worker_class).
     """
     master_pid = os.getpid()
-    trace_id   = f"gunicorn-master-{master_pid}"
+    trace_id = f"gunicorn-master-{master_pid}"
 
     bind = getattr(server, "address", [])
-    cfg  = getattr(server, "cfg", None)
-    worker_class = getattr(cfg, "worker_class_str", "unknown") if cfg else "unknown"
-    num_workers  = getattr(cfg, "workers", 0) if cfg else 0
+    cfg = getattr(server, "cfg", None)
+    worker_class = (
+        getattr(cfg, "worker_class_str", "unknown")
+        if cfg
+        else "unknown"
+    )
+    num_workers = getattr(cfg, "workers", 0) if cfg else 0
 
-    emit(NormalizedEvent.now(
-        probe="gunicorn.master.start",
-        trace_id=trace_id,
-        service="gunicorn",
-        name="master",
-        master_pid=master_pid,
-        bind=str(bind),
-        worker_class=worker_class,
-        num_workers=num_workers,
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="gunicorn.master.start",
+            trace_id=trace_id,
+            service="gunicorn",
+            name="master",
+            master_pid=master_pid,
+            bind=str(bind),
+            worker_class=worker_class,
+            num_workers=num_workers,
+        )
+    )
 
     # Re-initialise StackTracer in the master if needed.
     # Workers will re-init in post_fork after the fork.
-    logger.info("gunicorn master starting (pid=%d, workers=%d)", master_pid, num_workers)
+    logger.info(
+        "gunicorn master starting (pid=%d, workers=%d)",
+        master_pid,
+        num_workers,
+    )
 
 
 def st_post_fork(server: Any, worker: Any) -> None:
-    worker_pid   = os.getpid()
-    master_pid   = os.getppid()
+    worker_pid = os.getpid()
+    master_pid = os.getppid()
     worker_class = type(worker).__name__
-    trace_id     = f"gunicorn-worker-{worker_pid}"
+    trace_id = f"gunicorn-worker-{worker_pid}"
 
-    config_path = os.environ.get("STACKTRACER_CONFIG", "stacktracer.yaml")
+    config_path = os.environ.get(
+        "STACKTRACER_CONFIG", "stacktracer.yaml"
+    )
     try:
         stacktracer.init(config=config_path)
         # ↑ this calls bind_engine() which starts a fresh _DrainThread
         # correctly in this worker process. No manual thread management needed.
     except Exception as exc:
-        logger.warning("gunicorn probe: StackTracer re-init failed in worker: %s", exc)
+        logger.warning(
+            "gunicorn probe: StackTracer re-init failed in worker: %s",
+            exc,
+        )
         return
 
     # Reset the tracker AFTER init so it runs on the new engine instance.
     # The parent's tracker state must not survive fork.
     from stacktracer.sdk.emitter import get_engine
-    from stacktracer.core.active_requests import ActiveRequestTracker
+    from stacktracer.core.active_requests import (
+        ActiveRequestTracker,
+    )
+
     engine = get_engine()
     if engine is not None:
         engine.tracker.stop()
         engine.tracker = ActiveRequestTracker()
 
-    emit(NormalizedEvent.now(
-        probe="gunicorn.worker.fork",
-        trace_id=trace_id,
-        service="gunicorn",
-        name=worker_class,
-        worker_pid=worker_pid,
-        master_pid=master_pid,
-        worker_class=worker_class,
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="gunicorn.worker.fork",
+            trace_id=trace_id,
+            service="gunicorn",
+            name=worker_class,
+            worker_pid=worker_pid,
+            master_pid=master_pid,
+            worker_class=worker_class,
+        )
+    )
 
     logger.info(
         "gunicorn worker forked and initialised (pid=%d, class=%s)",
-        worker_pid, worker_class,
+        worker_pid,
+        worker_class,
     )
 
 
@@ -170,24 +194,26 @@ def st_worker_exit(server: Any, worker: Any) -> None:
     Fires in the MASTER process when a worker exits normally.
     This is a post-exit notification — the worker is already gone.
     """
-    worker_pid   = getattr(worker, "pid", 0)
-    master_pid   = os.getpid()
+    worker_pid = getattr(worker, "pid", 0)
+    master_pid = os.getpid()
     worker_class = type(worker).__name__
-    exitcode     = getattr(worker, "exitcode", None)
+    exitcode = getattr(worker, "exitcode", None)
 
     # Emit from the master process — trace_id is worker-scoped
     trace_id = f"gunicorn-worker-{worker_pid}"
 
-    emit(NormalizedEvent.now(
-        probe="gunicorn.worker.exit",
-        trace_id=trace_id,
-        service="gunicorn",
-        name=worker_class,
-        worker_pid=worker_pid,
-        master_pid=master_pid,
-        exitcode=exitcode,
-        reason="normal_exit",
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="gunicorn.worker.exit",
+            trace_id=trace_id,
+            service="gunicorn",
+            name=worker_class,
+            worker_pid=worker_pid,
+            master_pid=master_pid,
+            exitcode=exitcode,
+            reason="normal_exit",
+        )
+    )
 
 
 def st_worker_int(worker: Any) -> None:
@@ -195,18 +221,20 @@ def st_worker_int(worker: Any) -> None:
     Fires in the WORKER process when it receives SIGINT.
     Usually triggered by Ctrl+C or gunicorn graceful shutdown.
     """
-    worker_pid   = os.getpid()
+    worker_pid = os.getpid()
     worker_class = type(worker).__name__
-    trace_id     = f"gunicorn-worker-{worker_pid}"
+    trace_id = f"gunicorn-worker-{worker_pid}"
 
-    emit(NormalizedEvent.now(
-        probe="gunicorn.worker.crash",
-        trace_id=trace_id,
-        service="gunicorn",
-        name=worker_class,
-        worker_pid=worker_pid,
-        reason="SIGINT",
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="gunicorn.worker.crash",
+            trace_id=trace_id,
+            service="gunicorn",
+            name=worker_class,
+            worker_pid=worker_pid,
+            reason="SIGINT",
+        )
+    )
 
 
 def st_worker_abort(worker: Any) -> None:
@@ -216,18 +244,20 @@ def st_worker_abort(worker: Any) -> None:
     (worker failed to send heartbeat within the timeout period).
     This is a crash, not a graceful shutdown.
     """
-    worker_pid   = os.getpid()
+    worker_pid = os.getpid()
     worker_class = type(worker).__name__
-    trace_id     = f"gunicorn-worker-{worker_pid}"
+    trace_id = f"gunicorn-worker-{worker_pid}"
 
-    emit(NormalizedEvent.now(
-        probe="gunicorn.worker.crash",
-        trace_id=trace_id,
-        service="gunicorn",
-        name=worker_class,
-        worker_pid=worker_pid,
-        reason="SIGABRT_timeout",
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="gunicorn.worker.crash",
+            trace_id=trace_id,
+            service="gunicorn",
+            name=worker_class,
+            worker_pid=worker_pid,
+            reason="SIGABRT_timeout",
+        )
+    )
 
 
 def st_pre_exec(server: Any) -> None:
@@ -236,20 +266,23 @@ def st_pre_exec(server: Any) -> None:
     The master is about to replace itself with a new process.
     """
     master_pid = os.getpid()
-    trace_id   = f"gunicorn-master-{master_pid}"
+    trace_id = f"gunicorn-master-{master_pid}"
 
-    emit(NormalizedEvent.now(
-        probe="gunicorn.master.reload",
-        trace_id=trace_id,
-        service="gunicorn",
-        name="master",
-        master_pid=master_pid,
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="gunicorn.master.reload",
+            trace_id=trace_id,
+            service="gunicorn",
+            name="master",
+            master_pid=master_pid,
+        )
+    )
 
 
 # ====================================================================== #
 # install_hooks — programmatic injection into gunicorn server hooks
 # ====================================================================== #
+
 
 def install_hooks() -> None:
     """
@@ -272,20 +305,23 @@ def install_hooks() -> None:
     # The config module is the module that called install_hooks()
     # We walk the call stack to find it.
     import traceback
+
     frame = sys._getframe(1)
     config_module = frame.f_globals
 
-    _chain(config_module, "on_starting",  st_on_starting)
-    _chain(config_module, "post_fork",    st_post_fork)
-    _chain(config_module, "worker_exit",  st_worker_exit)
-    _chain(config_module, "worker_int",   st_worker_int)
+    _chain(config_module, "on_starting", st_on_starting)
+    _chain(config_module, "post_fork", st_post_fork)
+    _chain(config_module, "worker_exit", st_worker_exit)
+    _chain(config_module, "worker_int", st_worker_int)
     _chain(config_module, "worker_abort", st_worker_abort)
-    _chain(config_module, "pre_exec",     st_pre_exec)
+    _chain(config_module, "pre_exec", st_pre_exec)
 
     logger.info("gunicorn StackTracer hooks installed")
 
 
-def _chain(module_globals: dict, hook_name: str, st_fn: Callable) -> None:
+def _chain(
+    module_globals: dict, hook_name: str, st_fn: Callable
+) -> None:
     """
     Chain our hook with an existing hook of the same name in the config module.
     If no existing hook exists, just set ours.
@@ -307,6 +343,7 @@ def _chain(module_globals: dict, hook_name: str, st_fn: Callable) -> None:
 # ====================================================================== #
 # GunicornProbe — for use with StackTracer probe registry
 # ====================================================================== #
+
 
 class GunicornProbe(BaseProbe):
     """
@@ -338,13 +375,16 @@ class GunicornProbe(BaseProbe):
     installed but the hooks are not yet configured, reminding the user
     to update their gunicorn.conf.py.
     """
+
     name = "gunicorn"
 
     def start(self) -> None:
         try:
             import gunicorn  # noqa: F401
         except ImportError:
-            logger.info("gunicorn not installed — gunicorn probe inactive")
+            logger.info(
+                "gunicorn not installed — gunicorn probe inactive"
+            )
             return
 
         logger.info(

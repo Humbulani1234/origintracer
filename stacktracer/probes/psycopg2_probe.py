@@ -51,23 +51,29 @@ import time
 from typing import Any, Optional
 
 from stacktracer.sdk.emitter import emit
-from stacktracer.core.event_schema import NormalizedEvent, ProbeTypes
+from stacktracer.core.event_schema import (
+    NormalizedEvent,
+    ProbeTypes,
+)
 from stacktracer.context.vars import get_trace_id, get_span_id
 
 logger = logging.getLogger("stacktracer.probes.psycopg2")
 
-ProbeTypes.register_many({
-    "psycopg2.query.execute":     "psycopg2 cursor.execute() — single SQL statement",
-    "psycopg2.query.executemany": "psycopg2 cursor.executemany() — batch SQL",
-    "psycopg2.query.callproc":    "psycopg2 cursor.callproc() — stored procedure",
-    "psycopg2.connection.open":   "psycopg2 connection established",
-})
+ProbeTypes.register_many(
+    {
+        "psycopg2.query.execute": "psycopg2 cursor.execute() — single SQL statement",
+        "psycopg2.query.executemany": "psycopg2 cursor.executemany() — batch SQL",
+        "psycopg2.query.callproc": "psycopg2 cursor.callproc() — stored procedure",
+        "psycopg2.connection.open": "psycopg2 connection established",
+    }
+)
 
 
 def _get_psycopg2():
     try:
         import psycopg2
         import psycopg2.extensions
+
         return psycopg2
     except ImportError:
         raise ImportError(
@@ -78,6 +84,7 @@ def _get_psycopg2():
 # ====================================================================== #
 # TracedCursor
 # ====================================================================== #
+
 
 class TracedCursor:
     """
@@ -93,10 +100,12 @@ class TracedCursor:
 
     def __init__(self, cursor: Any, dsn: str = "") -> None:
         self._cursor = cursor
-        self._dsn    = dsn   # for service identification
+        self._dsn = dsn  # for service identification
 
     def execute(self, query: str, params=None) -> Any:
-        return self._traced_execute("psycopg2.query.execute", query, params)
+        return self._traced_execute(
+            "psycopg2.query.execute", query, params
+        )
 
     def executemany(self, query: str, seq) -> Any:
         trace_id = get_trace_id()
@@ -106,27 +115,31 @@ class TracedCursor:
         except Exception as exc:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe="psycopg2.query.executemany",
-                    trace_id=trace_id,
-                    service="postgres",
-                    name=query[:200],
-                    duration_ns=duration_ns,
-                    error=str(exc)[:200],
-                    success=False,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="psycopg2.query.executemany",
+                        trace_id=trace_id,
+                        service="postgres",
+                        name=query[:200],
+                        duration_ns=duration_ns,
+                        error=str(exc)[:200],
+                        success=False,
+                    )
+                )
             raise
         else:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe="psycopg2.query.executemany",
-                    trace_id=trace_id,
-                    service="postgres",
-                    name=query[:200],
-                    duration_ns=duration_ns,
-                    success=True,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe="psycopg2.query.executemany",
+                        trace_id=trace_id,
+                        service="postgres",
+                        name=query[:200],
+                        duration_ns=duration_ns,
+                        success=True,
+                    )
+                )
             return result
 
     def callproc(self, procname: str, parameters=None) -> Any:
@@ -149,7 +162,9 @@ class TracedCursor:
 
         try:
             if is_proc:
-                result = self._cursor.callproc(query, params or [])
+                result = self._cursor.callproc(
+                    query, params or []
+                )
             elif params is not None:
                 result = self._cursor.execute(query, params)
             else:
@@ -157,30 +172,34 @@ class TracedCursor:
         except Exception as exc:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe=probe_type,
-                    trace_id=trace_id,
-                    service="postgres",
-                    name=query[:200],
-                    parent_span_id=get_span_id(),
-                    duration_ns=duration_ns,
-                    error=str(exc)[:200],
-                    success=False,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe=probe_type,
+                        trace_id=trace_id,
+                        service="postgres",
+                        name=query[:200],
+                        parent_span_id=get_span_id(),
+                        duration_ns=duration_ns,
+                        error=str(exc)[:200],
+                        success=False,
+                    )
+                )
             raise
         else:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
-                emit(NormalizedEvent.now(
-                    probe=probe_type,
-                    trace_id=trace_id,
-                    service="postgres",
-                    name=query[:200],
-                    parent_span_id=get_span_id(),
-                    duration_ns=duration_ns,
-                    rowcount=self._cursor.rowcount,
-                    success=True,
-                ))
+                emit(
+                    NormalizedEvent.now(
+                        probe=probe_type,
+                        trace_id=trace_id,
+                        service="postgres",
+                        name=query[:200],
+                        parent_span_id=get_span_id(),
+                        duration_ns=duration_ns,
+                        rowcount=self._cursor.rowcount,
+                        success=True,
+                    )
+                )
             return result
 
     # ── Delegate everything else to the real cursor ──────────────────
@@ -203,6 +222,7 @@ class TracedCursor:
 # TracedConnection
 # ====================================================================== #
 
+
 class TracedConnection:
     """
     Wraps a psycopg2 connection and returns TracedCursors.
@@ -218,7 +238,7 @@ class TracedConnection:
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
-        self._dsn  = getattr(conn, "dsn", "")
+        self._dsn = getattr(conn, "dsn", "")
 
     def cursor(self, *args, **kwargs) -> TracedCursor:
         raw_cursor = self._conn.cursor(*args, **kwargs)
@@ -239,6 +259,7 @@ class TracedConnection:
 # Public convenience functions
 # ====================================================================== #
 
+
 def traced_connect(*args, **kwargs) -> TracedConnection:
     """
     Drop-in replacement for psycopg2.connect().
@@ -257,18 +278,22 @@ def traced_connect(*args, **kwargs) -> TracedConnection:
     psycopg2 = _get_psycopg2()
     trace_id = get_trace_id()
 
-    t0  = time.perf_counter()
+    t0 = time.perf_counter()
     conn = psycopg2.connect(*args, **kwargs)
     duration_ns = int((time.perf_counter() - t0) * 1e9)
 
     if trace_id:
-        emit(NormalizedEvent.now(
-            probe="psycopg2.connection.open",
-            trace_id=trace_id,
-            service="postgres",
-            name="connect",
-            duration_ns=duration_ns,
-            dsn=str(kwargs.get("dsn", args[0] if args else ""))[:100],
-        ))
+        emit(
+            NormalizedEvent.now(
+                probe="psycopg2.connection.open",
+                trace_id=trace_id,
+                service="postgres",
+                name="connect",
+                duration_ns=duration_ns,
+                dsn=str(
+                    kwargs.get("dsn", args[0] if args else "")
+                )[:100],
+            )
+        )
 
     return TracedConnection(conn)

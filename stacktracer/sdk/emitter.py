@@ -29,6 +29,7 @@ logger = logging.getLogger("stacktracer.emitter")
 # In-process event buffer (absorbs micro-bursts)
 # ------------------------------------------------------------------ #
 
+
 class _EventBuffer:
     """
     Lock-free-ish bounded ring buffer for in-process use.
@@ -48,7 +49,9 @@ class _EventBuffer:
                 return
             self._q.append(event)
 
-    def drain(self, max_batch: int = 500) -> List[NormalizedEvent]:
+    def drain(
+        self, max_batch: int = 500
+    ) -> List[NormalizedEvent]:
         with self._lock:
             batch = []
             for _ in range(min(max_batch, len(self._q))):
@@ -68,11 +71,13 @@ class _DrainThread(threading.Thread):
     one deque.append(), done. Cost: ~0.5 microseconds per emit().
     """
 
-    def __init__(self, buffer: _EventBuffer, interval_s: float = 0.05) -> None:
+    def __init__(
+        self, buffer: _EventBuffer, interval_s: float = 0.05
+    ) -> None:
         super().__init__(daemon=True, name="stacktracer-drain")
-        self._buffer   = buffer
-        self._interval = interval_s   # drain every 50ms
-        self._running  = False
+        self._buffer = buffer
+        self._interval = interval_s  # drain every 50ms
+        self._running = False
 
     def start_draining(self) -> None:
         self._running = True
@@ -85,11 +90,11 @@ class _DrainThread(threading.Thread):
 
         # import pdb
         # pdb.set_trace()
-        
+
         while self._running:
             # import pdb
             # pdb.set_trace()
-            
+
             try:
                 events = self._buffer.drain(max_batch=500)
                 # print(">>>MY EVENTS", events)
@@ -98,29 +103,40 @@ class _DrainThread(threading.Thread):
                         try:
                             _engine.process(event)
                         except Exception as exc:
-                            logger.debug("drain: process error: %s", exc)
+                            logger.debug(
+                                "drain: process error: %s", exc
+                            )
             except Exception as exc:
                 logger.debug("drain: loop error: %s", exc)
             time.sleep(self._interval)
+
 
 # ------------------------------------------------------------------ #
 # Module-level state
 # ------------------------------------------------------------------ #
 
-_engine = None          # Set by bind_engine()
+_engine = None  # Set by bind_engine()
 _buffer = _EventBuffer()
-_direct_mode = False     # True = emit directly into Engine (MVP default)
-                        # False = buffer + drain thread (high-throughput)
+_direct_mode = (
+    False  # True = emit directly into Engine (MVP default)
+)
+# False = buffer + drain thread (high-throughput)
 
 
-_drain_thread: Optional[_DrainThread] = None   # add to module-level state
+_drain_thread: Optional[_DrainThread] = (
+    None  # add to module-level state
+)
+
 
 def bind_engine(engine: object) -> None:
     global _engine, _drain_thread
     _engine = engine
     _drain_thread = _DrainThread(_buffer, interval_s=0.05)
     _drain_thread.start_draining()
-    logger.info("StackTracer emitter bound, drain thread started")
+    logger.info(
+        "StackTracer emitter bound, drain thread started"
+    )
+
 
 def _restart_drain_thread() -> None:
     """
@@ -129,13 +145,18 @@ def _restart_drain_thread() -> None:
     buffer but no running drain thread. Call this in post_fork hooks.
     """
     global _drain_thread
-    if _drain_thread is not None and not _drain_thread.is_alive():
+    if (
+        _drain_thread is not None
+        and not _drain_thread.is_alive()
+    ):
         _drain_thread = _DrainThread(_buffer, interval=0.05)
         _drain_thread.start()
         logger.info("emitter: drain thread restarted after fork")
 
+
 def _get_engine():
     return _engine
+
 
 def emit(event: NormalizedEvent) -> None:
     """
@@ -149,14 +170,19 @@ def emit(event: NormalizedEvent) -> None:
         return  # Silent drop if not initialised — probes must be safe to import early
     _buffer.push(event)
 
+
 # in sdk/emitter.py
 def emit_direct(event: NormalizedEvent) -> None:
     """Bypass buffer — process immediately. For lifecycle events."""
     import stacktracer
+
     engine = stacktracer.get_engine()
-    print(f">>> emit_direct engine id={id(engine)} event={event.probe}")
+    print(
+        f">>> emit_direct engine id={id(engine)} event={event.probe}"
+    )
     if _engine is not None:
         _engine.process(event)
+
 
 def flush() -> None:
     """Drain buffer into engine (used in non-direct mode)."""
@@ -166,7 +192,9 @@ def flush() -> None:
         try:
             _engine.process(event)
         except Exception as exc:
-            logger.debug("Engine.process error during flush: %s", exc)
+            logger.debug(
+                "Engine.process error during flush: %s", exc
+            )
 
 
 def stats() -> dict:

@@ -56,13 +56,15 @@ def _dispatch(task_func, trace_id: str, **task_kwargs):
     """
     task_name = task_func.name
 
-    emit(NormalizedEvent.now(
-        probe     = "celery.task.dispatch",
-        trace_id  = trace_id,
-        service   = "celery",       # creates celery:: node, not django::
-        name      = task_name,
-        task_name = task_name,
-    ))
+    emit(
+        NormalizedEvent.now(
+            probe="celery.task.dispatch",
+            trace_id=trace_id,
+            service="celery",  # creates celery:: node, not django::
+            name=task_name,
+            task_name=task_name,
+        )
+    )
 
     task_func.delay(**task_kwargs, _trace_id=trace_id)
 
@@ -82,7 +84,9 @@ class ReportView(View):
     def get(self, request, report_id: int):
         trace_id = get_trace_id()
         _dispatch(process_report, trace_id, report_id=report_id)
-        return JsonResponse({"queued": "process_report", "report_id": report_id})
+        return JsonResponse(
+            {"queued": "process_report", "report_id": report_id}
+        )
 
 
 class BulkNotifyView(View):
@@ -106,19 +110,25 @@ class BulkNotifyView(View):
     def post(self, request):
         trace_id = get_trace_id()
         try:
-            body     = json.loads(request.body)
+            body = json.loads(request.body)
             user_ids = body.get("user_ids", list(range(1, 11)))
         except (json.JSONDecodeError, AttributeError):
             user_ids = list(range(1, 11))
 
         for uid in user_ids:
             _dispatch(
-                send_notification, trace_id,
+                send_notification,
+                trace_id,
                 user_id=uid,
                 message=f"Hello user {uid}",
             )
 
-        return JsonResponse({"queued": len(user_ids), "task": "send_notification"})
+        return JsonResponse(
+            {
+                "queued": len(user_ids),
+                "task": "send_notification",
+            }
+        )
 
 
 class ExportView(View):
@@ -140,7 +150,9 @@ class ExportView(View):
     def get(self, request, export_id: int):
         trace_id = get_trace_id()
         _dispatch(export_data, trace_id, export_id=export_id)
-        return JsonResponse({"queued": "export_data", "export_id": export_id})
+        return JsonResponse(
+            {"queued": "export_data", "export_id": export_id}
+        )
 
 
 class FailingJobView(View):
@@ -158,10 +170,12 @@ class FailingJobView(View):
     """
 
     def get(self, request):
-        trace_id   = get_trace_id()
+        trace_id = get_trace_id()
         should_fail = request.GET.get("fail", "1") != "0"
         _dispatch(risky_job, trace_id, should_fail=should_fail)
-        return JsonResponse({"queued": "risky_job", "should_fail": should_fail})
+        return JsonResponse(
+            {"queued": "risky_job", "should_fail": should_fail}
+        )
 
 
 class StatusView(View):
@@ -179,24 +193,28 @@ class StatusView(View):
     def get(self, request):
         try:
             from config.celery import app as celery_app
+
             inspect = celery_app.control.inspect(timeout=0.5)
-            active  = inspect.active() or {}
-            queued  = sum(len(v) for v in active.values())
+            active = inspect.active() or {}
+            queued = sum(len(v) for v in active.values())
         except Exception:
             queued = -1
 
-        return JsonResponse({
-            "status": "ok",
-            "active_tasks": queued,
-            "repl_queries": [
-                "SHOW graph",
-                "HOTSPOT TOP 10",
-                'CAUSAL WHERE tags = "celery"',
-                'SHOW latency WHERE system = "celery"',
-                'BLAME WHERE system = "worker"',
-            ],
-        })
-    
+        return JsonResponse(
+            {
+                "status": "ok",
+                "active_tasks": queued,
+                "repl_queries": [
+                    "SHOW graph",
+                    "HOTSPOT TOP 10",
+                    'CAUSAL WHERE tags = "celery"',
+                    'SHOW latency WHERE system = "celery"',
+                    'BLAME WHERE system = "worker"',
+                ],
+            }
+        )
+
+
 import json
 from django.http import JsonResponse
 from django.views import View
@@ -227,28 +245,34 @@ class RedisCacheView(View):
     """
 
     def get(self, request, report_id: int):
-        trace_id  = get_trace_id()
+        trace_id = get_trace_id()
         cache_key = f"report:{report_id}"
 
         # Redis GET — traced, creates redis::GET node in graph
         cached = r.get(cache_key)
 
         if cached:
-            return JsonResponse({
-                "source":    "cache",
-                "report_id": report_id,
-                "data":      json.loads(cached),
-            })
+            return JsonResponse(
+                {
+                    "source": "cache",
+                    "report_id": report_id,
+                    "data": json.loads(cached),
+                }
+            )
 
         # Cache miss — dispatch task, store pending marker
         # Redis SET — traced, creates redis::SET node in graph
-        r.set(cache_key, json.dumps({"status": "pending"}), ex=60)
+        r.set(
+            cache_key, json.dumps({"status": "pending"}), ex=60
+        )
 
         # dispatch() emits celery.task.dispatch then calls .delay()
         # creates the django::ReportView → celery::generate_report edge
         dispatch(generate_report, trace_id, report_id=report_id)
 
-        return JsonResponse({
-            "source":    "queued",
-            "report_id": report_id,
-        })
+        return JsonResponse(
+            {
+                "source": "queued",
+                "report_id": report_id,
+            }
+        )

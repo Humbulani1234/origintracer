@@ -17,15 +17,25 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Set
+from typing import (
+    Any,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Optional,
+    Set,
+)
 
 
 @dataclass
 class SemanticAlias:
     label: str
     description: str
-    node_patterns: List[str]     # Exact node IDs  OR  regex patterns
-    services: List[str]          # Service names to include wholesale
+    node_patterns: List[
+        str
+    ]  # Exact node IDs  OR  regex patterns
+    services: List[str]  # Service names to include wholesale
     tags: List[str] = field(default_factory=list)
 
     def matches_node(self, node_id: str) -> bool:
@@ -77,7 +87,9 @@ class SemanticLayer:
 
         matched: Set[str] = set()
         for node in graph.all_nodes():
-            if alias.matches_node(node.id) or alias.matches_service(node.service):
+            if alias.matches_node(
+                node.id
+            ) or alias.matches_service(node.service):
                 matched.add(node.id)
         return matched
 
@@ -103,6 +115,7 @@ class SemanticLayer:
 # YAML loader
 # ====================================================================== #
 
+
 def load_from_dict(data: List[Dict[str, Any]]) -> SemanticLayer:
     """
     Load semantic aliases from a parsed YAML/JSON structure.
@@ -120,18 +133,22 @@ def load_from_dict(data: List[Dict[str, Any]]) -> SemanticLayer:
     """
     layer = SemanticLayer()
     for entry in data:
-        layer.register(SemanticAlias(
-            label=entry["label"],
-            description=entry.get("description", ""),
-            node_patterns=entry.get("node_patterns", []),
-            services=entry.get("services", []),
-            tags=entry.get("tags", []),
-        ))
+        layer.register(
+            SemanticAlias(
+                label=entry["label"],
+                description=entry.get("description", ""),
+                node_patterns=entry.get("node_patterns", []),
+                services=entry.get("services", []),
+                tags=entry.get("tags", []),
+            )
+        )
     return layer
+
 
 def load_from_yaml(path: str) -> SemanticLayer:
     """Load a single YAML file."""
     import yaml
+
     with open(path) as f:
         data = yaml.safe_load(f) or {}
     return load_from_dict(data.get("semantic", []))
@@ -144,6 +161,7 @@ def merge_yaml_configs(*paths: str) -> dict:
     Missing files are silently skipped.
     """
     import yaml
+
     merged = {"probes": [], "semantic": []}
 
     for path in paths:
