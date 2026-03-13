@@ -8,6 +8,33 @@
 #
 # Users only need to specify what they want to change.
 
+# ── Probe activation ─────────────────────────────────────────────────────
+#
+# builtin_probes: Python module paths to import at init() time.
+#   Side-effect of import: registers the BaseProbe subclass with ProbeRegistry.
+#   All built-in probes are listed here. User stacktracer.yaml should NOT
+#   override this unless adding a completely custom module path.
+#
+# probes: Names of probes to actually start.
+#   User stacktracer.yaml REPLACES this list entirely.
+#   Only probes listed here are started — importing a module does not start it.
+ 
+builtin_probes:
+  - ".probes.asyncio_probe"
+  - ".probes.django_probe"
+  - ".probes.gunicorn_probe"
+  - ".probes.uvicorn_probe"
+  - ".probes.nginx_probe"
+  - ".probes.db_kprobe"
+  - ".probes.redis_probe"
+  - ".probes.celery_probe"
+ 
+# ── Event buffer ──────────────────────────────────────────────────────────
+buffer_size: 10000
+ 
+# ── Snapshot and flush intervals ─────────────────────────────────────────
+snapshot_interval: 15.0   # seconds between temporal graph snapshots
+flush_interval: 10        # seconds between uploader batch flushes
 # ── Probes ────────────────────────────────────────────────────────────────
 # Full stack enabled by default. Each probe gracefully no-ops if the
 # corresponding server is not running or not installed.
@@ -24,15 +51,17 @@ snapshot_interval: 15.0    # seconds between temporal graph snapshots
 flush_interval: 10         # seconds between uploader batch flushes
 buffer_size: 10000         # EventBuffer max size before drop
 
-# ── Redaction ─────────────────────────────────────────────────────────────
-# Event metadata fields that are redacted before storage or upload.
+# ── Field redaction ───────────────────────────────────────────────────────
+# Metadata keys whose values are replaced with "***REDACTED***" before
+# any event is stored or uploaded.
 redact_fields:
   - password
   - token
   - secret
   - authorization
   - api_key
-  - cookie
+  - access_token
+  - refresh_token
 
 # ── Semantic aliases ──────────────────────────────────────────────────────
 # Human labels mapped to graph nodes/services for DSL queries:

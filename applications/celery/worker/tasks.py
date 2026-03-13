@@ -103,3 +103,10 @@ def risky_job(self, should_fail: bool = True, **kwargs):
             raise
 
     return {"status": "ok"}
+
+import time
+
+@shared_task(name="myapp.tasks.generate_report", bind=True)
+def generate_report(self, report_id: int, **kwargs):
+    time.sleep(0.2)   # simulate work
+    return {"report_id": report_id, "status": "done"}

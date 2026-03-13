@@ -78,83 +78,57 @@ def _get_redis():
 # TracedRedis
 # ====================================================================== #
 
-class TracedRedis:
+redis = _get_redis()
+
+class TracedRedis(redis.Redis):
     """
-    Wraps redis.Redis and emits NormalizedEvents on every command.
-
-    Subclassing redis.Redis directly caused issues with some redis-py
-    versions that inspect __class__ during connection pool management.
-    This composition wrapper avoids that entirely.
-
-    Usage:
-        from stacktracer.probes.redis_probe import TracedRedis
-
-        r = TracedRedis(host="localhost", port=6379, db=0)
-        r.set("key", "value")   # emits redis.command.execute
-        r.get("key")            # emits redis.command.execute
-
-    All redis-py attributes and methods are accessible — only
-    execute_command is intercepted.
+    Subclass of redis.Redis that emits NormalizedEvents on every command.
+    redis-py is designed for subclassing — execute_command() is the single
+    dispatch point for all commands including get, set, hget, lpush, etc.
+    When r.get() calls self.execute_command() internally, it calls THIS
+    override because self is a TracedRedis instance.
     """
-
-    def __init__(self, *args, **kwargs) -> None:
-        redis_lib = _get_redis()
-        self._redis = redis_lib.Redis(*args, **kwargs)
 
     def execute_command(self, *args, **options) -> Any:
-        """
-        Intercept all Redis commands. All redis-py high-level methods
-        (get, set, hget, lpush, etc.) call this method internally.
-
-        args[0] is the command name (GET, SET, HGET, ...).
-        args[1] is usually the key.
-        """
         trace_id = get_trace_id()
         command  = args[0] if args else "UNKNOWN"
         key      = str(args[1])[:100] if len(args) > 1 else ""
 
         t0 = time.perf_counter()
         try:
-            result = self._redis.execute_command(*args, **options)
+            result = super().execute_command(*args, **options)
         except Exception as exc:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
                 emit(NormalizedEvent.now(
-                    probe="redis.command.execute",
-                    trace_id=trace_id,
-                    service="redis",
-                    name=command,
-                    parent_span_id=get_span_id(),
-                    duration_ns=duration_ns,
-                    key=key,
-                    error=str(exc)[:200],
-                    success=False,
+                    probe       = "redis.command.execute",
+                    trace_id    = trace_id,
+                    service     = "redis",
+                    name        = command,
+                    duration_ns = duration_ns,
+                    key         = key,
+                    error       = str(exc)[:200],
+                    success     = False,
                 ))
             raise
         else:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
                 emit(NormalizedEvent.now(
-                    probe="redis.command.execute",
-                    trace_id=trace_id,
-                    service="redis",
-                    name=command,
-                    parent_span_id=get_span_id(),
-                    duration_ns=duration_ns,
-                    key=key,
-                    success=True,
-                    # result_type gives shape info without value size risk
-                    result_type=type(result).__name__,
+                    probe       = "redis.command.execute",
+                    trace_id    = trace_id,
+                    service     = "redis",
+                    name        = command,
+                    duration_ns = duration_ns,
+                    key         = key,
+                    success     = True,
+                    result_type = type(result).__name__,
                 ))
             return result
 
-    def pipeline(self, transaction: bool = True, shard_hint=None):
-        """Return a TracedPipeline."""
-        raw_pipe = self._redis.pipeline(transaction=transaction, shard_hint=shard_hint)
+    def pipeline(self, transaction=True, shard_hint=None):
+        raw_pipe = super().pipeline(transaction=transaction, shard_hint=shard_hint)
         return TracedPipeline(raw_pipe)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._redis, name)
 
 
 # ====================================================================== #
@@ -223,6 +197,8 @@ class TracedPipeline:
 # Connection pool helper
 # ====================================================================== #
 
+from ..sdk.base_probe import BaseProbe
+
 def make_traced_pool(**kwargs) -> Any:
     """
     Create a ConnectionPool for use with TracedRedis.
@@ -233,3 +209,12 @@ def make_traced_pool(**kwargs) -> Any:
     """
     redis_lib = _get_redis()
     return redis_lib.ConnectionPool(**kwargs)
+
+class RedisProbe(BaseProbe):
+    name = "redis"
+
+    def start(self, **kwargs) -> None:
+        logger.info("redis probe: TracedRedis ready — use TracedRedis() in your views")
+
+    def stop(self, **kwargs) -> None:
+        pass
