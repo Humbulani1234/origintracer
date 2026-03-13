@@ -1,5 +1,5 @@
 """
-myworker/settings.py
+worker/settings.py
 
 Minimal Django settings for the Celery demo worker.
 No URL routing, no views — only what Celery needs to run.
@@ -14,10 +14,16 @@ INSTALLED_APPS = [
     "worker",
 ]
 
+MIDDLEWARE = [
+    "stacktracer.probes.django_probe.TracerMiddleware",  # must be first
+    "django.middleware.common.CommonMiddleware",
+]
+
 # ── Database ───────────────────────────────────────────────────────────────
 # slow_task uses raw sqlite3 directly, but Django still needs
 # a DATABASES entry for django.setup() to succeed.
 
+ASGI_APPLICATION = "config.asgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",

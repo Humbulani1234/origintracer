@@ -12,9 +12,6 @@
 # No YAML entry needed for those files.
 
 probes:
-  - django
-  - gunicorn
-  - uvicorn
   - celery
 
 semantic:

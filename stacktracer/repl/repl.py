@@ -87,7 +87,20 @@ _SOCKET_SUFFIX = ".sock"
 
 
 def discover_sockets() -> list[str]:
-    return sorted(glob.glob(f"{_SOCKET_PREFIX}*{_SOCKET_SUFFIX}"))
+    live = []
+    for path in sorted(glob.glob(f"{_SOCKET_PREFIX}*{_SOCKET_SUFFIX}")):
+        pid = path.replace(_SOCKET_PREFIX, "").replace(_SOCKET_SUFFIX, "")
+        try:
+            # Check if the process is actually alive
+            os.kill(int(pid), 0)
+            live.append(path)
+        except (ProcessLookupError, ValueError):
+            # Process is dead — remove the stale socket
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    return live
 
 
 def pick_socket() -> str:
@@ -168,14 +181,21 @@ def render(result: dict) -> None:
 
     data = result.get("data")
 
-    # Agent wrapped the DSL error inside data
+    # Unwrap executor envelope — executor returns {"metric": "...", "data": <payload>}
+    # local_server wraps that in {"ok": True, "data": <executor_result>}
+    # So result["data"] is the executor result, and the real payload is inside that.
+    if isinstance(data, dict) and "data" in data:
+        verb   = data.get("verb",   "")
+        metric = data.get("metric", "")
+        data   = data["data"]        # ← unwrap to actual payload
+    else:
+        verb   = result.get("verb",   "")
+        metric = result.get("metric", "")
+
+    # error inside executor result
     if isinstance(data, dict) and "error" in data and len(data) == 1:
         err(data["error"])
         return
-
-    # Pull verb/metric either from the top-level response or from data
-    verb   = result.get("verb",   data.get("verb",   "") if isinstance(data, dict) else "")
-    metric = result.get("metric", data.get("metric", "") if isinstance(data, dict) else "")
 
     # ── CAUSAL ────────────────────────────────────────────────────
     if verb == "CAUSAL":
@@ -270,7 +290,7 @@ def render(result: dict) -> None:
         return
 
     # ── SHOW STATUS ───────────────────────────────────────────────
-    if isinstance(data, dict) and "graph_nodes" in data:
+    if verb == "STATUS" or (isinstance(data, dict) and "graph_nodes" in data):
         header("Engine Status")
         for k, v in data.items():
             print(f"  {c(k, DIM):<30} {c(v, WHITE)}")
@@ -691,6 +711,7 @@ def main():
         # ── DSL query — forwarded verbatim to the live engine ──────
         t0      = time.perf_counter()
         result  = query(sock_path, raw)
+        print(f"DEBUG raw: {result}")   # add this temporarily
         elapsed = (time.perf_counter() - t0) * 1000
         render(result)
         if result.get("ok"):

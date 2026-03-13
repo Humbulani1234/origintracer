@@ -99,7 +99,8 @@ class LocalQueryServer:
 
     def start(self) -> None:
         # Remove stale socket file if it exists (e.g. after crash)
-        self._cleanup_socket()
+        import atexit
+        atexit.register(self._cleanup_socket)
 
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._sock.bind(self._path)

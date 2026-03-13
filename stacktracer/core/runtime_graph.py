@@ -236,8 +236,10 @@ class RuntimeGraph:
             # The task fires with worker_pid. We look for the ForkPoolWorker
             # node whose worker_pid matches — that worker ran this task.
             worker_pid = event.metadata.get("worker_pid")
+            print(f"DEBUG task.start worker_pid={worker_pid}")
             if worker_pid:
                 for nid, node in self._nodes.items():
+                    print(f"DEBUG node {nid} type={node.node_type} name={node.name} meta={node.metadata}")
                     if (node.node_type == "celery"
                             and node.name == "ForkPoolWorker"
                             and node.metadata.get("worker_pid") == worker_pid):

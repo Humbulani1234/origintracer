@@ -154,44 +154,35 @@ class Engine:
     def critical_path(self, trace_id: str) -> List[Dict[str, Any]]:
         """
         Derive the critical path for a single trace_id from the event log.
-        Returns events in chronological order, annotated with inter-stage durations.
+        Returns all registered probe events in chronological order,
+        annotated with inter-stage durations.
+        Uses ProbeTypes registry — no manual probe list to maintain.
         """
+        from .event_schema import ProbeTypes
+
         with self._event_log_lock:
             events = [e for e in self._event_log if e.trace_id == trace_id]
 
         events.sort(key=lambda e: e.timestamp)
 
-        CRITICAL_PROBES = {
-            "request.entry",
-            "django.middleware.enter",
-            "django.url.resolve",
-            "django.view.enter",
-            "function.call",
-            "function.return",
-            "function.exception",
-            "asyncio.task.create",
-            "asyncio.task.block",
-            "asyncio.task.wakeup",
-            "db.query.start",
-            "db.query.end",
-            "tcp.send",
-            "tcp.recv",
-            "request.exit",
-        }
-        filtered = [e for e in events if e.probe in CRITICAL_PROBES]
+        # All registered probes are meaningful — infrastructure probes
+        # (gunicorn.worker.fork etc.) have no duration so they show as gaps
+        # which is correct — they mark topology events on the critical path.
+        registered = ProbeTypes.all_probes()
+        filtered = [e for e in events if e.probe in registered]
 
         path = []
         last_ts = None
         for e in filtered:
             duration_ms = (e.timestamp - last_ts) * 1000 if last_ts else None
             path.append({
-                "probe": e.probe,
-                "service": e.service,
-                "name": e.name,
-                "timestamp": e.timestamp,
-                "wall_time": e.wall_time,
+                "probe":       e.probe,
+                "service":     e.service,
+                "name":        e.name,
+                "timestamp":   e.timestamp,
+                "wall_time":   e.wall_time,
                 "duration_ms": round(duration_ms, 3) if duration_ms else None,
-                "metadata": e.metadata,
+                "metadata":    e.metadata,
             })
             last_ts = e.timestamp
         return path

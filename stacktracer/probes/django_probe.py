@@ -111,6 +111,7 @@ class TracerMiddleware:
         )
         token = set_trace(trace_id)
         request._st_t0 = time.perf_counter()
+        print(f">>> request.enter trace={get_trace_id()} path={request.path}")
         emit(NormalizedEvent.now(
             probe     = "request.entry",
             trace_id  = trace_id,
