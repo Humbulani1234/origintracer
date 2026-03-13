@@ -551,6 +551,59 @@ def init(
             config  = str(BASE_DIR / "stacktracer.yaml"),
             debug   = True,
         )
+    
+         Parameters
+    ----------
+    api_key
+        API key for remote upload to StackTracer backend.
+        Omit or pass "" to run in local-only mode (no upload).
+
+    endpoint
+        Backend URL. Default: https://api.stacktracer.io
+
+    config
+        Explicit path to user stacktracer.yaml.
+        If omitted, searched automatically from cwd upward (max 5 levels).
+
+    probes
+        List of probe names to activate.
+        REPLACES the default list entirely.
+        Default: ["django", "asyncio", "uvicorn", "gunicorn", "nginx"]
+
+    semantic
+        Extra semantic alias dicts to add or override.
+        MERGED with defaults by label — your label wins on same key.
+
+    sample_rate
+        Fraction of requests to trace (0.0–1.0). Default: 0.01 (1%)
+
+    snapshot_interval
+        Seconds between temporal graph snapshots. Default: 15.0
+
+    flush_interval
+        Seconds between uploader event batch flushes. Default: 10
+
+    debug
+        If True, enables StackTracer even when DJANGO_DEBUG=True.
+        Default: False (auto-disables in Django debug environments)
+
+    repository
+        Pre-built storage backend (EventRepository, ClickHouseRepository).
+        Overrides the remote uploader as the event sink.
+
+    normalize
+        Additional normalization rules beyond built-in patterns and yaml rules.
+        EXTENDS — does not replace — the merged yaml normalize list.
+        Each rule: {"service": "django", "pattern": "...", "replacement": "..."}
+
+    compactor
+        Override specific compactor settings.
+        MERGES key-by-key — unspecified keys keep their yaml / default values.
+        Keys: max_nodes, evict_to_ratio, node_ttl_s, min_call_count
+
+    active_requests
+        Override ActiveRequestTracker settings.
+        MERGES key-by-key.  Keys: ttl_s, max_size
     """
     global _config, _engine, _active_probes
 
