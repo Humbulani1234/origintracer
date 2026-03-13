@@ -100,9 +100,15 @@ class Engine:
 
         # 2. Update runtime graph — build edges between consecutive events in same trace
         with self._last_event_lock:
-            entry = self._last_event_per_trace.get(event.trace_id)
+            entry  = self._last_event_per_trace.get(event.trace_id)
             parent = entry[0] if entry else None
-            self._last_event_per_trace[event.trace_id] = (event, time.monotonic())
+            if event.probe == "request.exit":
+                # Close the trace. Also clear parent so request.exit never
+                # draws a generic edge — it closes a span, calls nothing.
+                self._last_event_per_trace.pop(event.trace_id, None)
+                parent = None
+            else:
+                self._last_event_per_trace[event.trace_id] = (event, time.monotonic())
         self.graph.add_from_event(event, parent_event=parent)
 
         # 3. Append to in-memory event log (bounded)
