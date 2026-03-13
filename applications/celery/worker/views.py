@@ -196,3 +196,59 @@ class StatusView(View):
                 'BLAME WHERE system = "worker"',
             ],
         })
+    
+import json
+from django.http import JsonResponse
+from django.views import View
+
+from stacktracer.probes.celery_probe import dispatch
+from stacktracer.probes.redis_probe import TracedRedis
+from stacktracer.context.vars import get_trace_id
+
+from .tasks import generate_report
+
+# One shared TracedRedis instance — same as you'd do with redis.Redis
+r = TracedRedis(host="localhost", port=6379, db=0)
+
+
+class RedisCacheView(View):
+    """
+    GET /tasks/cache/<id>/
+
+    1. Check Redis cache for the report          → redis::GET edge in graph
+    2. Cache hit  → return immediately            (no celery edge)
+    3. Cache miss → dispatch generate_report task → celery::generate_report edge
+                 → store a "pending" marker in Redis → redis::SET edge
+
+    REPL after several requests:
+        SHOW graph
+        HOTSPOT TOP 10
+        SHOW latency WHERE system = "celery"
+    """
+
+    def get(self, request, report_id: int):
+        trace_id  = get_trace_id()
+        cache_key = f"report:{report_id}"
+
+        # Redis GET — traced, creates redis::GET node in graph
+        cached = r.get(cache_key)
+
+        if cached:
+            return JsonResponse({
+                "source":    "cache",
+                "report_id": report_id,
+                "data":      json.loads(cached),
+            })
+
+        # Cache miss — dispatch task, store pending marker
+        # Redis SET — traced, creates redis::SET node in graph
+        r.set(cache_key, json.dumps({"status": "pending"}), ex=60)
+
+        # dispatch() emits celery.task.dispatch then calls .delay()
+        # creates the django::ReportView → celery::generate_report edge
+        dispatch(generate_report, trace_id, report_id=report_id)
+
+        return JsonResponse({
+            "source":    "queued",
+            "report_id": report_id,
+        })

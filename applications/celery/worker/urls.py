@@ -7,4 +7,5 @@ urlpatterns = [
     path("export/<int:export_id>/", views.ExportView.as_view(),    name="export"),
     path("failing/",                views.FailingJobView.as_view(), name="failing"),
     path("status/",                 views.StatusView.as_view(),     name="status"),
+    path("cache/<int:report_id>/", views.RedisCacheView.as_view(),    name="redis-cache"),
 ]
