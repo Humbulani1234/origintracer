@@ -268,6 +268,10 @@ def _build_resolved_config(
     Apply init() kwargs as the final override layer on top of merged yaml.
     merged_yaml = _deep_merge(defaults.yaml, user stacktracer.yaml).
     """
+
+    # import pdb
+    # pdb.set_trace()
+
     resolved_semantic = _merge_semantic(
         defaults=merged_yaml.get("semantic", []),
         user_yaml=[],  # already in merged_yaml
@@ -435,6 +439,9 @@ def _init_probes(
     import importlib
     from .sdk.base_probe import ProbeRegistry
 
+    # import pdb
+    # pdb.set_trace()
+
     # Builtin modules from defaults.yaml — no hardcoded list
     for module_path in cfg.builtin_probes:
         try:
@@ -455,6 +462,8 @@ def _init_probes(
     probes = ProbeRegistry.load_from_config(
         {"probes": cfg.probes}
     )
+
+    print(">>>PROBES:", probes)
     started = []
     for probe in probes:
         try:
@@ -488,7 +497,10 @@ def _discover_user_probes(app_root: str) -> None:
     import importlib.util
     import traceback
 
-    probes_dir = os.path.join(app_root, "stacktracer", "probes")
+    # import pdb
+    # pdb.set_trace()
+
+    probes_dir = os.path.join(app_root, "probes")
     if not os.path.isdir(probes_dir):
         logger.debug(
             "User probe directory not found: %s", probes_dir

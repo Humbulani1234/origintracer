@@ -25,9 +25,6 @@ builtin_probes:
   - ".probes.gunicorn_probe"
   - ".probes.uvicorn_probe"
   - ".probes.nginx_probe"
-  - ".probes.db_kprobe"
-  - ".probes.redis_probe"
-  - ".probes.celery_probe"
  
 # ── Event buffer ──────────────────────────────────────────────────────────
 buffer_size: 10000

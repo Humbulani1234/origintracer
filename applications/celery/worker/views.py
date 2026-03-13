@@ -219,8 +219,8 @@ import json
 from django.http import JsonResponse
 from django.views import View
 
-from stacktracer.probes.celery_probe import dispatch
-from stacktracer.probes.redis_probe import TracedRedis
+# from stacktracer.probes.celery_probe import dispatch
+from probes.redis_probe import TracedRedis
 from stacktracer.context.vars import get_trace_id
 
 from .tasks import generate_report

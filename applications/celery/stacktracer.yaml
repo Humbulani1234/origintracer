@@ -13,6 +13,7 @@
 
 probes:
   - celery
+  - redis
 
 semantic:
   - label: web

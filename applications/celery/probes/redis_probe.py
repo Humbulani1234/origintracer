@@ -219,7 +219,7 @@ class TracedPipeline:
 # Connection pool helper
 # ====================================================================== #
 
-from ..sdk.base_probe import BaseProbe
+from stacktracer.sdk.base_probe import BaseProbe
 
 
 def make_traced_pool(**kwargs) -> Any:
