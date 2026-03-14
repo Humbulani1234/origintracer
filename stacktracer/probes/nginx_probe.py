@@ -38,10 +38,31 @@ ProbeTypes.register_many(
         "nginx.epoll.tick": "epoll_wait — nginx loop tick with n_events",
         "nginx.request.complete": "log_by_lua — full HTTP request completed",
         "nginx.request.enriched": "kprobe+lua merged — kernel+HTTP in one event",
+        "nginx.main.start": "nginx master process discovered at probe start",
+        "nginx.worker.discovered": "nginx worker process discovered at probe start",
     }
 )
 
 _NGINX_TRACE_PREFIX = "nginx-"
+
+# ── Pre-fork event parking ─────────────────────────────────────────────────
+# Same pattern as gunicorn_probe and celery_probe.
+# NginxProbe.start() runs in the gunicorn master before fork().
+# Events emitted here would land in the master's engine — which is discarded
+# after fork. We park them in this list and drain them after init() completes
+# in the worker, so the worker's engine receives the full nginx topology.
+
+_pre_fork_events: list = []
+
+
+def _drain_pre_fork_events() -> None:
+    """Drain parked nginx topology events into the worker's live engine."""
+    from stacktracer.sdk.emitter import emit_direct
+
+    for event in _pre_fork_events:
+        emit_direct(event)
+    _pre_fork_events.clear()
+
 
 # ── pid discovery ─────────────────────────────────────────────────────
 
@@ -72,6 +93,27 @@ def _find_nginx_pids() -> List[int]:
     return pids
 
 
+def _find_nginx_master_and_workers() -> (
+    Tuple[Optional[int], List[int]]
+):
+    """
+    Returns (master_pid_or_None, [worker_pids]).
+    Separates master from workers so structural edges can be drawn:
+        nginx::master ──spawned──► nginx::worker-{pid}
+    """
+    for pid_file in ["/var/run/nginx.pid", "/run/nginx.pid"]:
+        if os.path.exists(pid_file):
+            try:
+                with open(pid_file) as f:
+                    master = int(f.read().strip())
+                workers = _children_of(master)
+                return master, workers
+            except (ValueError, OSError):
+                pass
+    # fallback — no pid file, no master identity
+    return None, _find_nginx_pids()
+
+
 def _children_of(ppid: int) -> List[int]:
     kids = []
     try:
@@ -98,7 +140,7 @@ def _ip_str(ip_be: int) -> str:
     )
 
 
-# ── BPF program (identical to previous version — no changes needed) ───
+# ── BPF program ───────────────────────────────────────────────────────
 
 _NGINX_BPF = r"""
 #include <uapi/linux/ptrace.h>
@@ -267,7 +309,6 @@ class _NginxCorrelator:
                 status_code=lua.get("status", 0),
                 bytes_sent=lua.get("bytes_sent", 0),
                 upstream_addr=lua.get("upstream_addr", ""),
-                # Timing: full decomposition only possible with both layers
                 duration_ns=int(dur_ms * 1e6),
                 upstream_duration_ns=(
                     int(up_ms * 1e6) if up_ms > 0 else None
@@ -275,7 +316,6 @@ class _NginxCorrelator:
                 nginx_own_duration_ns=(
                     int(own_ms * 1e6) if own_ms > 0 else None
                 ),
-                # Kernel fields from kprobe:
                 accept_duration_ns=conn["accept_dur_ns"],
                 client_ip=conn["client_ip"],
                 client_port=conn["client_port"],
@@ -401,7 +441,6 @@ class _NginxKprobeMode:
                     if ev.client_port
                     else 0
                 )
-                # Register for potential Lua correlation
                 self._corr.register_connection(
                     conn_key=ckey,
                     client_ip=cip,
@@ -529,7 +568,7 @@ class _NginxLuaMode:
             self._srv.shutdown()
 
 
-# ── Log tail fallback (unchanged) ────────────────────────────────────
+# ── Log tail fallback ─────────────────────────────────────────────────
 
 
 class _NginxLogMode:
@@ -539,7 +578,6 @@ class _NginxLogMode:
         self._alive = False
 
     def start(self) -> bool:
-        # Create file if it doesn't exist so nginx can write to it
         if not os.path.exists(self._path):
             try:
                 os.makedirs(
@@ -582,7 +620,6 @@ class _NginxLogMode:
             logger.error("nginx log tail: %s", e)
 
     def _line(self, line: str):
-        print(f">>> nginx log line: {line[:100]}")
         try:
             r = json.loads(line)
         except json.JSONDecodeError:
@@ -608,11 +645,6 @@ class _NginxLogMode:
         )
         rt = float(r.get("request_time", 0))
         ut = r.get("upstream_response_time", "-")
-        from stacktracer.sdk.emitter import _get_engine
-
-        print(
-            f">>> nginx about to emit trace_id={trace_id} engine_id={id(_get_engine())}"
-        )
         from stacktracer.sdk.emitter import emit_direct
 
         emit_direct(
@@ -645,6 +677,15 @@ class NginxProbe(BaseProbe):
     Lua     → HTTP semantics, upstream timing, request_id
     merged  → nginx.request.enriched when both fire for same connection
 
+    Pre-fork topology events:
+        On start(), the probe discovers nginx master + worker pids and parks
+        nginx.main.start and nginx.worker.discovered events into _pre_fork_events.
+        These are drained into the live engine after init() completes in each
+        gunicorn worker, giving every worker's graph the correct nginx topology:
+
+            nginx::master ──spawned──► nginx::worker-{pid}
+            nginx::worker-{pid} ──handled──► nginx::{uri}
+
     Configure:
         nginx:
           mode: auto       # auto | kprobe | lua | log | combined
@@ -672,11 +713,52 @@ class NginxProbe(BaseProbe):
         self._log: Optional[_NginxLogMode] = None
 
     def start(self):
+        # ── 1. Discover nginx topology and park pre-fork events ───────────
+        # Must happen before any fork() so the events are in _pre_fork_events
+        # when the post-init callback drains them into the worker's engine.
+        master_pid, worker_pids = (
+            _find_nginx_master_and_workers()
+        )
+        struct_trace_id = f"{_NGINX_TRACE_PREFIX}struct-{master_pid or os.getpid()}"
 
-        import pdb
+        if master_pid:
+            _pre_fork_events.append(
+                NormalizedEvent.now(
+                    probe="nginx.main.start",
+                    trace_id=struct_trace_id,
+                    service="nginx",
+                    name="master",
+                    worker_pid=master_pid,
+                )
+            )
+            for wpid in worker_pids:
+                _pre_fork_events.append(
+                    NormalizedEvent.now(
+                        probe="nginx.worker.discovered",
+                        trace_id=struct_trace_id,
+                        service="nginx",
+                        name=f"worker-{wpid}",
+                        worker_pid=wpid,
+                        master_pid=master_pid,
+                    )
+                )
+            logger.info(
+                "nginx probe: discovered master=%d workers=%s — parked %d topology events",
+                master_pid,
+                worker_pids,
+                len(_pre_fork_events),
+            )
+        else:
+            logger.info(
+                "nginx probe: nginx not running — topology events skipped"
+            )
 
-        pdb.set_trace()
+        # Register drain callback — fires after init() completes in worker
+        from stacktracer import _register_post_init_callback
 
+        _register_post_init_callback(_drain_pre_fork_events)
+
+        # ── 2. Start the appropriate observation layer ────────────────────
         self._corr = _NginxCorrelator()
         wk = self._mode in ("auto", "kprobe", "combined")
         wl = self._mode in ("auto", "lua", "combined")
@@ -713,12 +795,6 @@ class NginxProbe(BaseProbe):
                 )
         else:
             logger.warning("nginx probe: no layer started")
-
-        print(f">>> nginx probe active modes: {active}")
-        print(f">>> nginx log path configured: {self._log_path}")
-        print(
-            f">>> nginx log file exists: {os.path.exists(self._log_path)}"
-        )
 
     def stop(self):
         for x in (self._kp, self._lua, self._log, self._corr):

@@ -26,18 +26,18 @@ from collections import Counter
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_REQUESTS = 100
-DEFAULT_WORKERS  = 10
-DEFAULT_DELAY    = 0.05
+DEFAULT_WORKERS = 10
+DEFAULT_DELAY = 0.05
 
 
 def build_queue(base: str, total: int) -> list:
     # Weight the URLs — slow and n+1 less frequent so they don't time out everything
     weighted = [
-        (f"{base}/",       "GET", None, 30),   # index — most traffic
-        (f"{base}/async/", "GET", None, 25),   # async view
-        (f"{base}/db/",    "GET", None, 25),   # db view
-        (f"{base}/n1/",    "GET", None, 15),   # n+1 view
-        (f"{base}/slow/",  "GET", None,  5),   # slow — keep rare
+        (f"{base}/", "GET", None, 30),  # index — most traffic
+        (f"{base}/async/", "GET", None, 25),  # async view
+        (f"{base}/db/", "GET", None, 25),  # db view
+        (f"{base}/n1/", "GET", None, 15),  # n+1 view
+        (f"{base}/slow/", "GET", None, 5),  # slow — keep rare
     ]
     pool = []
     for url, method, body, weight in weighted:
@@ -49,7 +49,13 @@ def build_queue(base: str, total: int) -> list:
     return queue[:total]
 
 
-def worker(wid: int, queue: list, results: list, delay: float, lock: threading.Lock):
+def worker(
+    wid: int,
+    queue: list,
+    results: list,
+    delay: float,
+    lock: threading.Lock,
+):
     while True:
         with lock:
             if not queue:
@@ -67,7 +73,9 @@ def worker(wid: int, queue: list, results: list, delay: float, lock: threading.L
             status = 0
         ms = (time.perf_counter() - t0) * 1000
         with lock:
-            results.append({"url": url, "status": status, "ms": ms})
+            results.append(
+                {"url": url, "status": status, "ms": ms}
+            )
         if delay:
             time.sleep(delay)
 
@@ -79,23 +87,27 @@ def print_progress(results, total, lock, stop):
             done = len(results)
         pct = done / total * 100
         bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
-        print(f"\r  [{bar}] {done}/{total} ({pct:.0f}%)", end="", flush=True)
+        print(
+            f"\r  [{bar}] {done}/{total} ({pct:.0f}%)",
+            end="",
+            flush=True,
+        )
     print()
 
 
 def summarise(results, elapsed):
-    total     = len(results)
-    statuses  = Counter(r["status"] for r in results)
-    by_url    = {}
+    total = len(results)
+    statuses = Counter(r["status"] for r in results)
+    by_url = {}
     for r in results:
         path = r["url"].split("//", 1)[-1].split("/", 1)[-1]
         path = "/" + path if not path.startswith("/") else path
         by_url.setdefault(path, []).append(r["ms"])
 
     durations = sorted(r["ms"] for r in results)
-    p50  = durations[int(len(durations) * 0.50)]
-    p95  = durations[int(len(durations) * 0.95)]
-    p99  = durations[int(len(durations) * 0.99)]
+    p50 = durations[int(len(durations) * 0.50)]
+    p95 = durations[int(len(durations) * 0.95)]
+    p99 = durations[int(len(durations) * 0.99)]
     mean = sum(durations) / len(durations)
 
     print()
@@ -110,12 +122,16 @@ def summarise(results, elapsed):
         print(f"    {code}  {count:>5}")
     print()
     print("  Latency (ms)  overall:")
-    print(f"    mean {mean:>8.1f}  p50 {p50:>8.1f}  p95 {p95:>8.1f}  p99 {p99:>8.1f}")
+    print(
+        f"    mean {mean:>8.1f}  p50 {p50:>8.1f}  p95 {p95:>8.1f}  p99 {p99:>8.1f}"
+    )
     print()
     print("  Per-URL mean latency (ms):")
     for path, times in sorted(by_url.items()):
         avg = sum(times) / len(times)
-        print(f"    {path:<20}  {avg:>8.1f}  ({len(times)} requests)")
+        print(
+            f"    {path:<20}  {avg:>8.1f}  ({len(times)} requests)"
+        )
     print("─" * 62)
     print()
     print("  Explore the graph in the REPL:")
@@ -127,35 +143,51 @@ def summarise(results, elapsed):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url",      default=DEFAULT_BASE_URL)
-    parser.add_argument("--requests", type=int,   default=DEFAULT_REQUESTS)
-    parser.add_argument("--workers",  type=int,   default=DEFAULT_WORKERS)
-    parser.add_argument("--delay",    type=float, default=DEFAULT_DELAY)
+    parser.add_argument("--url", default=DEFAULT_BASE_URL)
+    parser.add_argument(
+        "--requests", type=int, default=DEFAULT_REQUESTS
+    )
+    parser.add_argument(
+        "--workers", type=int, default=DEFAULT_WORKERS
+    )
+    parser.add_argument(
+        "--delay", type=float, default=DEFAULT_DELAY
+    )
     args = parser.parse_args()
 
-    queue   = build_queue(args.url, args.requests)
+    queue = build_queue(args.url, args.requests)
     results = []
-    lock    = threading.Lock()
-    stop    = threading.Event()
+    lock = threading.Lock()
+    stop = threading.Event()
 
     print()
     print(f"  django_tracer load test")
-    print(f"  {args.requests} requests  ·  {args.workers} workers  ·  delay={args.delay}s")
+    print(
+        f"  {args.requests} requests  ·  {args.workers} workers  ·  delay={args.delay}s"
+    )
     print(f"  Target: {args.url}")
     print()
 
-    threads = [threading.Thread(target=worker,
-                                args=(i, queue, results, args.delay, lock),
-                                daemon=True)
-               for i in range(args.workers)]
-    prog = threading.Thread(target=print_progress,
-                            args=(results, args.requests, lock, stop),
-                            daemon=True)
+    threads = [
+        threading.Thread(
+            target=worker,
+            args=(i, queue, results, args.delay, lock),
+            daemon=True,
+        )
+        for i in range(args.workers)
+    ]
+    prog = threading.Thread(
+        target=print_progress,
+        args=(results, args.requests, lock, stop),
+        daemon=True,
+    )
 
     t0 = time.perf_counter()
     prog.start()
-    for t in threads: t.start()
-    for t in threads: t.join()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
     stop.set()
     prog.join()
 

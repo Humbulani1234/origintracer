@@ -94,7 +94,10 @@ from typing import Dict, List, Optional, Tuple
 
 from stacktracer.sdk.base_probe import BaseProbe
 from stacktracer.sdk.emitter import emit
-from stacktracer.core.event_schema import NormalizedEvent, ProbeTypes
+from stacktracer.core.event_schema import (
+    NormalizedEvent,
+    ProbeTypes,
+)
 from stacktracer.core.kprobe_bridge import get_bridge
 
 logger = logging.getLogger("stacktracer.probes.db_kprobe")

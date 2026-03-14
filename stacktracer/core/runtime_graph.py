@@ -285,6 +285,54 @@ class RuntimeGraph:
                         )
                         break
 
+        # ── nginx ─────────────────────────────────────────────────────
+        elif probe == "nginx.worker.discovered":
+            master_pid = event.metadata.get("master_pid")
+            if master_pid:
+                for nid, node in self._nodes.items():
+                    node_name = (
+                        nid.split("::", 1)[1]
+                        if "::" in nid
+                        else nid
+                    )
+                    if (
+                        node.node_type == "nginx"
+                        and node_name == "master"
+                        and node.metadata.get("worker_pid")
+                        == master_pid
+                    ):
+                        self.upsert_edge(
+                            source=nid,
+                            target=node_id,
+                            edge_type="spawned",
+                        )
+                        break
+
+        elif probe in (
+            "nginx.request.complete",
+            "nginx.request.enriched",
+        ):
+            worker_pid = event.metadata.get("worker_pid")
+            if worker_pid:
+                for nid, node in self._nodes.items():
+                    node_name = (
+                        nid.split("::", 1)[1]
+                        if "::" in nid
+                        else nid
+                    )
+                    if (
+                        node.node_type == "nginx"
+                        and "worker-" in node_name
+                        and node.metadata.get("worker_pid")
+                        == worker_pid
+                    ):
+                        self.upsert_edge(
+                            source=nid,
+                            target=node_id,
+                            edge_type="handled",
+                        )
+                        break
+
     # ------------------------------------------------------------------ #
     # Queries
     # ------------------------------------------------------------------ #
