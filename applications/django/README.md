@@ -1,332 +1,323 @@
-# StackTracer — Django Demo Application
+# StackTracer — Django Application
 
-A minimal Django application demonstrating StackTracer's built-in probes
-across the full production stack: nginx → gunicorn → uvicorn → Django.
+Traces the full request path: nginx → gunicorn → uvicorn → Django → Redis.
+StackTracer instruments automatically via probes — no decorators, no SDK calls in your views.
 
 ---
 
-## What this demonstrates
-
-When you run this app under the full stack, StackTracer fires these
-built-in probes for every request:
+## Directory layout
 
 ```
-nginx.connection.accept       nginx accepted the TCP connection
-nginx.request.parse           HTTP headers parsed by nginx
-nginx.upstream.dispatch       nginx dispatched to gunicorn
-gunicorn.worker.spawn         worker process created by master
-gunicorn.worker.init          worker ready to serve
-uvicorn.request.receive       ASGI scope constructed
-uvicorn.h11.cycle             full HTTP/1.1 cycle
-django.middleware.enter       request through middleware stack
-django.url.resolve            URL matched to view
-django.view.enter             view function called
-asyncio.loop.tick             event loop Task.__step
-asyncio.task.create           coroutine scheduled
-django.view.exit              view returned
-django.middleware.exit        response through middleware
-uvicorn.response.send         status code and headers written
-gunicorn.worker.heartbeat     worker alive signal
-```
-
-You can then query the live graph from the REPL:
-
-```
-SHOW latency WHERE system = "http"
-BLAME WHERE system = "django"
-HOTSPOT TOP 10
-DIFF SINCE deployment
-CAUSAL WHERE tags = "blocking"
+applications/django/
+├── config/
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── asgi.py
+│   └── urls.py
+├── worker/                  ← Django app
+│   ├── __init__.py          ← empty
+│   ├── apps.py              ← AppConfig.ready() — single init() point
+│   ├── views.py
+│   ├── models.py
+│   └── urls.py
+├── probes/                  ← user extension probes
+│   ├── __init__.py
+│   └── redis_probe.py       ← TracedRedis (subclass, not composition)
+├── stacktracer.yaml         ← user config — overrides defaults.yaml
+├── gunicorn.conf.py
+└── manage.py
 ```
 
 ---
 
 ## Prerequisites
 
+```bash
+pip install stacktracer gunicorn uvicorn django redis
 ```
-Python 3.11+
-nginx
-pip install stacktracer django gunicorn uvicorn httptools
+
+StackTracer installed as editable from the repo root:
+
+```bash
+pip install -e /path/to/stack-tracer
 ```
 
 ---
 
-## Project layout
+## settings.py — critical requirement
 
-```
-django_app/
-├── README.md
-├── stacktracer.yaml          ← StackTracer config
-├── requirements.txt
-├── manage.py
-├── config/
-│   ├── settings.py
-│   ├── urls.py
-│   ├── asgi.py               ← ASGI entry point for uvicorn
-│   └── wsgi.py
-└── mysite/
-    ├── views.py              ← demo views that exercise the probes
-    ├── urls.py
-    └── templates/
-        └── index.html
-```
-
----
-
-## Step 1 — Install dependencies
-
-```bash
-cd applications/django_app
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
----
-
-## Step 2 — Database setup
-
-```bash
-python manage.py migrate
-python manage.py createsuperuser
-```
-
----
-
-## Step 3 — Run under the full stack
-
-### Terminal 1 — gunicorn with uvicorn workers
-
-```bash
-gunicorn config.asgi:application \
-    --bind 127.0.0.1:8000 \
-    --workers 2 \
-    --worker-class uvicorn.workers.UvicornWorker \
-    --access-logfile - \
-    --log-level info
-```
-
-`--workers 2` creates two worker processes. StackTracer's gunicorn probe
-will emit `gunicorn.worker.spawn` and `gunicorn.worker.init` for each.
-
-For development (single process, no gunicorn):
-
-```bash
-uvicorn config.asgi:application --host 127.0.0.1 --port 8000 --reload
-```
-
-### Terminal 2 — nginx
-
-Copy the nginx config and reload:
-
-```bash
-sudo cp nginx.conf /etc/nginx/sites-available/stacktracer-django
-sudo ln -s /etc/nginx/sites-available/stacktracer-django \
-           /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo nginx -s reload
-```
-
-The nginx config proxies port 80 → gunicorn at 127.0.0.1:8000 and adds
-`X-Request-ID` so nginx and uvicorn traces share the same trace ID.
-
-### Terminal 3 — StackTracer REPL
-
-```bash
-python -m stacktracer.repl --config stacktracer.yaml
-```
-
-Send a request in a fourth terminal:
-
-```bash
-curl http://localhost/
-curl http://localhost/async/
-curl http://localhost/slow/       # simulates a blocking call
-curl http://localhost/db/         # hits the database
-```
-
-Watch events appear in the REPL as requests arrive.
-
----
-
-## nginx configuration
-
-Save as `nginx.conf` in this directory. The key directives:
-
-```nginx
-upstream django {
-    server 127.0.0.1:8000;
-    keepalive 32;              # reuse connections to gunicorn
-}
-
-server {
-    listen 80;
-    server_name localhost;
-
-    # Generate a unique request ID and forward it.
-    # StackTracer reads X-Request-ID to correlate nginx and uvicorn traces.
-    add_header X-Request-ID $request_id always;
-    proxy_set_header X-Request-ID $request_id;
-
-    location /static/ {
-        alias /path/to/django_app/staticfiles/;
-        expires 1d;
-    }
-
-    location / {
-        proxy_pass http://django;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Connection "";   # keepalive to gunicorn
-
-        # Timeouts
-        proxy_connect_timeout 5s;
-        proxy_send_timeout    60s;
-        proxy_read_timeout    60s;
-    }
-}
-```
-or
-```
-#user  nobody;
-worker_processes  1;
-
-#error_log  logs/error.log;
-#error_log  logs/error.log  notice;
-#error_log  logs/error.log  info;
-
-#pid        logs/nginx.pid;
-daemon off;
-events {
-    worker_connections  1024;
-}
-
-http {
-    include       mime.types;
-    default_type  application/octet-stream;
-
-    # ── StackTracer JSON log format ──────────────────────────────────
-    # Parsed by nginx_probe._NginxLogMode._line()
-    # request_id is the correlation key that ties nginx events to
-    # django/uvicorn events under the same trace_id.
-    log_format stacktracer escape=json '{'
-        '"remote_addr":"$remote_addr",'
-        '"remote_port":"$remote_port",'
-        '"request_id":"$request_id",'
-        '"method":"$request_method",'
-        '"uri":"$request_uri",'
-        '"status":"$status",'
-        '"bytes_sent":"$bytes_sent",'
-        '"request_time":"$request_time",'
-        '"upstream_response_time":"$upstream_response_time",'
-        '"upstream_addr":"$upstream_addr"'
-        '}';
-
-    access_log  /mnt/c/Users/humbulani/nginx-1.24.0/logs/access.log  stacktracer;
-    # error_log  /mnt/c/Users/humbulani/nginx-1.24.0/logs/error.log;
-    sendfile        on;
-    keepalive_timeout  65;
-
-    server {
-        listen       80;
-        server_name  localhost;
-
-        location / {
-            # Forward request_id to gunicorn/uvicorn/django.
-            # uvicorn_probe reads X-Request-ID from ASGI scope headers.
-            # Django middleware reads HTTP_X_REQUEST_ID from request.META.
-            # All three services share one trace_id for the same request.
-            proxy_set_header X-Request-ID  $request_id;
-            proxy_set_header Host          $host;
-            proxy_set_header X-Real-IP     $remote_addr;
-            proxy_pass http://127.0.0.1:8000;
-        }
-
-        error_page   500 502 503 504  /50x.html;
-        location = /50x.html {
-            root   html;
-        }
-    }
-}
-
-```
-
-If you have eBPF access (Linux, root), enable the nginx probe in
-`stacktracer.yaml` to get sub-millisecond nginx lifecycle events.
-Without it, the nginx probe falls back to log parsing automatically.
-
----
-
-## gunicorn configuration
-
-For production use a `gunicorn.conf.py` instead of CLI flags:
+`TracerMiddleware` **must be the first entry** in `MIDDLEWARE`. Without this,
+`get_trace_id()` returns `None` in all probes — events are silently dropped.
 
 ```python
-# gunicorn.conf.py
-
-bind        = "127.0.0.1:8000"
-workers     = 2                              # start with 2 × CPU cores
-worker_class = "uvicorn.workers.UvicornWorker"
-timeout     = 30
-keepalive   = 5
-accesslog   = "-"
-errorlog    = "-"
-loglevel    = "info"
-
-# Notify StackTracer on each new worker
-def post_fork(server, worker):
-    # Re-bind the StackTracer engine in the new worker process.
-    # Each worker runs its own event loop — the engine must be
-    # initialised after fork, not before.
-    import stacktracer
-    stacktracer.init(config="stacktracer.yaml")
+MIDDLEWARE = [
+    "stacktracer.probes.django_probe.TracerMiddleware",  # MUST be first
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    ...
+]
 ```
 
-Run with:
+---
+
+## apps.py — one init() per process
+
+```python
+# worker/apps.py
+from django.apps import AppConfig
+
+class WorkerConfig(AppConfig):
+    name = "worker"
+
+    def ready(self):
+        import stacktracer
+        stacktracer.init(debug=True)
+```
+
+`AppConfig.ready()` runs once per process after Django is fully loaded.
+This is the only place `stacktracer.init()` is called for the gunicorn worker.
+Never call `init()` at module level or in `settings.py`.
+
+---
+
+## stacktracer.yaml
+
+```yaml
+probes:
+  - django
+  - asyncio
+  - gunicorn
+  - uvicorn
+  - redis
+
+observe:
+  modules:
+    - worker.views
+```
+
+---
+
+## TracedRedis — subclass pattern
+
+`redis_probe.py` in the app's `probes/` directory uses subclassing, not composition.
+Composition breaks because `__getattr__` returns bound methods of the inner object,
+so `r.get()` never reaches the wrapper's `execute_command()`.
+
+```python
+# probes/redis_probe.py
+import redis
+from stacktracer.core.event_schema import NormalizedEvent
+from stacktracer.context.vars import get_trace_id
+from stacktracer.sdk.emitter import emit
+import time
+
+class TracedRedis(redis.Redis):
+    def execute_command(self, *args, **options):
+        trace_id = get_trace_id()
+        command  = args[0] if args else "UNKNOWN"
+        key      = str(args[1])[:100] if len(args) > 1 else ""
+        t0 = time.perf_counter()
+        try:
+            result = super().execute_command(*args, **options)
+        except Exception as exc:
+            duration_ns = int((time.perf_counter() - t0) * 1e9)
+            if trace_id:
+                emit(NormalizedEvent.now(
+                    probe="redis.command.execute", trace_id=trace_id,
+                    service="redis", name=command,
+                    duration_ns=duration_ns, key=key,
+                    error=str(exc)[:200], success=False,
+                ))
+            raise
+        else:
+            duration_ns = int((time.perf_counter() - t0) * 1e9)
+            if trace_id:
+                emit(NormalizedEvent.now(
+                    probe="redis.command.execute", trace_id=trace_id,
+                    service="redis", name=command,
+                    duration_ns=duration_ns, key=key,
+                    success=True, result_type=type(result).__name__,
+                ))
+            return result
+
+# use in views.py:
+# from probes.redis_probe import TracedRedis   ← absolute import
+# r = TracedRedis(host="localhost", port=6379, db=0)
+```
+
+Import as an **absolute** import in views — relative imports (`from ..probes`) fail
+because gunicorn adds `applications/django/` to `sys.path`, making `worker` and
+`probes` top-level packages with no shared parent.
+
+---
+
+## nginx setup
+
+nginx sits in front of gunicorn and is observed via log tail (default), Lua UDP,
+or kprobe — configured in `stacktracer.yaml` under the `nginx` key.
+
+### Log tail (zero-privilege fallback)
+
+The simplest mode. nginx writes a JSON access log. StackTracer tails it.
+
+**nginx.conf** — add a JSON log format and point the access log to it:
+
+```nginx
+http {
+    log_format stacktracer escape=json
+        '{"remote_addr":"$remote_addr",'
+        '"request_time":$request_time,'
+        '"upstream_response_time":"$upstream_response_time",'
+        '"request":"$request",'
+        '"status":$status,'
+        '"body_bytes_sent":$body_bytes_sent,'
+        '"request_id":"$http_x_request_id"}';
+
+    server {
+        listen 80;
+
+        access_log /var/log/nginx/access.log stacktracer;
+
+        location / {
+            proxy_pass http://127.0.0.1:8000;
+            proxy_set_header X-Request-Id $request_id;
+        }
+    }
+}
+```
+
+**stacktracer.yaml** — configure the log path and mode:
+
+```yaml
+nginx:
+  mode: log
+  log_path: /var/log/nginx/access.log
+```
+
+On Windows/WSL2 where nginx writes to a custom path:
+
+```yaml
+nginx:
+  mode: log
+  log_path: /mnt/c/Users/<you>/nginx-1.24.0/logs/access.log
+```
+
+### Lua UDP mode (full HTTP semantics)
+
+Requires `ngx_lua` / OpenResty. nginx sends a UDP packet per request to
+StackTracer's receiver on port 9119. Gives URI, method, status, and upstream
+timing without log file parsing.
+
+```nginx
+log_by_lua_block {
+    local cjson  = require "cjson"
+    local socket = ngx.socket.udp()
+    socket:setpeername("127.0.0.1", 9119)
+    socket:send(cjson.encode({
+        uri           = ngx.var.uri,
+        method        = ngx.req.get_method(),
+        status        = ngx.status,
+        duration_ms   = ngx.now() * 1000 - ngx.req.start_time() * 1000,
+        upstream_ms   = tonumber(ngx.var.upstream_response_time) or -1,
+        remote_addr   = ngx.var.remote_addr,
+        remote_port   = ngx.var.remote_port,
+        request_id    = ngx.var.request_id,
+    }))
+    socket:close()
+}
+```
+
+```yaml
+nginx:
+  mode: lua
+  lua_host: "127.0.0.1"
+  lua_port: 9119
+```
+
+### kprobe + Lua combined (full kernel + HTTP)
+
+Requires root and Linux. kprobe captures `accept4`, `epoll_wait`, `sendmsg`,
+`recvmsg` — kernel timing, fd numbers, client IP/port. When both kprobe and Lua
+fire for the same connection, they are merged into a single
+`nginx.request.enriched` event via `(client_ip, client_port)` correlation.
+
+```yaml
+nginx:
+  mode: combined
+  lua_host: "127.0.0.1"
+  lua_port: 9119
+```
+
+### Graph nodes produced
+
+```
+nginx::master
+nginx::worker-{pid}      ← one per worker process discovered at probe start
+nginx::{uri}             ← one per unique URI pattern after normalisation
+```
+
+### Structural edges
+
+```
+nginx::master  ──spawned──►  nginx::worker-{pid}
+nginx::worker-{pid}  ──handled──►  nginx::{uri}
+```
+
+These edges are drawn by `_add_structural_edges` in `runtime_graph.py` when
+`nginx.worker.discovered` and `nginx.request.complete` / `nginx.request.enriched`
+events arrive. The nginx probe parks `nginx.main.start` and
+`nginx.worker.discovered` events in `_pre_fork_events` at `start()` time and
+drains them into the worker's engine via `_register_post_init_callback` after
+`init()` completes — same pattern as gunicorn_probe and celery_probe.
+
+---
+
+## Run
 
 ```bash
-gunicorn -c gunicorn.conf.py config.asgi:application
+cd /path/to/stack-tracer/applications/django
+
+export DJANGO_SETTINGS_MODULE=config.settings
+
+gunicorn -c gunicorn.conf.py config.asgi:application \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 127.0.0.1:8000 \
+  --timeout 4000000 \
+  --workers 1
+```
+
+For multiple workers (graph shows separate `UvicornWorker-{pid}` nodes):
+
+```bash
+  --workers 3
+```
+
+With 3 workers but low request rate the OS routes to the same worker. Use
+`--delay 0` in the load test scripts to saturate all workers.
+
+---
+
+## REPL
+
+```bash
+python -m stacktracer.scripts.repl
+```
+
+```
+SHOW nodes
+SHOW edges
+SHOW events LIMIT 20
+\stitch <trace_id>
 ```
 
 ---
 
-## StackTracer REPL queries to try
+## Load testing
 
-After sending a few requests, open the REPL and run:
+```bash
+# steady concurrent load
+python load_test.py --requests 200 --workers 20 --delay 0
 
+# burst waves — watch graph between waves
+python burst_test.py --waves 6 --burst 100 --workers 15 --quiet 5
 ```
-# What is the slowest node in the system?
-HOTSPOT TOP 10
-
-# Which function is responsible for the most time in Django?
-BLAME WHERE system = "django"
-
-# Show latency breakdown across all layers
-SHOW latency WHERE system = "http"
-
-# Did the last deployment introduce any new calls?
-DIFF SINCE deployment
-
-# Run all causal rules — detect blocking calls and loop starvation
-CAUSAL
-
-# Trace a specific request end to end
-SHOW path WHERE trace_id = "<paste a trace ID from HOTSPOT output>"
-```
-
----
-
-## What to look for
-
-**Normal behaviour:**
-- `django.view.enter` → `django.view.exit` duration is your view time
-- `uvicorn.h11.cycle` duration ≈ `django.middleware` duration + small overhead
-- `asyncio.loop.tick` avg_duration_ns < 1ms
-
-**Signs of trouble:**
-- `asyncio.loop.tick` avg_duration_ns > 10ms → blocking call on the event loop
-- `uvicorn.h11.cycle` >> `django.view` duration → middleware overhead
-- `CAUSAL` fires `loop_starvation` rule → check the `BLAME` output for the caller
-- `DIFF SINCE deployment` shows new edges → new call introduced by last deploy

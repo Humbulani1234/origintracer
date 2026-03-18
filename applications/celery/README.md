@@ -1,212 +1,283 @@
-# StackTracer — Celery Demo Application
+# StackTracer — Celery Application
 
-A minimal Celery application demonstrating how to write custom probes
-and rules that extend StackTracer beyond the built-in probe set.
+Traces the cross-process path: Django view → Redis (task queue) → Celery worker.
+The trace_id travels inside task kwargs (`_trace_id`) across the Redis boundary,
+allowing `\stitch` in the REPL to join both sides into one timeline.
 
 ---
 
-## What this demonstrates
-
-This application shows the full custom probe and rule workflow:
+## Process model
 
 ```
-1. Write a custom probe    stacktracer/probes/celery_probe.py
-2. Register probe types    stacktracer/probes/celery_types.py
-3. Write causal rules      stacktracer/rules/celery_rules.py
-4. Configure               stacktracer.yaml
-5. Run and query           REPL
+Terminal 1: gunicorn → forks → UvicornWorker → runs Django
+Terminal 2: celery main process → forks → ForkPoolWorker
+Terminal 3: Redis server (standalone TCP — no StackTracer involvement)
 ```
 
-After sending tasks to Celery, StackTracer fires these events:
+Gunicorn and Celery fork independently. They have no parent-child relationship.
+Django's `.delay()` writes a JSON message to Redis. Celery main polls Redis
+and hands it to ForkPoolWorker. The two engines (one per process group) produce
+separate graphs that `\stitch` merges at query time.
+
+---
+
+## Directory layout
 
 ```
-celery.task.start          task execution started in worker
-celery.task.end            task completed successfully
-celery.task.retry          task scheduled for retry
-celery.task.failure        task raised unhandled exception
-celery.beat.tick           beat scheduler fired a periodic task
-```
-
-And the causal rule detects:
-
-```
-celery_sync_db_call        worker making synchronous database calls
-                           blocking the Celery thread pool
-celery_retry_amplification downstream failures causing cascading retries
-                           across many tasks
-```
-
-Query the graph after sending tasks:
-
-```
-SHOW latency WHERE system = "worker"
-BLAME WHERE system = "worker"
-CAUSAL WHERE tags = "celery"
-HOTSPOT TOP 10
-DIFF SINCE deployment
+applications/celery/
+├── config/
+│   ├── __init__.py          ← exports celery_app
+│   ├── settings.py          ← TracerMiddleware MUST be first in MIDDLEWARE
+│   ├── celery.py            ← Celery app — NO stacktracer.init() here
+│   ├── asgi.py
+│   └── urls.py
+├── worker/                  ← Django app directory (not a celery module)
+│   ├── __init__.py          ← empty
+│   ├── apps.py              ← AppConfig.ready() — init() for gunicorn only
+│   ├── views.py
+│   ├── tasks.py
+│   └── urls.py
+├── probes/                  ← user extension probes (absolute imports)
+│   ├── __init__.py
+│   ├── celery_probe.py      ← CeleryProbe — handles fork + task lifecycle
+│   └── redis_probe.py       ← TracedRedis subclass
+├── stacktracer.yaml
+└── gunicorn.conf.py
 ```
 
 ---
 
 ## Prerequisites
 
-```
-Python 3.11+
-Redis (used as Celery broker)
-pip install stacktracer celery redis django
-```
-
-Start Redis:
-
 ```bash
-# macOS
-brew install redis && brew services start redis
-
-# Linux
-sudo apt install redis-server && sudo systemctl start redis
+pip install stacktracer gunicorn uvicorn django celery redis
+pip install -e /path/to/stack-tracer
 ```
 
 ---
 
-## Project layout
+## One init() per process — the critical rule
 
-```
-celery_app/
-├── README.md
-├── stacktracer.yaml              ← declares custom probe discovery
-├── requirements.txt
-├── myworker/
-│   ├── celery.py                 ← Celery app instance
-│   ├── tasks.py                  ← demo tasks (good, slow, failing)
-│   └── models.py                 ← minimal model for DB probe demo
-└── stacktracer/
-    ├── probes/
-    │   ├── celery_types.py       ← probe type constants (registered)
-    │   └── celery_probe.py       ← custom probe
-    └── rules/
-        └── celery_rules.py       ← custom causal rules
-```
+| Process | Where init() is called |
+|---------|----------------------|
+| Gunicorn worker | `worker/apps.py` — `AppConfig.ready()` |
+| Celery ForkPoolWorker | `celery_probe._on_worker_fork` — after fork via `worker_process_init` signal |
+| `config/celery.py` | **never** — causes duplicate engine bug |
+| `worker/__init__.py` | **never** |
 
-The `stacktracer/probes/` and `stacktracer/rules/` directories are
-auto-discovered by StackTracer. No YAML entry required for files
-following the `*_probe.py` and `*_rules.py` naming convention.
+**Duplicate init() symptom:** `Local query server failed to start: [Errno 98] Address already in use`.
+Two engines in the same process — REPL connects to engine 1 (empty), events land in engine 2.
 
 ---
 
-## Step 1 — Install dependencies
-
-```bash
-cd applications/celery_app
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
----
-
-## Step 2 — Start the Celery worker
-
-```bash
-celery -A myworker worker --loglevel=info --concurrency=2
-```
-
-`--concurrency=2` creates two worker processes.
-StackTracer initialises in each worker after fork.
-
-For beat (periodic tasks):
-
-```bash
-celery -A myworker beat --loglevel=info
-```
-
----
-
-## Step 3 — Open the StackTracer REPL
-
-```bash
-python -m stacktracer.repl --config stacktracer.yaml
-```
-
----
-
-## Step 4 — Send tasks
-
-In a separate terminal:
-
-```bash
-python send_tasks.py
-```
-
-Or from a Python shell:
+## config/celery.py
 
 ```python
-from myworker.tasks import process_report, slow_task, failing_task
+# config/celery.py
+import os
+from celery import Celery
 
-# Normal task — completes cleanly
-process_report.delay(report_id=1)
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+app = Celery("config")
+app.config_from_object("django.conf:settings", namespace="CELERY")
+app.autodiscover_tasks()
+# NO stacktracer.init() here
+```
 
-# Slow task — makes a synchronous database call
-# triggers celery_sync_db_call causal rule
-slow_task.delay(item_id=42)
-
-# Failing task — retries three times then fails
-# triggers celery_retry_amplification rule if enough tasks fail
-failing_task.delay(should_fail=True)
+```python
+# config/__init__.py
+from .celery import app as celery_app
+__all__ = ["celery_app"]
 ```
 
 ---
 
-## REPL queries to try
+## worker/apps.py — init() for gunicorn only
 
-```
-# Which tasks are taking the most time?
-HOTSPOT TOP 10
+```python
+from django.apps import AppConfig
 
-# Who is calling the slow postgres node?
-BLAME WHERE system = "worker"
+class WorkerConfig(AppConfig):
+    name = "worker"
 
-# Run custom celery causal rules
-CAUSAL WHERE tags = "celery"
-
-# Was a new synchronous call introduced recently?
-DIFF SINCE deployment
-
-# Full latency breakdown of the worker layer
-SHOW latency WHERE system = "worker"
+    def ready(self):
+        import stacktracer
+        stacktracer.init(debug=True)
+        # Celery worker gets its own init() inside celery_probe._on_worker_fork
 ```
 
 ---
 
-## Understanding the custom probe
+## stacktracer.yaml
 
-`stacktracer/probes/celery_probe.py` hooks into Celery's signal system:
+```yaml
+probes:
+  - django
+  - asyncio
+  - gunicorn
+  - uvicorn
+  - celery
+  - redis
+```
+
+---
+
+## celery_probe.py — key design decisions
+
+**Pre-fork event parking** — same pattern as gunicorn_probe. `_on_main_ready`
+(connected to `celeryd_after_setup`) emits `celery.main.start` into
+`_pre_fork_events` before fork. `_on_worker_fork` calls `stacktracer.init()`
+then `_drain_pre_fork_events()` so the worker's engine gets the MainProcess node.
+
+**`_task_state` dict** — single dict keyed by task request id. Not two separate
+dicts, not stored on `task.request`.
+
+**`_on_task_failure` uses `.get()`** — never owns token reset.
+**`_on_task_end` is sole owner of `.pop()` and `reset_trace()`** with try/except guard.
+
+**No duplicate signal connections** — `_on_worker_fork` defined once as class method.
+Defining it twice causes the second to shadow the first silently.
+
+**Signals connected:**
+`celeryd_after_setup`, `task_prerun`, `task_postrun`,
+`task_retry`, `task_failure`, `worker_process_init`, `worker_process_shutdown`
+
+---
+
+## Dispatch helper in views.py
+
+The view emits a `celery.task.dispatch` event with `service="celery"` so the
+node name is `celery::task_name`, not `django::task_name`. The edge then reads:
 
 ```
-task_prerun  → emits celery.task.start
-task_postrun → emits celery.task.end
-task_retry   → emits celery.task.retry
-task_failure → emits celery.task.failure
+django::/tasks/report/1/  ──dispatched──►  celery::myapp.tasks.process_report
 ```
 
-Celery signals are the right patching point — they are stable public API,
-fire reliably on every task lifecycle event, and do not require patching
-private internals. Compare with the asyncio probe which must patch
-`Task.__step` — a private method — because asyncio has no signal system.
+```python
+# worker/views.py
+from stacktracer.context.vars import get_trace_id
+from stacktracer.sdk.emitter import emit
+from stacktracer.core.event_schema import NormalizedEvent
 
-## Understanding the custom rules
+def _dispatch(task_fn, *args, **kwargs):
+    trace_id = get_trace_id()
+    task_fn.delay(*args, _trace_id=trace_id, **kwargs)
+    if trace_id:
+        emit(NormalizedEvent.now(
+            probe="celery.task.dispatch",
+            trace_id=trace_id,
+            service="celery",          # ← not "django"
+            name=task_fn.name,
+        ))
+```
 
-`stacktracer/rules/celery_rules.py` defines two predicates:
+---
 
-**`celery_sync_db_call`**
-Traverses the runtime graph looking for celery nodes with a direct
-edge to a postgres node where avg_duration_ns > 50ms. This pattern
-means a Celery task is blocking its thread on a synchronous database
-call, reducing worker pool throughput.
+## Run
 
-**`celery_retry_amplification`**
-Looks for celery nodes where the retry count in the graph significantly
-exceeds the call count — indicating tasks are being retried many times.
-This often means a downstream failure (database down, API timeout) is
-amplified into many retried tasks consuming the worker pool.
+**Terminal 1 — gunicorn:**
 
-Both rules fire via `CAUSAL WHERE tags = "celery"` in the REPL.
+```bash
+cd /path/to/stack-tracer/applications/celery
+
+export DJANGO_SETTINGS_MODULE=config.settings
+
+gunicorn -c gunicorn.conf.py config.asgi:application \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 127.0.0.1:8000 \
+  --timeout 4000000 \
+  --workers 1
+```
+
+**Terminal 2 — celery worker:**
+
+```bash
+cd /path/to/stack-tracer/applications/celery
+
+DJANGO_SETTINGS_MODULE=config.settings \
+STACKTRACER_CONFIG=/path/to/stack-tracer/applications/celery/stacktracer.yaml \
+celery -A config worker --loglevel=info --concurrency=1
+```
+
+`STACKTRACER_CONFIG` must be set explicitly for Celery — the cwd-upward search
+does not always find the yaml from within the Celery process.
+
+---
+
+## REPL
+
+Two sockets are created — one per process group:
+
+```bash
+ls /tmp/stacktracer-*.sock
+# /tmp/stacktracer-24861.sock   ← gunicorn worker
+# /tmp/stacktracer-25103.sock   ← celery ForkPoolWorker
+```
+
+Open two REPL sessions or use `\stitch`:
+
+```bash
+python -m stacktracer.scripts.repl
+```
+
+```
+# On gunicorn worker socket:
+SHOW nodes        ← gunicorn/uvicorn/django/redis nodes
+SHOW edges        ← gunicorn::master ──spawned──► gunicorn::UvicornWorker-{pid}
+
+# On celery worker socket:
+SHOW nodes        ← celery::MainProcess, ForkPoolWorker, task nodes
+SHOW edges        ← MainProcess ──spawned──► ForkPoolWorker ──ran──► task
+
+# Cross-process — find trace_id from SHOW events, then:
+\stitch <trace_id>
+```
+
+**`\stitch` takes a trace_id, not a node name.** Get a real trace_id first:
+
+```
+SHOW events LIMIT 5
+```
+
+Copy a `trace_id` value from the output, then pass it to `\stitch`.
+
+---
+
+## Expected graph — celery worker
+
+```
+celery::MainProcess  ──spawned──►  celery::ForkPoolWorker
+celery::ForkPoolWorker  ──ran──►   celery::myapp.tasks.process_report
+```
+
+## Expected graph — gunicorn worker (cross-process edge)
+
+```
+django::/tasks/report/1/  ──dispatched──►  celery::myapp.tasks.process_report
+```
+
+---
+
+## Known issues encountered
+
+**`node.name` AttributeError in `_add_structural_edges`** — `GraphNode` has no
+`name` attribute. Use `nid.split("::", 1)[1]` to extract the name from the node id.
+Exceptions in `_add_structural_edges` are swallowed by a broad `except` in the
+engine — add `logger.warning` or `logger.exception` there to surface them.
+
+**Duplicate `_on_worker_fork`** — defining the method twice in the class body
+causes the second definition to shadow the first. Only one is registered as a
+signal handler. Remove the duplicate.
+
+**`worker/__init__.py` importing celery app** — causes `stacktracer.init()` to
+run at module import time in the Celery process before `worker_process_init` fires.
+Keep `worker/__init__.py` empty.
+
+**`_task_state` KeyError in `_on_task_failure`** — use `.get()` not direct key
+access in failure handler since `task_prerun` may not have fired for all failure paths.
+
+**Stale `__pycache__`** — clear after editing probe files:
+
+```bash
+find applications/celery -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
+```
