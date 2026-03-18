@@ -770,10 +770,11 @@ def cmd_stitch(trace_id: str) -> None:
         )
         try:
             result = query(sock, f"TRACE {trace_id}")
-            stages = result.get("data", [])
+            payload = result.get("data", {})          # the inner dict with verb/trace_id/stages/data
+            stages  = payload.get("data", [])         # the actual list of stage dicts
             if isinstance(stages, list) and stages:
                 for s in stages:
-                    s["_pid"] = pid
+                    s["_pid"]    = pid
                     s["_socket"] = sock
                 all_stages.extend(stages)
                 found_in.append(pid)

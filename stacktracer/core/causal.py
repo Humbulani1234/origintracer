@@ -257,6 +257,8 @@ def _asyncio_loop_starvation(
     loop — CPU work, a missing await, or a synchronous call on the hot path.
     Threshold: >10ms average per tick.
     """
+    import pdb
+    pdb.set_trace()
     stalled = [
         n
         for n in graph.all_nodes()

@@ -164,6 +164,10 @@ class Engine:
         self, tags: Optional[List[str]] = None
     ) -> List[CausalMatch]:
         """Run all registered causal rules against the current graph."""
+
+        # import pdb
+        # pdb.set_trace()
+
         return self.causal.evaluate(
             self.graph, self.temporal, tags=tags
         )
@@ -192,6 +196,8 @@ class Engine:
         annotated with inter-stage durations.
         Uses ProbeTypes registry — no manual probe list to maintain.
         """
+        # import pdb
+        # pdb.set_trace()
         from .event_schema import ProbeTypes
 
         with self._event_log_lock:
@@ -206,7 +212,7 @@ class Engine:
         # All registered probes are meaningful — infrastructure probes
         # (gunicorn.worker.fork etc.) have no duration so they show as gaps
         # which is correct — they mark topology events on the critical path.
-        registered = ProbeTypes.all_probes()
+        registered = list(ProbeTypes.all().keys())
         filtered = [e for e in events if e.probe in registered]
 
         path = []

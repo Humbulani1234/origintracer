@@ -90,7 +90,7 @@ class SlowView(View):
         # This blocks the event loop for 200ms.
         # Compare with /async/ which uses await asyncio.sleep() instead.
         time.sleep(
-            0.2
+            20
         )  # ← intentional blocking call for demonstration
 
         return JsonResponse(

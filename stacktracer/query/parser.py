@@ -716,7 +716,7 @@ def _exec_causal(query: ParsedQuery, engine: Any) -> Dict:
             t.strip()
             for t in str(query.filters["tags"]).split(",")
         ]
-
+    
     matches = engine.evaluate(tags=tags)
     print(">>>>MATCHES RULES:", matches)
     return {
