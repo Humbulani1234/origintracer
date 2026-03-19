@@ -771,7 +771,9 @@ def init(
     )
 
     _init_local_server(_engine)
+    
     _active_probes = _init_probes(_config, _engine, app_root)
+    _engine.probes = _active_probes
 
     if repository is None:
         _init_uploader(_config, _engine)

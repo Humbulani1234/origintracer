@@ -523,9 +523,7 @@ def _show_active(engine: Any) -> Dict:
 def _show_probes(engine: Any) -> Dict:
     """List registered probe adapters by name."""
     probes = []
-    probe_mgr = getattr(engine, "probes", None) or getattr(
-        engine, "_probes", None
-    )
+    probe_mgr = getattr(engine, "probes", None)
     if probe_mgr:
         probes = (
             list(probe_mgr.keys())
