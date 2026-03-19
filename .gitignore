@@ -41,3 +41,14 @@ Thumbs.db
 # StackTracer specific
 *.db
 *.sqlite3
+
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+
+# vite cache
+.vite/
+.cache/
