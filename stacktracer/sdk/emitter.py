@@ -30,7 +30,7 @@ logger = logging.getLogger("stacktracer.emitter")
 # ------------------------------------------------------------------ #
 
 
-class _EventBuffer:
+class _DrainEventBuffer:
     """
     Lock-free-ish bounded ring buffer for in-process use.
     Events are drained by the Engine on each call to process().
@@ -72,7 +72,7 @@ class _DrainThread(threading.Thread):
     """
 
     def __init__(
-        self, buffer: _EventBuffer, interval_s: float = 0.05
+        self, buffer: _DrainEventBuffer, interval_s: float = 0.05
     ) -> None:
         super().__init__(daemon=True, name="stacktracer-drain")
         self._buffer = buffer
@@ -116,7 +116,7 @@ class _DrainThread(threading.Thread):
 # ------------------------------------------------------------------ #
 
 _engine = None  # Set by bind_engine()
-_buffer = _EventBuffer()
+_buffer = _DrainEventBuffer()
 _direct_mode = (
     False  # True = emit directly into Engine (MVP default)
 )

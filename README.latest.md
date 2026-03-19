@@ -322,3 +322,74 @@ npm run dev      # http://localhost:5173
 Add the bridge to your stacktracer package (`stacktracer/bridge.py`) — a
 20-line FastAPI app that wraps the Unix socket queries as HTTP endpoints.
 See `stacktracer-ui/src/api/client.js` for the full bridge spec.
+
+---
+
+## Development
+ 
+### Running tests
+ 
+```bash
+# from the repo root
+pip install -e ".[dev]"
+pytest stacktracer/tests/ -x -q
+```
+ 
+`-x` stops on the first failure. Remove it to run the full suite.
+ 
+Run a specific test file:
+ 
+```bash
+pytest stacktracer/tests/test_core_causal.py -x -q
+```
+ 
+Run tests matching a name pattern:
+ 
+```bash
+pytest stacktracer/tests/ -k "test_n_plus_one" -v
+```
+ 
+### Code formatting
+ 
+```bash
+black stacktracer/          # format in place
+black --check stacktracer/  # check only, no changes (what CI runs)
+ruff check stacktracer/     # lint
+ruff check --fix stacktracer/  # lint + auto-fix
+```
+ 
+### Pre-commit hooks (local CI)
+ 
+Install once after cloning:
+ 
+```bash
+pip install pre-commit
+pre-commit install
+```
+ 
+After that, every `git commit` automatically runs black, ruff, and pytest.
+If any check fails the commit is aborted. Fix the issues and commit again.
+ 
+Run hooks manually without committing:
+ 
+```bash
+pre-commit run --all-files
+```
+ 
+### GitHub Actions (remote CI)
+ 
+CI runs automatically on every push and pull request to `main`.
+Two jobs run in parallel:
+ 
+- `lint` — black check + ruff on Python 3.12
+- `test` — pytest on Python 3.11 and 3.12
+ 
+The workflow file is at `.github/workflows/ci.yml`.
+No secrets or configuration needed — it installs from `pyproject.toml [dev]`
+and runs the same pytest command as local.
+ 
+To see CI status locally before pushing:
+ 
+```bash
+pre-commit run --all-files   # same checks, no network needed
+```

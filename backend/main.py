@@ -53,7 +53,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-import logging
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -304,14 +304,7 @@ def require_graph(customer_id: str) -> Any:
     return graph
 
 
-def _graph_or_engine(graph_or_engine: Any) -> Any:
-    """
-    Query executor accepts either an Engine or a bare RuntimeGraph.
-    On the backend we only have a graph — this shim makes both work.
-    """
-    if hasattr(graph_or_engine, "graph"):
-        return graph_or_engine.graph  # Engine instance
-    return graph_or_engine  # bare RuntimeGraph
+
 
 
 # ====================================================================== #

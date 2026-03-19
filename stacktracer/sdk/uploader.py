@@ -15,13 +15,7 @@ Two independent flush loops run on a single daemon thread:
                          carries the full RuntimeGraph as msgpack bytes
                          FastAPI deserialises this and serves all graph queries
 
-Design principles:
-    - Daemon thread — dies with the process, no join required
-    - Silent on all errors — must never disrupt the host application
-    - insert_event() satisfies BaseRepository interface so Engine.process()
-      can call it directly without knowing about the upload mechanism
-    - bind_engine() must be called after start() so snapshots have a graph
-    - stop() performs one final flush of both events and snapshot before exit
+
 """
 
 from __future__ import annotations
@@ -41,7 +35,7 @@ logger = logging.getLogger("stacktracer.uploader")
 # ====================================================================== #
 
 
-class _EventBuffer:
+class _UploaderEventBuffer:
     """
     Thread-safe bounded FIFO buffer of event dicts.
     Bounded at maxlen — oldest events are silently dropped when full.
@@ -175,7 +169,7 @@ class Uploader:
         self._snapshot_interval = snapshot_interval
         self._max_batch = max_batch_size
 
-        self._event_buffer = _EventBuffer()
+        self._event_buffer = _UploaderEventBuffer()
         self._snapshot_slot = _SnapshotSlot()
 
         self._engine: Optional[Any] = (
