@@ -1,6 +1,6 @@
 # StackTracer
 
-**Runtime observability for Python async services.**
+**Live causal graph for Python async services.**
 
 StackTracer instruments your production stack — nginx, gunicorn, uvicorn, Django, asyncio, Celery — to capture *why* execution flowed the way it did, not just that it was slow. It builds a live graph of your service's execution structure, detects causal patterns, and answers questions like `BLAME WHERE system = "export"` or `DIFF SINCE deployment` against the running process.
 
@@ -40,106 +40,125 @@ asyncio_probe.py      ├── RuntimeGraph      ← live call graph
 
 **The invariant that makes this extensible:** probes only call `emit()`. The engine only receives `NormalizedEvent`. Neither side knows about the other's internals. Swap the engine, mock it for tests, or run it remotely — probes are unaffected.
 
+
 ---
 
-## Quick start
-
-### Install
+## Installation
 
 ```bash
 pip install stacktracer
+
+# or editable from source:
+pip install -e /path/to/stack-tracer
 ```
 
-### Django (recommended: full production stack)
+---
+
+## Quick start — Django + gunicorn
+
+**settings.py** — middleware must be first:
 
 ```python
-# settings.py
-import stacktracer
-
-stacktracer.init(config="stacktracer.yaml")
-
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware",
+    "stacktracer.probes.django_probe.TracerMiddleware",  # MUST be first
+    "django.middleware.security.SecurityMiddleware",
     ...
 ]
 ```
 
+**apps.py** — one init() per process, after Django is fully loaded:
+
+```python
+from django.apps import AppConfig
+
+class MyAppConfig(AppConfig):
+    name = "myapp"
+
+    def ready(self):
+        import stacktracer
+        stacktracer.init(debug=True)
+```
+
+**stacktracer.yaml** — place in your project root:
+
 ```yaml
-# stacktracer.yaml  — lives in your project root, not in the package
 probes:
   - django
   - asyncio
-  - uvicorn
   - gunicorn
+  - uvicorn
   - nginx
-
-semantic:
-  - label: api
-    description: Public API surface
-    services: [django]
-    node_patterns: ["django::.*api.*"]
+  - redis
 ```
 
-Run with gunicorn + uvicorn workers (the correct production setup):
+**Run:**
 
 ```bash
-gunicorn config.asgi:application \
-    --workers 2 \
-    --worker-class uvicorn.workers.UvicornWorker \
-    --bind 127.0.0.1:8000
+gunicorn -c gunicorn.conf.py config.asgi:application \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 127.0.0.1:8000 --workers 1
 ```
 
-### FastAPI
+---
+
+## Quick start — Celery
+
+Celery forks independently from gunicorn. Each process group gets its own engine.
+
+**config/celery.py** — no `init()` here:
 
 ```python
-# main.py
-import stacktracer
-stacktracer.init(config="stacktracer.yaml")
-# No Daphne needed. FastAPI runs on uvicorn directly.
-# gunicorn + UvicornWorker in production, same as Django.
+import os
+from celery import Celery
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+app = Celery("config")
+app.config_from_object("django.conf:settings", namespace="CELERY")
+app.autodiscover_tasks()
 ```
 
-### Mark a deployment
+The Celery worker calls `init()` inside `worker_process_init` — handled
+automatically by `CeleryProbe`. Add `celery` to your probes list and it works.
+
+**Run:**
 
 ```bash
-# From your CD pipeline — enables DIFF SINCE deployment in the REPL
-python -m stacktracer.cli mark-deployment "v1.2.3"
+DJANGO_SETTINGS_MODULE=config.settings \
+STACKTRACER_CONFIG=/path/to/your/stacktracer.yaml \
+celery -A config worker --loglevel=info --concurrency=1
 ```
+
+Set `STACKTRACER_CONFIG` explicitly for Celery — the cwd search is not reliable
+from within the Celery process.
 
 ---
 
-## The REPL
-
-The primary interface for querying the live runtime graph:
+## REPL
 
 ```bash
-python -m stacktracer.repl --config stacktracer.yaml
+python -m stacktracer.scripts.repl
 ```
 
 ```
+SHOW nodes
+SHOW edges
+SHOW events LIMIT 20
 SHOW latency WHERE service = "django"
-SHOW latency WHERE system = "api"       # semantic alias
-SHOW events WHERE probe = "asyncio.loop.select" LIMIT 50
-SHOW graph WHERE system = "api"
-
-TRACE <trace_id>                        # reconstruct critical path
-BLAME WHERE system = "api"              # find upstream callers
-HOTSPOT TOP 10                          # busiest nodes by call count
-
-DIFF SINCE deployment                   # what changed after last deploy
-DIFF SINCE 1714000000.0                 # what changed since timestamp
-
-CAUSAL                                  # run all causal rules
-CAUSAL WHERE tags = "celery,blocking"   # filtered rules
-
-\status    \probes    \rules    \help
+HOTSPOT TOP 10
+TRACE <trace_id>
+\stitch <trace_id>       ← merges timeline across all live process sockets
+STATUS
+CAUSAL
 ```
+
+`\stitch` takes a **trace_id** from `SHOW events`, not a node name. It queries
+all live Unix sockets and merges the event timeline across process boundaries
+into one chronological view with proportional duration bars.
 
 ---
 
-## Built-in probes
+## Probe reference
 
-All five observe real production stacks. Add them to `stacktracer.yaml`.
+ll five observe real production stacks. Add them to `stacktracer.yaml`.
 
 ### nginx
 
@@ -199,75 +218,8 @@ The `asyncio.loop.select` event tells you how long `epoll_wait()` blocked and wh
 
 ProbeTypes: `asyncio.loop.select`, `asyncio.loop.run_once`, `asyncio.loop.tick`, `asyncio.task.create`
 
----
 
-## Memory management
-
-### GraphNormalizer
-
-High-cardinality node names cause the graph to grow without bound. `/api/users/1234/profile` and `/api/users/5678/profile` are structurally the same endpoint — they should be one node, not ten thousand.
-
-`GraphNormalizer` collapses names before graph insertion using built-in patterns (UUIDs, numeric URL segments, memory addresses, SQL literal values) plus user-defined rules:
-
-```python
-# Automatically applied — no config needed
-/api/users/1234/profile     →   /api/users/{id}/profile
-550e8400-e29b-41d4-a716-... →   {uuid}
-SELECT * FROM t WHERE id=1  →   SELECT * FROM t WHERE id=?
-coro at 0x7f3a2b4c1d0       →   coro
-```
-
-Add your own patterns in `stacktracer.yaml`:
-
-```yaml
-normalize:
-  max_unique_names_per_service: 500
-  rules:
-    - service: django
-      pattern: "/api/items/(\\d+)/reviews/(\\d+)/"
-      replacement: "/api/items/{id}/reviews/{review_id}/"
-```
-
-### GraphCompactor
-
-Evicts cold nodes when the graph exceeds configurable limits. Runs in the background snapshot loop — never on the hot path.
-
-Two eviction passes per cycle:
-
-1. **TTL eviction** — nodes not seen in the last hour are candidates for removal
-2. **Cap eviction** — if node count still exceeds `max_nodes`, evict coldest (LRU) nodes until at `evict_to` count
-
-Hot nodes (high `call_count`) are protected from both passes. Evicting a node removes all incident edges atomically.
-
-Memory estimate: 5,000 nodes + 15,000 edges ≈ 5 MB. Without the compactor, a Django app with UUID-keyed endpoints can reach hundreds of thousands of nodes in a day.
-
-### Graph serialization
-
-Save and restore the full graph:
-
-```python
-from stacktracer.core.graph_serializer import MsgpackSerializer, ProtobufSerializer
-
-# MessagePack — simple, no compile step, 3× smaller than JSON
-s = MsgpackSerializer()
-s.save(graph, "graph.msgpack")
-graph = s.load("graph.msgpack")
-
-# Protobuf — smallest, strongly typed, best for network transport
-# Requires: pip install grpcio-tools && python -m grpc_tools.protoc ...
-s = ProtobufSerializer()
-data = s.serialize(graph)   # bytes, ~900KB for 5000-node graph
-```
-
-Size comparison for a 5,000-node graph:
-
-| Format | Size | Use case |
-|---|---|---|
-| JSON | ~6.2 MB | Debug and development |
-| MessagePack | ~1.8 MB | Local checkpoints, simple setup |
-| Protobuf | ~0.9 MB | Network transport, hosted backend |
-
----
+### Adding your own probe
 
 ## Extending with custom probes and rules
 
@@ -394,31 +346,122 @@ Unknown probe type strings are warned in debug logs but never rejected. The regi
 
 ---
 
-## Built-in causal rules
-
-| Rule | Detects | Confidence |
-|---|---|---|
-| `new_sync_call_after_deployment` | New `calls` edges that appeared after a deployment marker | 85% |
-| `asyncio_event_loop_starvation` | `asyncio.loop.run_once` duration >> `asyncio.loop.select` duration — blocking call on event loop | 80% |
-| `retry_amplification` | Downstream edges with retry count > 30% of call count | 75% |
-| `db_query_hotspot` | Single DB node accounting for >30% of total call time | 70% |
 
 ---
 
-## User configuration
+## Causal rules
 
-StackTracer reads config from `stacktracer.yaml` in your project root. The package ships its own `config/probes.yaml` with built-in defaults. User config is merged on top — user settings win on conflicts.
+| Rule | Detects | Confidence |
+|---|---|---|
+| `new_sync_call_after_deployment` | New call edges appearing after a deployment marker | 85% |
+| `asyncio_loop_starvation` | asyncio tick nodes averaging > 10ms | 80% |
+| `retry_amplification` | Task nodes with retry count > 3 | 75% |
+| `db_query_hotspot` | Single query node > 30% of all DB calls on the trace | 70% |
+| `n_plus_one` | Query call count ≥ 2× the view call count | 80% |
+| `worker_imbalance` | One worker handling > 80% of requests while others sit idle | 65% |
 
+Drop a `*_rules.py` file in `<your_app>/stacktracer/rules/` to add your own.
+Expose a `register(registry)` function — it receives the live registry.
+
+---
+
+## Graph model
+
+Nodes are `service::name` — e.g. `django::/api/users/`, `redis::GET`.
+Call count and total duration accumulate on each node. Edges are directional
+with a type: `calls`, `spawned`, `ran`, `handled`, `dispatched`.
+
+The graph normaliser collapses high-cardinality patterns automatically:
+`/api/users/123/` → `/api/users/{id}/`, UUID paths, SQL literals. Add your own
+normalisation rules in `stacktracer.yaml`:
+
+```yaml
+normalize:
+  - service: django
+    pattern: "/api/v\\d+/"
+    replacement: "/api/{version}/"
 ```
-Package defaults:   stacktracer/config/probes.yaml    ← read-only, never edit
-Your config:        myapp/stacktracer.yaml            ← your repo, your file
-```
 
-Auto-discovery: StackTracer walks up from the current working directory looking for `stacktracer.yaml`. Pass the path explicitly to override:
+The compactor evicts low-value nodes when the graph exceeds `max_nodes` (default
+5,000). At typical application cardinality the graph stabilises at under 100
+nodes regardless of traffic volume.
+
+---
+
+## Memory management
+
+### GraphNormalizer
+
+High-cardinality node names cause the graph to grow without bound. `/api/users/1234/profile` and `/api/users/5678/profile` are structurally the same endpoint — they should be one node, not ten thousand.
+
+`GraphNormalizer` collapses names before graph insertion using built-in patterns (UUIDs, numeric URL segments, memory addresses, SQL literal values) plus user-defined rules:
 
 ```python
-stacktracer.init(config="/absolute/path/to/stacktracer.yaml")
+# Automatically applied — no config needed
+/api/users/1234/profile     →   /api/users/{id}/profile
+550e8400-e29b-41d4-a716-... →   {uuid}
+SELECT * FROM t WHERE id=1  →   SELECT * FROM t WHERE id=?
+coro at 0x7f3a2b4c1d0       →   coro
 ```
+
+Add your own patterns in `stacktracer.yaml`:
+
+```yaml
+normalize:
+  max_unique_names_per_service: 500
+  rules:
+    - service: django
+      pattern: "/api/items/(\\d+)/reviews/(\\d+)/"
+      replacement: "/api/items/{id}/reviews/{review_id}/"
+```
+
+### GraphCompactor
+
+Evicts cold nodes when the graph exceeds configurable limits. Runs in the background snapshot loop — never on the hot path.
+
+Two eviction passes per cycle:
+
+1. **TTL eviction** — nodes not seen in the last hour are candidates for removal
+2. **Cap eviction** — if node count still exceeds `max_nodes`, evict coldest (LRU) nodes until at `evict_to` count
+
+Hot nodes (high `call_count`) are protected from both passes. Evicting a node removes all incident edges atomically.
+
+Memory estimate: 5,000 nodes + 15,000 edges ≈ 5 MB. Without the compactor, a Django app with UUID-keyed endpoints can reach hundreds of thousands of nodes in a day.
+
+### Graph serialization
+
+Save and restore the full graph:
+
+```python
+from stacktracer.core.graph_serializer import MsgpackSerializer, ProtobufSerializer
+
+# MessagePack — simple, no compile step, 3× smaller than JSON
+s = MsgpackSerializer()
+s.save(graph, "graph.msgpack")
+graph = s.load("graph.msgpack")
+
+# Protobuf — smallest, strongly typed, best for network transport
+# Requires: pip install grpcio-tools && python -m grpc_tools.protoc ...
+s = ProtobufSerializer()
+data = s.serialize(graph)   # bytes, ~900KB for 5000-node graph
+```
+
+---
+
+## Pre-fork event pattern
+
+Gunicorn, Celery, and nginx probes all follow the same pattern for preserving
+topology events across fork boundaries:
+
+1. `probe.start()` runs in the master process before `fork()`
+2. Topology events are parked in a module-level `_pre_fork_events` list
+3. `_register_post_init_callback(_drain_pre_fork_events)` queues a drain
+4. After `fork()`, the worker calls `stacktracer.init()`
+5. At the end of `init()`, all callbacks run — events drain into the worker's
+   fresh engine
+
+This ensures the worker's graph contains the full topology (master → worker
+nodes and edges) even though `probe.start()` ran before the engine existed.
 
 ---
 
@@ -426,58 +469,120 @@ stacktracer.init(config="/absolute/path/to/stacktracer.yaml")
 
 | Backend | Use case |
 |---|---|
-| `InMemoryRepository` | Tests, local dev (default) |
-| `EventRepository` | Production — PostgreSQL via psycopg2 |
-| `ClickHouseRepository` | Analytics, long-term event history |
+| `InMemoryRepository` | Default — tests and local dev |
+| `EventRepository` | PostgreSQL — production event persistence |
+| `ClickHouseRepository` | Analytics, long-term history |
 
 ```python
 from stacktracer.storage.repository import EventRepository
 import psycopg2
 
 conn = psycopg2.connect("postgresql://user:pass@host/db")
-stacktracer.init(config="stacktracer.yaml", repository=EventRepository(conn))
+stacktracer.init(repository=EventRepository(conn))
 ```
-
----
-
-## Backend API
-
-```bash
-STACKTRACER_API_KEYS="sk_prod_xxx:customer_1" \
-uvicorn stacktracer.backend.main:app --host 0.0.0.0 --port 8000
-```
-
-| Endpoint | Description |
-|---|---|
-| `POST /api/v1/ingest` | Receive probe events from agents |
-| `POST /api/v1/query` | Execute a DSL query `{ "query": "SHOW latency" }` |
-| `GET  /api/v1/graph` | Current runtime graph |
-| `GET  /api/v1/traces/{id}` | Critical path for one trace |
-| `GET  /api/v1/causal` | Run all causal rules |
-| `GET  /api/v1/hotspots` | Top N busiest nodes |
-| `GET  /api/v1/diff?since=deployment` | Graph diff since marker |
-| `POST /api/v1/deployment` | Mark a deployment `{ "label": "v1.2" }` |
-| `GET  /api/v1/status` | Engine and memory stats |
-| `GET  /health` | Liveness probe |
-
 
 ---
 
 ## Overhead
 
-
 | Component | Cost |
 |---|---|
 | ContextVar lookup | ~5 ns |
-| `emit()` (EventBuffer push) | ~0.5 µs (one lock + deque.append — graph work off-thread) |
-| GraphNormalizer (cache hit) | ~200 ns |
-| GraphNormalizer (cache miss, regex) | ~5–15 µs |
-| Graph upsert (lock) | ~2–5 µs |
-| Temporal snapshot (diff only) | ~50 µs |
-| eBPF event (kernel → Python) | ~10–30 µs |
-| Sampling at 5% | Near-zero (one `random()` per request) |
+| `emit()` | ~1–2 µs |
+| Graph upsert | ~2–5 µs |
+| Temporal snapshot (diff only) | ~50 µs per interval |
 
-At 1–5% sample rate, total overhead is under 1% on typical Django workloads. The normalizer cache covers the vast majority of calls after warm-up — repeated `(service, name)` pairs cost 200 ns, not regex evaluation.
+At 1% sample rate, total overhead is well under 1% on typical Django workloads.
+The graph stabilises under 100 nodes for a typical service — under 500 KB
+including the temporal store across a full day of snapshots at 15-second intervals.
+
+---
+
+## React UI
+
+A minimal terminal-aesthetic dashboard that mirrors the REPL. Polls the HTTP
+bridge every 5 seconds. Views: nodes, edges, trace timeline, event log.
+
+```bash
+cd stacktracer-ui
+npm install
+npm run dev      # http://localhost:5173
+```
+
+Add the bridge to your stacktracer package (`stacktracer/bridge.py`) — a
+20-line FastAPI app that wraps the Unix socket queries as HTTP endpoints.
+See `stacktracer-ui/src/api/client.js` for the full bridge spec.
+
+---
+
+## Development
+ 
+### Running tests
+ 
+```bash
+# from the repo root
+pip install -e ".[dev]"
+pytest stacktracer/tests/ -x -q
+```
+ 
+`-x` stops on the first failure. Remove it to run the full suite.
+ 
+Run a specific test file:
+ 
+```bash
+pytest stacktracer/tests/test_core_causal.py -x -q
+```
+ 
+Run tests matching a name pattern:
+ 
+```bash
+pytest stacktracer/tests/ -k "test_n_plus_one" -v
+```
+ 
+### Code formatting
+ 
+```bash
+black stacktracer/          # format in place
+black --check stacktracer/  # check only, no changes (what CI runs)
+ruff check stacktracer/     # lint
+ruff check --fix stacktracer/  # lint + auto-fix
+```
+ 
+### Pre-commit hooks (local CI)
+ 
+Install once after cloning:
+ 
+```bash
+pip install pre-commit
+pre-commit install
+```
+ 
+After that, every `git commit` automatically runs black, ruff, and pytest.
+If any check fails the commit is aborted. Fix the issues and commit again.
+ 
+Run hooks manually without committing:
+ 
+```bash
+pre-commit run --all-files
+```
+ 
+### GitHub Actions (remote CI)
+ 
+CI runs automatically on every push and pull request to `main`.
+Two jobs run in parallel:
+ 
+- `lint` — black check + ruff on Python 3.12
+- `test` — pytest on Python 3.11 and 3.12
+ 
+The workflow file is at `.github/workflows/ci.yml`.
+No secrets or configuration needed — it installs from `pyproject.toml [dev]`
+and runs the same pytest command as local.
+ 
+To see CI status locally before pushing:
+ 
+```bash
+pre-commit run --all-files   # same checks, no network needed
+```
 
 ---
 
