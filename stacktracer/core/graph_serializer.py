@@ -68,6 +68,7 @@ logger = logging.getLogger("stacktracer.serializer")
 # Shared graph → dict conversion (format-agnostic intermediate)
 # ====================================================================== #
 
+
 def graph_to_dict(graph: Any) -> Dict:
     """
     Convert a RuntimeGraph to a plain Python dict.
@@ -81,38 +82,42 @@ def graph_to_dict(graph: Any) -> Dict:
     with graph._lock:
         nodes = [
             {
-                "id":               n.id,
-                "node_type":        n.node_type,
-                "service":          n.service,
-                "first_seen":       n.first_seen,
-                "last_seen":        n.last_seen,
-                "call_count":       n.call_count,
+                "id": n.id,
+                "node_type": n.node_type,
+                "service": n.service,
+                "first_seen": n.first_seen,
+                "last_seen": n.last_seen,
+                "call_count": n.call_count,
                 "total_duration_ns": n.total_duration_ns,
-                "metadata":         {k: str(v) for k, v in n.metadata.items()},
+                "metadata": {
+                    k: str(v) for k, v in n.metadata.items()
+                },
             }
             for n in graph._nodes.values()
         ]
 
         edges = [
             {
-                "source":           e.source,
-                "target":           e.target,
-                "edge_type":        e.edge_type,
-                "call_count":       e.call_count,
+                "source": e.source,
+                "target": e.target,
+                "edge_type": e.edge_type,
+                "call_count": e.call_count,
                 "total_duration_ns": e.total_duration_ns,
-                "first_seen":       e.first_seen,
-                "last_seen":        e.last_seen,
-                "metadata":         {k: str(v) for k, v in e.metadata.items()},
+                "first_seen": e.first_seen,
+                "last_seen": e.last_seen,
+                "metadata": {
+                    k: str(v) for k, v in e.metadata.items()
+                },
             }
             for e in graph._edge_index.values()
         ]
 
         return {
-            "schema_version":    "1.0",
-            "serialized_at":     time.time(),
+            "schema_version": "1.0",
+            "serialized_at": time.time(),
             "graph_last_updated": graph.last_updated,
-            "nodes":             nodes,
-            "edges":             edges,
+            "nodes": nodes,
+            "edges": edges,
         }
 
 
@@ -121,7 +126,11 @@ def dict_to_graph(data: Dict) -> Any:
     Reconstruct a RuntimeGraph from the plain dict form.
     Returns a fully functional RuntimeGraph.
     """
-    from stacktracer.core.runtime_graph import RuntimeGraph, GraphNode, GraphEdge
+    from stacktracer.core.runtime_graph import (
+        RuntimeGraph,
+        GraphNode,
+        GraphEdge,
+    )
     from collections import defaultdict
 
     graph = RuntimeGraph()
@@ -156,7 +165,9 @@ def dict_to_graph(data: Dict) -> Any:
             graph._adj[edge.source].append(edge)
             graph._rev[edge.target].append(edge)
 
-        graph.last_updated = data.get("graph_last_updated", time.time())
+        graph.last_updated = data.get(
+            "graph_last_updated", time.time()
+        )
 
     logger.info(
         "Graph deserialized: %d nodes, %d edges (schema_version=%s)",
@@ -170,6 +181,7 @@ def dict_to_graph(data: Dict) -> Any:
 # ====================================================================== #
 # Base class
 # ====================================================================== #
+
 
 class GraphSerializer(ABC):
     @abstractmethod
@@ -185,7 +197,9 @@ class GraphSerializer(ABC):
         payload = self.serialize(graph)
         with open(path, "wb") as f:
             f.write(payload)
-        logger.info("Graph saved to %s (%d bytes)", path, len(payload))
+        logger.info(
+            "Graph saved to %s (%d bytes)", path, len(payload)
+        )
         return len(payload)
 
     def load(self, path: str) -> Any:
@@ -200,6 +214,7 @@ class GraphSerializer(ABC):
 # ====================================================================== #
 # MessagePack serializer (simpler, no compile step)
 # ====================================================================== #
+
 
 class MsgpackSerializer(GraphSerializer):
     """
@@ -245,6 +260,7 @@ class MsgpackSerializer(GraphSerializer):
 # Protobuf serializer (smallest, strongly typed, best for transport)
 # ====================================================================== #
 
+
 class ProtobufSerializer(GraphSerializer):
     """
     Serialize RuntimeGraph using Protocol Buffers.
@@ -275,30 +291,32 @@ class ProtobufSerializer(GraphSerializer):
         payload = graph_to_dict(graph)
 
         snapshot = pb2.SerializedGraph()
-        snapshot.serialized_at      = payload["serialized_at"]
-        snapshot.graph_last_updated = payload["graph_last_updated"]
-        snapshot.schema_version     = payload["schema_version"]
+        snapshot.serialized_at = payload["serialized_at"]
+        snapshot.graph_last_updated = payload[
+            "graph_last_updated"
+        ]
+        snapshot.schema_version = payload["schema_version"]
 
         for n in payload["nodes"]:
             pb_node = snapshot.nodes.add()
-            pb_node.id               = n["id"]
-            pb_node.node_type        = n["node_type"]
-            pb_node.service          = n["service"]
-            pb_node.first_seen       = n["first_seen"]
-            pb_node.last_seen        = n["last_seen"]
-            pb_node.call_count       = n["call_count"]
+            pb_node.id = n["id"]
+            pb_node.node_type = n["node_type"]
+            pb_node.service = n["service"]
+            pb_node.first_seen = n["first_seen"]
+            pb_node.last_seen = n["last_seen"]
+            pb_node.call_count = n["call_count"]
             pb_node.total_duration_ns = n["total_duration_ns"]
             pb_node.metadata.update(n.get("metadata", {}))
 
         for e in payload["edges"]:
             pb_edge = snapshot.edges.add()
-            pb_edge.source           = e["source"]
-            pb_edge.target           = e["target"]
-            pb_edge.edge_type        = e["edge_type"]
-            pb_edge.call_count       = e["call_count"]
+            pb_edge.source = e["source"]
+            pb_edge.target = e["target"]
+            pb_edge.edge_type = e["edge_type"]
+            pb_edge.call_count = e["call_count"]
             pb_edge.total_duration_ns = e["total_duration_ns"]
-            pb_edge.first_seen       = e["first_seen"]
-            pb_edge.last_seen        = e["last_seen"]
+            pb_edge.first_seen = e["first_seen"]
+            pb_edge.last_seen = e["last_seen"]
             pb_edge.metadata.update(e.get("metadata", {}))
 
         return snapshot.SerializeToString()
@@ -310,32 +328,32 @@ class ProtobufSerializer(GraphSerializer):
         snapshot.ParseFromString(data)
 
         payload = {
-            "schema_version":     snapshot.schema_version,
-            "serialized_at":      snapshot.serialized_at,
+            "schema_version": snapshot.schema_version,
+            "serialized_at": snapshot.serialized_at,
             "graph_last_updated": snapshot.graph_last_updated,
             "nodes": [
                 {
-                    "id":               n.id,
-                    "node_type":        n.node_type,
-                    "service":          n.service,
-                    "first_seen":       n.first_seen,
-                    "last_seen":        n.last_seen,
-                    "call_count":       n.call_count,
+                    "id": n.id,
+                    "node_type": n.node_type,
+                    "service": n.service,
+                    "first_seen": n.first_seen,
+                    "last_seen": n.last_seen,
+                    "call_count": n.call_count,
                     "total_duration_ns": n.total_duration_ns,
-                    "metadata":         dict(n.metadata),
+                    "metadata": dict(n.metadata),
                 }
                 for n in snapshot.nodes
             ],
             "edges": [
                 {
-                    "source":           e.source,
-                    "target":           e.target,
-                    "edge_type":        e.edge_type,
-                    "call_count":       e.call_count,
+                    "source": e.source,
+                    "target": e.target,
+                    "edge_type": e.edge_type,
+                    "call_count": e.call_count,
                     "total_duration_ns": e.total_duration_ns,
-                    "first_seen":       e.first_seen,
-                    "last_seen":        e.last_seen,
-                    "metadata":         dict(e.metadata),
+                    "first_seen": e.first_seen,
+                    "last_seen": e.last_seen,
+                    "metadata": dict(e.metadata),
                 }
                 for e in snapshot.edges
             ],
@@ -347,6 +365,7 @@ class ProtobufSerializer(GraphSerializer):
     def _import_pb2():
         try:
             from stacktracer.core import stacktracer_pb2
+
             return stacktracer_pb2
         except ImportError:
             raise ImportError(
@@ -363,6 +382,7 @@ class ProtobufSerializer(GraphSerializer):
 # JSON serializer (debug / human readable)
 # ====================================================================== #
 
+
 class JSONSerializer(GraphSerializer):
     """
     Serialize to JSON. Largest output, human readable.
@@ -375,7 +395,9 @@ class JSONSerializer(GraphSerializer):
 
     def serialize(self, graph: Any) -> bytes:
         payload = graph_to_dict(graph)
-        return json.dumps(payload, indent=self._indent).encode("utf-8")
+        return json.dumps(payload, indent=self._indent).encode(
+            "utf-8"
+        )
 
     def deserialize(self, data: bytes) -> Any:
         payload = json.loads(data.decode("utf-8"))

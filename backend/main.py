@@ -61,23 +61,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger("stacktracer.backend")
 
+
 class _BackendEngine:
     """
     Minimal engine shim for the backend.
     The real Engine lives in the agent process.
     The backend only has a deserialised RuntimeGraph and no live components.
     """
+
     def __init__(self, graph):
         from stacktracer.core.semantic import SemanticLayer
         from stacktracer.core.temporal import TemporalStore
-        from stacktracer.core.causal import build_default_registry
+        from stacktracer.core.causal import (
+            build_default_registry,
+        )
 
-        self.graph    = graph
+        self.graph = graph
         self.semantic = SemanticLayer()
         self.temporal = TemporalStore()
-        self.causal   = build_default_registry(tracker=None)
+        self.causal = build_default_registry(tracker=None)
         self.repository = None
-    
+
+
 app = FastAPI(
     title="StackTracer API",
     description="Runtime observability backend for Python async services",
@@ -164,7 +169,9 @@ def _init_repository() -> None:
 
     if ch_host:
         try:
-            from stacktracer.storage.base import ClickHouseRepository
+            from stacktracer.storage.base import (
+                ClickHouseRepository,
+            )
 
             _repository = ClickHouseRepository(host=ch_host)
             logger.info("Storage: ClickHouse (%s)", ch_host)
@@ -434,6 +441,7 @@ async def ingest_events(
     try:
         if "msgpack" in content_type:
             import msgpack
+
             payload = msgpack.unpackb(body, raw=False)
         else:
             payload = json.loads(body)
@@ -447,15 +455,22 @@ async def ingest_events(
     errors = 0
     for raw in payload.get("events", []):
         try:
-            raw.setdefault("metadata", {})["customer_id"] = customer_id
-            from stacktracer.core.event_schema import NormalizedEvent
+            raw.setdefault("metadata", {})[
+                "customer_id"
+            ] = customer_id
+            from stacktracer.core.event_schema import (
+                NormalizedEvent,
+            )
+
             event = NormalizedEvent.from_dict(raw)
             if _repository is not None:
                 _repository.insert_event(event)
             stored += 1
         except Exception as exc:
             errors += 1
-            logger.debug("Event store error: %s | raw=%s", exc, raw)
+            logger.debug(
+                "Event store error: %s | raw=%s", exc, raw
+            )
 
     return {"status": "ok", "stored": stored, "errors": errors}
 
@@ -504,16 +519,24 @@ async def get_graph_route(
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
-    engine      = _BackendEngine(graph)
+    graph = require_graph(customer_id)
+    engine = _BackendEngine(graph)
 
     from stacktracer.query.parser import ParsedQuery
     from stacktracer.query.parser import execute as execute_query
 
     if system:
-        q = ParsedQuery(verb="SHOW", metric="graph", filters={"system": system})
+        q = ParsedQuery(
+            verb="SHOW",
+            metric="graph",
+            filters={"system": system},
+        )
     elif service:
-        q = ParsedQuery(verb="SHOW", metric="graph", filters={"service": service})
+        q = ParsedQuery(
+            verb="SHOW",
+            metric="graph",
+            filters={"service": service},
+        )
     else:
         q = ParsedQuery(verb="SHOW", metric="graph")
 

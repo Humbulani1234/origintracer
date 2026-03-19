@@ -129,7 +129,9 @@ def _serialize_events(payload: Dict) -> tuple:
 
 def _serialize_graph(graph: Any) -> tuple:
     """Serialise RuntimeGraph to msgpack bytes using GraphSerializer."""
-    from stacktracer.core.graph_serializer import MsgpackSerializer
+    from stacktracer.core.graph_serializer import (
+        MsgpackSerializer,
+    )
 
     data = MsgpackSerializer().serialize(graph)
     return data, "application/msgpack"
@@ -332,7 +334,7 @@ class Uploader:
                     response.status_code,
                     response.text[:200],
                 )
-        
+
         except ImportError:
             logger.debug(
                 "httpx not installed — uploader inactive  "

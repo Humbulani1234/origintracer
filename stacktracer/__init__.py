@@ -612,7 +612,9 @@ def _init_uploader(
             flush_interval=cfg.flush_interval,
             max_batch_size=500,
         )
-        uploader.bind_engine(engine)   # ← give uploader the engine
+        uploader.bind_engine(
+            engine
+        )  # ← give uploader the engine
         uploader.start()
         engine.repository = uploader
         _uploader = uploader
