@@ -53,8 +53,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 logger = logging.getLogger("stacktracer.backend")
 
+class _BackendEngine:
+    """
+    Minimal engine shim for the backend.
+    The real Engine lives in the agent process.
+    The backend only has a deserialised RuntimeGraph and no live components.
+    """
+    def __init__(self, graph):
+        from stacktracer.core.semantic import SemanticLayer
+        from stacktracer.core.temporal import TemporalStore
+        from stacktracer.core.causal import build_default_registry
+
+        self.graph    = graph
+        self.semantic = SemanticLayer()
+        self.temporal = TemporalStore()
+        self.causal   = build_default_registry(tracker=None)
+        self.repository = None
+    
 app = FastAPI(
     title="StackTracer API",
     description="Runtime observability backend for Python async services",
@@ -317,6 +340,7 @@ async def receive_snapshot(
     Deserialises the graph into memory and persists the raw bytes to storage
     so FastAPI restarts can reload without waiting for the next agent snapshot.
     """
+    print(">>>>>HERE")
     customer_id = _authenticate(authorization)
     body = await request.body()
     content_type = request.headers.get(
@@ -391,46 +415,58 @@ async def receive_snapshot(
 
 @app.post("/api/v1/events")
 async def ingest_events(
-    payload: IngestPayload,
+    request: Request,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
     Receive raw probe events from the agent uploader for persistence.
-    Stores to PostgreSQL or ClickHouse for historical trace queries.
-    Does NOT rebuild the graph — that is the agent's job.
-    The graph arrives separately via POST /api/v1/graph/snapshot.
+    Accepts msgpack (application/msgpack) or JSON (application/json).
+    Stores to repository for historical trace queries.
+    Does NOT rebuild the graph — that arrives via POST /api/v1/graph/snapshot.
     """
     customer_id = _authenticate(authorization)
 
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty body")
+
+    content_type = request.headers.get("content-type", "")
+    try:
+        if "msgpack" in content_type:
+            import msgpack
+            payload = msgpack.unpackb(body, raw=False)
+        else:
+            payload = json.loads(body)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to deserialise body: {exc}",
+        )
+
     stored = 0
     errors = 0
-    for raw in payload.events:
+    for raw in payload.get("events", []):
         try:
-            raw.setdefault("metadata", {})[
-                "customer_id"
-            ] = customer_id
+            raw.setdefault("metadata", {})["customer_id"] = customer_id
             from stacktracer.core.event_schema import NormalizedEvent
-
             event = NormalizedEvent.from_dict(raw)
-            if _repository:
+            if _repository is not None:
                 _repository.insert_event(event)
             stored += 1
         except Exception as exc:
             errors += 1
-            logger.debug(
-                "Event store error: %s | raw=%s", exc, raw
-            )
+            logger.debug("Event store error: %s | raw=%s", exc, raw)
 
     return {"status": "ok", "stored": stored, "errors": errors}
 
 
 @app.post("/api/v1/ingest")
 async def ingest_events_compat(
-    payload: IngestPayload,
+    request: Request,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """Backward-compatible alias for /api/v1/events."""
-    return await ingest_events(payload, authorization)
+    return await ingest_events(request, authorization)
 
 
 # ====================================================================== #
@@ -467,31 +503,21 @@ async def get_graph_route(
     system: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
-    """Return the current graph, optionally filtered by service or system label."""
     customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
+    graph       = require_graph(customer_id)
+    engine      = _BackendEngine(graph)
 
-    from stacktracer.query.parser import (
-        ParsedQuery,
-        execute as execute_query,
-    )
+    from stacktracer.query.parser import ParsedQuery
+    from stacktracer.query.parser import execute as execute_query
 
     if system:
-        q = ParsedQuery(
-            verb="SHOW",
-            metric="graph",
-            filters={"system": system},
-        )
+        q = ParsedQuery(verb="SHOW", metric="graph", filters={"system": system})
     elif service:
-        q = ParsedQuery(
-            verb="SHOW",
-            metric="graph",
-            filters={"service": service},
-        )
+        q = ParsedQuery(verb="SHOW", metric="graph", filters={"service": service})
     else:
         q = ParsedQuery(verb="SHOW", metric="graph")
 
-    return execute_query(q, graph)
+    return execute_query(q, engine)
 
 
 @app.get("/api/v1/causal")
@@ -704,7 +730,7 @@ async def status(
         }
 
     storage_info = "none"
-    if _repository:
+    if _repository is not None:
         storage_info = type(_repository).__name__
 
     return {

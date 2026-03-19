@@ -129,7 +129,7 @@ def _serialize_events(payload: Dict) -> tuple:
 
 def _serialize_graph(graph: Any) -> tuple:
     """Serialise RuntimeGraph to msgpack bytes using GraphSerializer."""
-    from ..core.graph_serializer import MsgpackSerializer
+    from stacktracer.core.graph_serializer import MsgpackSerializer
 
     data = MsgpackSerializer().serialize(graph)
     return data, "application/msgpack"
@@ -233,6 +233,7 @@ class Uploader:
             name="stacktracer-uploader",
         )
         self._thread.start()
+        print(">>>>>uploader")
         logger.info(
             "Uploader started → %s  events=%ds  snapshots=%ds",
             self._endpoint,
@@ -267,6 +268,7 @@ class Uploader:
         Checks whether each flush interval has elapsed on every wake.
         """
         while self._running:
+            print(">>>WE DO REACH HERE")
             time.sleep(1)  # wake every second to check intervals
 
             now = time.time()
@@ -297,14 +299,15 @@ class Uploader:
         batch = self._event_buffer.drain(self._max_batch)
         if not batch:
             return
-
+        print(">>>>I RUN TOO")
         payload = {"events": batch, "count": len(batch)}
 
         try:
             import httpx
 
             body, content_type = _serialize_events(payload)
-
+            print(">>>>I RUN TOO alsooo", body)
+            print(f"MY END POINT{self._endpoint}/api/v1/events")
             response = httpx.post(
                 f"{self._endpoint}/api/v1/events",
                 content=body,
@@ -314,7 +317,7 @@ class Uploader:
                 },
                 timeout=10.0,
             )
-
+            print(">>>>MY REPONSE", response)
             if response.status_code == 200:
                 self._events_sent_total += len(batch)
                 logger.debug(
@@ -329,12 +332,18 @@ class Uploader:
                     response.status_code,
                     response.text[:200],
                 )
-
+        
         except ImportError:
             logger.debug(
                 "httpx not installed — uploader inactive  "
                 "(pip install httpx)"
             )
+        except httpx.TimeoutException:
+            print(">>>>TIMEOUT — backend not responding")
+        except httpx.ConnectError as e:
+            print(">>>>CONNECT ERROR", e)
+        except Exception as e:
+            print(">>>>ERROR", type(e).__name__, e)
         except Exception as exc:
             self._failed_event_sends += 1
             logger.debug("Event upload error: %s", exc)
@@ -356,13 +365,16 @@ class Uploader:
         database, and serves all graph queries from the deserialised graph.
         """
         if self._engine is None:
+            print(">>>GRAPH SERIALISATION and we return home")
             return
 
         try:
             data, content_type = _serialize_graph(
                 self._engine.graph
             )
+            print(">>>GRAPH SERIALISATION", data)
         except Exception as exc:
+            print(">>>GRAPH SERIALISATION")
             logger.debug("Graph serialisation failed: %s", exc)
             return
 
@@ -378,7 +390,7 @@ class Uploader:
                 },
                 timeout=30.0,  # snapshot can be ~1MB — allow more time
             )
-
+            print(">>>GRAPH RESPONSE", response)
             if response.status_code == 200:
                 self._snapshots_sent += 1
                 info = response.json()
@@ -398,6 +410,15 @@ class Uploader:
 
         except ImportError:
             pass  # already warned by _flush_events
+        except httpx.TimeoutException:
+            print(">>>>TIMEOUT — backend not responding")
+        except httpx.ConnectError as e:
+            print(">>>>CONNECT ERROR", e)
+        except Exception as e:
+            print(">>>>ERROR", type(e).__name__, e)
+        except Exception as exc:
+            self._failed_event_sends += 1
+            logger.debug("Event upload error: %s", exc)
         except Exception as exc:
             self._failed_snap_sends += 1
             logger.debug("Snapshot upload error: %s", exc)

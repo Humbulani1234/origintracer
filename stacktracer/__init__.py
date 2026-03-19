@@ -604,7 +604,7 @@ def _init_uploader(
         logger.debug("Uploader: no api_key — skipping")
         return None
     try:
-        from .buffer.uploader import Uploader
+        from stacktracer.sdk.uploader import Uploader
 
         uploader = Uploader(
             endpoint=cfg.endpoint,
@@ -612,6 +612,7 @@ def _init_uploader(
             flush_interval=cfg.flush_interval,
             max_batch_size=500,
         )
+        uploader.bind_engine(engine)   # ← give uploader the engine
         uploader.start()
         engine.repository = uploader
         _uploader = uploader
@@ -632,15 +633,15 @@ def _init_uploader(
 
 
 def init(
-    api_key: str = "",
-    endpoint: str = "https://api.stacktracer.io",
+    api_key: str = "test-key-123",
+    endpoint: str = "http://localhost:8000",
     config: Optional[str] = None,
     probes: Optional[List[str]] = None,
     semantic: Optional[List[Dict]] = None,
     sample_rate: Optional[float] = None,
     snapshot_interval: Optional[float] = None,
     flush_interval: Optional[int] = None,
-    debug: bool = False,
+    debug: bool = True,
     repository: Optional[Any] = None,
     normalize: Optional[List[Dict]] = None,
     compactor: Optional[Dict] = None,
