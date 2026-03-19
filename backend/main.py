@@ -769,6 +769,52 @@ async def health() -> Dict:
     """Liveness probe — always returns 200 if the process is running."""
     return {"status": "healthy", "timestamp": time.time()}
 
+@app.get("/api/v1/nodes")
+async def get_nodes(
+    service: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+) -> Dict:
+    """Return all nodes from the latest graph snapshot, optionally filtered by service."""
+    customer_id = _authenticate(authorization)
+    graph       = require_graph(customer_id)
+
+    nodes = []
+    for node in graph.all_nodes():
+        if service and node.service != service:
+            continue
+        nodes.append({
+            "id":              node.id,
+            "service":         node.service,
+            "node_type":       node.node_type,
+            "call_count":      node.call_count,
+            "avg_duration_ns": node.avg_duration_ns,
+            "first_seen":      node.first_seen,
+            "last_seen":       node.last_seen,
+            "metadata":        node.metadata,
+        })
+
+    return {"ok": True, "data": {"metric": "nodes", "data": nodes}}
+
+
+@app.get("/api/v1/edges")
+async def get_edges(
+    authorization: Optional[str] = Header(None),
+) -> Dict:
+    """Return all edges from the latest graph snapshot."""
+    customer_id = _authenticate(authorization)
+    graph       = require_graph(customer_id)
+
+    edges = []
+    for edge in graph.all_edges():
+        edges.append({
+            "source":     edge.source,
+            "target":     edge.target,
+            "type":       edge.edge_type,
+            "call_count": edge.call_count,
+            "weight":     edge.call_count,
+        })
+
+    return {"ok": True, "data": {"metric": "edges", "data": edges}}
 
 # ====================================================================== #
 # Error handling
