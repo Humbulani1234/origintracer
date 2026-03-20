@@ -4,6 +4,14 @@
 
 StackTracer instruments your production stack — nginx, gunicorn, uvicorn, Django, asyncio, Celery — to capture *why* execution flowed the way it did, not just that it was slow. It builds a live graph of your service's execution structure, detects causal patterns, and answers questions like `BLAME WHERE system = "export"` or `DIFF SINCE deployment` against the running process.
 
+**What you get:**
+
+- Debugging real execution paths  
+- Understanding frameworks deeply  
+- Teaching how systems actually work  
+- Visualizing control flow  
+- Developer introspection  
+
 The engine is open source. Deeper knowledge — traced book chapters and the rule libraries that implement what each chapter explains — is sold separately at [stacktracer.io](https://stacktracer.io).
 
 ---

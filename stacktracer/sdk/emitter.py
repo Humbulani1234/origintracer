@@ -138,26 +138,6 @@ def bind_engine(engine: object) -> None:
     )
 
 
-def _restart_drain_thread() -> None:
-    """
-    Restart the drain thread after os.fork().
-    Threads do not survive fork — the child process has the parent's
-    buffer but no running drain thread. Call this in post_fork hooks.
-    """
-    global _drain_thread
-    if (
-        _drain_thread is not None
-        and not _drain_thread.is_alive()
-    ):
-        _drain_thread = _DrainThread(_buffer, interval=0.05)
-        _drain_thread.start()
-        logger.info("emitter: drain thread restarted after fork")
-
-
-def _get_engine():
-    return _engine
-
-
 def emit(event: NormalizedEvent) -> None:
     """
     Emit one probe event.
