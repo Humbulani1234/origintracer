@@ -6,24 +6,11 @@ Public API for the StackTracer agent library.
 Minimal usage — everything else comes from defaults:
 
     import stacktracer
-    stacktracer.init(api_key="sk_...")
+    stacktracer.init(api_key="test-key-123")
 
     MIDDLEWARE = ["stacktracer.probes.django_probe.TracerMiddleware", ...]
 
-Full usage — user overrides specific defaults:
 
-    stacktracer.init(
-        api_key          = os.getenv("STACKTRACER_API_KEY"),
-        endpoint         = "https://api.stacktracer.io",
-        config           = "stacktracer.yaml",
-        probes           = ["django", "asyncio"],
-        semantic         = [...],
-        sample_rate      = 0.05,
-        debug            = False,
-        repository       = None,
-        normalize        = [...],
-        compactor        = {...},
-    )
 
 Config merge order (last wins):
     1. Package defaults  — stacktracer/config/defaults.yaml
@@ -771,7 +758,7 @@ def init(
     )
 
     _init_local_server(_engine)
-    
+
     _active_probes = _init_probes(_config, _engine, app_root)
     _engine.probes = _active_probes
 

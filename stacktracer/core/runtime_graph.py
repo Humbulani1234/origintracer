@@ -206,132 +206,78 @@ class RuntimeGraph:
 
         # Probe-specific structural edges — topology, not request flow
         self._add_structural_edges(node_id, event)
-
+    
     def _add_structural_edges(
         self, node_id: str, event: NormalizedEvent
     ) -> None:
-        """
-        Draw infrastructure topology edges based on probe type.
-        Called once per event after the node is upserted.
-        Each probe type gets its own block — add new probes here, not above.
-        """
         probe = event.probe
+        meta  = event.metadata
 
         if probe == "gunicorn.worker.fork":
-            # master ──spawned──► worker
-            master_node_id = self._node_id("gunicorn", "master")
-            if master_node_id in self._nodes:
-                self.upsert_edge(
-                    source=master_node_id,
-                    target=node_id,
-                    edge_type="spawned",
-                )
+            master_id = self._node_id("gunicorn", "master")
+            if master_id in self._nodes:
+                self.upsert_edge(master_id, node_id, "spawned")
 
         elif probe == "uvicorn.request.receive":
-            # worker ──handled──► request
-            worker_pid = event.metadata.get("worker_pid")
-            if worker_pid:
-                for nid, node in self._nodes.items():
-                    if (
-                        node.node_type == "gunicorn"
-                        and node.metadata.get("worker_pid")
-                        == worker_pid
-                    ):
-                        self.upsert_edge(
-                            source=nid,
-                            target=node_id,
-                            edge_type="handled",
-                        )
-                        break
+            src = self._find_node("gunicorn", "worker_pid", meta.get("worker_pid"))
+            if src:
+                self.upsert_edge(src, node_id, "handled")
 
         elif probe == "celery.worker.fork":
-            # MainProcess ──spawned──► ForkPoolWorker
-            # The main process emits celery.worker.fork with master_pid.
-            # We look for a node whose pid matches that master_pid.
-            master_pid = event.metadata.get("master_pid")
-            if master_pid:
-                for nid, node in self._nodes.items():
-                    if (
-                        node.node_type == "celery"
-                        and node.metadata.get("worker_pid")
-                        == master_pid
-                    ):
-                        self.upsert_edge(
-                            source=nid,
-                            target=node_id,
-                            edge_type="spawned",
-                        )
-                        break
+            src = self._find_node("celery", "worker_pid", meta.get("master_pid"))
+            if src:
+                self.upsert_edge(src, node_id, "spawned")
 
         elif probe == "celery.task.start":
-            worker_pid = event.metadata.get("worker_pid")
-            if worker_pid:
-                for nid, node in self._nodes.items():
-                    node_name = (
-                        nid.split("::", 1)[1]
-                        if "::" in nid
-                        else nid
-                    )
-                    if (
-                        node.node_type == "celery"
-                        and node_name == "ForkPoolWorker"
-                        and node.metadata.get("worker_pid")
-                        == worker_pid
-                    ):
-                        self.upsert_edge(
-                            source=nid,
-                            target=node_id,
-                            edge_type="ran",
-                        )
-                        break
+            src = self._find_node(
+                "celery", "worker_pid", meta.get("worker_pid"),
+                name_equals="ForkPoolWorker",
+            )
+            if src:
+                self.upsert_edge(src, node_id, "ran")
 
-        # ── nginx ─────────────────────────────────────────────────────
         elif probe == "nginx.worker.discovered":
-            master_pid = event.metadata.get("master_pid")
-            if master_pid:
-                for nid, node in self._nodes.items():
-                    node_name = (
-                        nid.split("::", 1)[1]
-                        if "::" in nid
-                        else nid
-                    )
-                    if (
-                        node.node_type == "nginx"
-                        and node_name == "master"
-                        and node.metadata.get("worker_pid")
-                        == master_pid
-                    ):
-                        self.upsert_edge(
-                            source=nid,
-                            target=node_id,
-                            edge_type="spawned",
-                        )
-                        break
+            src = self._find_node(
+                "nginx", "worker_pid", meta.get("master_pid"),
+                name_equals="master",
+            )
+            if src:
+                self.upsert_edge(src, node_id, "spawned")
 
-        elif probe in (
-            "nginx.request.complete",
-            "nginx.request.enriched",
-        ):
-            worker_pid = event.metadata.get("worker_pid")
-            if worker_pid:
-                for nid, node in self._nodes.items():
-                    node_name = (
-                        nid.split("::", 1)[1]
-                        if "::" in nid
-                        else nid
-                    )
-                    if (
-                        node.node_type == "nginx"
-                        and "worker-" in node_name
-                        and node.metadata.get("worker_pid")
-                        == worker_pid
-                    ):
-                        self.upsert_edge(
-                            source=nid,
-                            target=node_id,
-                            edge_type="handled",
-                        )
-                        break
+        elif probe in ("nginx.request.complete", "nginx.request.enriched"):
+            src = self._find_node(
+                "nginx", "worker_pid", meta.get("worker_pid"),
+                name_contains="worker-",
+            )
+            if src:
+                self.upsert_edge(src, node_id, "handled")
+
+    def _find_node(
+        self,
+        node_type: str,
+        metadata_key: str,
+        metadata_value: Any,
+        name_contains: Optional[str] = None,
+        name_equals: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Find the first node id matching type and a metadata field value.
+        Optionally filter by node name containing or equalling a string.
+        Returns the node id or None.
+        """
+        for nid, node in self._nodes.items():
+            if node.node_type != node_type:
+                continue
+            if node.metadata.get(metadata_key) != metadata_value:
+                continue
+            if name_contains or name_equals:
+                node_name = nid.split("::", 1)[1] if "::" in nid else nid
+                if name_contains and name_contains not in node_name:
+                    continue
+                if name_equals and node_name != name_equals:
+                    continue
+            return nid
+        return None                
 
     # ------------------------------------------------------------------ #
     # Queries
