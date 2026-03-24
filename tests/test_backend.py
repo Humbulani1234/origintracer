@@ -40,7 +40,7 @@ def reset_backend_state():
     Reset module-level state between tests so they are independent.
     Runs before each test in this module.
     """
-    import stacktracer.backend.main as m
+    import backend.main as m
 
     m._graphs.clear()
     m._valid_api_keys = {"test-key-0000": "test_customer"}
