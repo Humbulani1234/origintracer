@@ -1,0 +1,39 @@
+# .pre-commit-config.yaml
+#
+# Runs automatically on every local `git commit`.
+# Install once: pre-commit install
+#
+# What runs:
+#   black   — formats Python files in place
+#   ruff    — fast linter (catches unused imports, undefined names, etc.)
+#   pytest  — runs the test suite before the commit is accepted
+#
+# If any hook fails the commit is aborted. Fix the issues and commit again.
+
+repos:
+  - repo: https://github.com/psf/black
+    rev: 24.3.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: ["--line-length", "100"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.1
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest
+        language: system
+        pass_filenames: false
+        args:
+          - stacktracer/tests/
+          - -x               # stop on first failure
+          - -q               # quiet output
+          - --tb=short       # short tracebacks
+        always_run: true

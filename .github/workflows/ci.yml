@@ -1,0 +1,60 @@
+# .github/workflows/ci.yml
+#
+# Runs on every push and pull request to main.
+# Matrix: Python 3.11 and 3.12 (the two versions StackTracer supports).
+#
+# Jobs:
+#   lint   — black check + ruff (no auto-fix, just fail if not clean)
+#   test   — pytest on both Python versions
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  lint:
+    name: Lint (black + ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lint tools
+        run: pip install black ruff
+
+      - name: black check
+        run: black --check --line-length 100 stacktracer/
+
+      - name: ruff check
+        run: ruff check stacktracer/
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          pytest stacktracer/tests/ -x -q --tb=short
