@@ -25,3 +25,4 @@ class DjangoTracerConfig(AppConfig):
         stacktracer.init(
             config=str(BASE_DIR / "stacktracer.yaml")
         )
+        stacktracer.mark_deployment("deployment")

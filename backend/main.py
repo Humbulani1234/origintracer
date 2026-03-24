@@ -53,8 +53,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -304,9 +302,6 @@ def require_graph(customer_id: str) -> Any:
     return graph
 
 
-
-
-
 # ====================================================================== #
 # Pydantic schemas
 # ====================================================================== #
@@ -406,6 +401,24 @@ async def receive_snapshot(
             status_code=400,
             detail=f"Snapshot parse error: {exc}",
         )
+
+
+@app.post("/api/v1/graph/diff")
+async def receive_graph_diff(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> Dict:
+    """
+    Receive a serialised RuntimeGraph from the StackTracer agent.
+    The agent calls this every 60 seconds via the uploader._flush_snapshot().
+    Deserialises the graph into memory and persists the raw bytes to storage
+    so FastAPI restarts can reload without waiting for the next agent snapshot.
+    """
+    customer_id = _authenticate(authorization)
+    body = await request.json()
+    if _repository is not None:
+        _repository.insert_graph_diff(customer_id, body)
+    return {"ok": True}
 
 
 # ====================================================================== #
@@ -683,39 +696,22 @@ async def get_trace(
 
 
 @app.post("/api/v1/deployment")
-async def mark_deployment(
+async def mark_deployment_endpoint(
     body: DeploymentMarkRequest,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
-    """
-    Store a deployment marker.
-    On the backend this is persisted to the event store.
-    The agent's own mark_deployment() call handles the live TemporalStore diff.
-    """
     customer_id = _authenticate(authorization)
-
-    if _repository and hasattr(_repository, "insert_marker"):
-        _repository.insert_marker(customer_id, body.label)
-    elif _repository:
-        # Fallback: store as a synthetic event
-        from stacktracer.core.event_schema import NormalizedEvent
-        import uuid
-
-        event = NormalizedEvent.now(
-            probe="stacktracer.deployment",
-            trace_id=str(uuid.uuid4()),
-            service="stacktracer",
-            name=body.label,
+    if _repository is not None:
+        _repository.insert_deployment_marker(
+            customer_id, body.label
         )
-        _repository.insert_event(event)
-
     logger.info(
         "Deployment marked: customer=%s label=%s",
         customer_id,
         body.label,
     )
     return {
-        "status": "ok",
+        "ok": True,
         "label": body.label,
         "timestamp": time.time(),
     }
@@ -762,6 +758,7 @@ async def health() -> Dict:
     """Liveness probe — always returns 200 if the process is running."""
     return {"status": "healthy", "timestamp": time.time()}
 
+
 @app.get("/api/v1/nodes")
 async def get_nodes(
     service: Optional[str] = None,
@@ -769,24 +766,29 @@ async def get_nodes(
 ) -> Dict:
     """Return all nodes from the latest graph snapshot, optionally filtered by service."""
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
+    graph = require_graph(customer_id)
 
     nodes = []
     for node in graph.all_nodes():
         if service and node.service != service:
             continue
-        nodes.append({
-            "id":              node.id,
-            "service":         node.service,
-            "node_type":       node.node_type,
-            "call_count":      node.call_count,
-            "avg_duration_ns": node.avg_duration_ns,
-            "first_seen":      node.first_seen,
-            "last_seen":       node.last_seen,
-            "metadata":        node.metadata,
-        })
+        nodes.append(
+            {
+                "id": node.id,
+                "service": node.service,
+                "node_type": node.node_type,
+                "call_count": node.call_count,
+                "avg_duration_ns": node.avg_duration_ns,
+                "first_seen": node.first_seen,
+                "last_seen": node.last_seen,
+                "metadata": node.metadata,
+            }
+        )
 
-    return {"ok": True, "data": {"metric": "nodes", "data": nodes}}
+    return {
+        "ok": True,
+        "data": {"metric": "nodes", "data": nodes},
+    }
 
 
 @app.get("/api/v1/edges")
@@ -795,19 +797,25 @@ async def get_edges(
 ) -> Dict:
     """Return all edges from the latest graph snapshot."""
     customer_id = _authenticate(authorization)
-    graph       = require_graph(customer_id)
+    graph = require_graph(customer_id)
 
     edges = []
     for edge in graph.all_edges():
-        edges.append({
-            "source":     edge.source,
-            "target":     edge.target,
-            "type":       edge.edge_type,
-            "call_count": edge.call_count,
-            "weight":     edge.call_count,
-        })
+        edges.append(
+            {
+                "source": edge.source,
+                "target": edge.target,
+                "type": edge.edge_type,
+                "call_count": edge.call_count,
+                "weight": edge.call_count,
+            }
+        )
 
-    return {"ok": True, "data": {"metric": "edges", "data": edges}}
+    return {
+        "ok": True,
+        "data": {"metric": "edges", "data": edges},
+    }
+
 
 # ====================================================================== #
 # Error handling

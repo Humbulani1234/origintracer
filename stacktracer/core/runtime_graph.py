@@ -206,12 +206,12 @@ class RuntimeGraph:
 
         # Probe-specific structural edges — topology, not request flow
         self._add_structural_edges(node_id, event)
-    
+
     def _add_structural_edges(
         self, node_id: str, event: NormalizedEvent
     ) -> None:
         probe = event.probe
-        meta  = event.metadata
+        meta = event.metadata
 
         if probe == "gunicorn.worker.fork":
             master_id = self._node_id("gunicorn", "master")
@@ -219,18 +219,24 @@ class RuntimeGraph:
                 self.upsert_edge(master_id, node_id, "spawned")
 
         elif probe == "uvicorn.request.receive":
-            src = self._find_node("gunicorn", "worker_pid", meta.get("worker_pid"))
+            src = self._find_node(
+                "gunicorn", "worker_pid", meta.get("worker_pid")
+            )
             if src:
                 self.upsert_edge(src, node_id, "handled")
 
         elif probe == "celery.worker.fork":
-            src = self._find_node("celery", "worker_pid", meta.get("master_pid"))
+            src = self._find_node(
+                "celery", "worker_pid", meta.get("master_pid")
+            )
             if src:
                 self.upsert_edge(src, node_id, "spawned")
 
         elif probe == "celery.task.start":
             src = self._find_node(
-                "celery", "worker_pid", meta.get("worker_pid"),
+                "celery",
+                "worker_pid",
+                meta.get("worker_pid"),
                 name_equals="ForkPoolWorker",
             )
             if src:
@@ -238,15 +244,22 @@ class RuntimeGraph:
 
         elif probe == "nginx.worker.discovered":
             src = self._find_node(
-                "nginx", "worker_pid", meta.get("master_pid"),
+                "nginx",
+                "worker_pid",
+                meta.get("master_pid"),
                 name_equals="master",
             )
             if src:
                 self.upsert_edge(src, node_id, "spawned")
 
-        elif probe in ("nginx.request.complete", "nginx.request.enriched"):
+        elif probe in (
+            "nginx.request.complete",
+            "nginx.request.enriched",
+        ):
             src = self._find_node(
-                "nginx", "worker_pid", meta.get("worker_pid"),
+                "nginx",
+                "worker_pid",
+                meta.get("worker_pid"),
                 name_contains="worker-",
             )
             if src:
@@ -271,13 +284,18 @@ class RuntimeGraph:
             if node.metadata.get(metadata_key) != metadata_value:
                 continue
             if name_contains or name_equals:
-                node_name = nid.split("::", 1)[1] if "::" in nid else nid
-                if name_contains and name_contains not in node_name:
+                node_name = (
+                    nid.split("::", 1)[1] if "::" in nid else nid
+                )
+                if (
+                    name_contains
+                    and name_contains not in node_name
+                ):
                     continue
                 if name_equals and node_name != name_equals:
                     continue
             return nid
-        return None                
+        return None
 
     # ------------------------------------------------------------------ #
     # Queries

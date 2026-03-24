@@ -135,6 +135,19 @@ class TemporalStore:
     # Queries
     # ------------------------------------------------------------------ #
 
+    def latest_diff(self) -> Optional[Dict]:
+        if not self._diffs:
+            return None
+        last = self._diffs[-1]
+        return {
+            "added_nodes": list(last.added_nodes),
+            "removed_nodes": list(last.removed_nodes),
+            "added_edges": list(last.added_edges),
+            "removed_edges": list(last.removed_edges),
+            "timestamp": last.timestamp,
+            "label": last.label,
+        }
+
     def changes_since(self, since: float) -> List[GraphDiff]:
         with self._lock:
             return [

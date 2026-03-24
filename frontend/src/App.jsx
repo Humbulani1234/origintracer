@@ -8,7 +8,7 @@ import StatusBar     from "./components/StatusBar";
 import QueryBar      from "./components/QueryBar";
 import { api }       from "./api/client";
 
-const VIEWS = ["nodes", "edges", "trace", "events"];
+const VIEWS = ["nodes", "edges", "trace", "events", "diff"];
 
 const MOCK_NODES = [
   { id:"gunicorn::master",                         service:"gunicorn", call_count:1,   avg_duration_ns:null },
@@ -86,24 +86,34 @@ const MOCK_TRACE = {
   ],
 };
 
+const MOCK_DIFF = {
+  label: "v1.2.3",
+  added_nodes:   ["celery::myapp.tasks.send_email", "redis::EXPIRE"],
+  removed_nodes: [],
+  added_edges:   ["django::/api/users/ → celery::myapp.tasks.send_email:calls"],
+  removed_edges: [],
+};
+
 export default function App() {
   const [view,    setView]    = useState("nodes");
   const [nodes,   setNodes]   = useState(MOCK_NODES);
   const [edges,   setEdges]   = useState(MOCK_EDGES);
   const [events,  setEvents]  = useState(MOCK_EVENTS);
   const [trace,   setTrace]   = useState(MOCK_TRACE);
+  const [diff, setDiff] = useState(MOCK_DIFF);
   const [status,  setStatus]  = useState({ sockets: 2 });
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       const [n, e, ev, s] = await Promise.all([
-        api.nodes(), api.edges(), api.events(), api.status(),
+        api.nodes(), api.edges(), api.events(), api.status(), api.diff(),
       ]);
       if (n?.data?.data?.length)  setNodes(n.data.data);
       if (e?.data?.data?.length)  setEdges(e.data.data);
       if (ev?.data?.data?.length) setEvents(ev.data.data);
       if (s?.data)                setStatus(s.data);
+      if (g?.data?.length) setDiff(g.data);
     } catch {
       // backend not running — mock data stays
     }
@@ -139,6 +149,7 @@ export default function App() {
     edges:  `${edges.length} edges`,
     trace:  trace ? `${trace.stages.length} stages` : "—",
     events: `${events.length} events`,
+    diff:   diff ? `${(diff.added_nodes?.length || 0) + (diff.added_edges?.length || 0)} changes` : "—",
   };
 
   return (
@@ -172,6 +183,7 @@ export default function App() {
           {view === "edges"  && <EdgeTable     edges={edges} />}
           {view === "trace"  && <TraceTimeline trace={trace} />}
           {view === "events" && <EventLog      events={events} />}
+          {view === "diff" && <DiffView diff={diff} />}
         </div>
         <StatusBar nodes={nodes} edges={edges} events={events} status={status} />
       </div>

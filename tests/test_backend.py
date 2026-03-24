@@ -19,8 +19,8 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 from httpx import AsyncClient, ASGITransport
-from stacktracer.backend.main import app
-from stacktracer.storage.repository import InMemoryRepository
+from backend.main import app
+from stacktracer.storage.base import InMemoryRepository
 
 # ── Test client fixture ────────────────────────────────────────────────────
 

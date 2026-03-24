@@ -1,21 +1,14 @@
 """
-stacktracer/__init__.py
-
-Public API for the StackTracer agent library.
-
-Minimal usage — everything else comes from defaults:
+Minimal usage, most settings come from defaults:
 
     import stacktracer
     stacktracer.init(api_key="test-key-123")
-
     MIDDLEWARE = ["stacktracer.probes.django_probe.TracerMiddleware", ...]
 
-
-
-Config merge order (last wins):
-    1. Package defaults  — stacktracer/config/defaults.yaml
-    2. User yaml file    — searched from cwd upward, or explicit config= path
-    3. init() kwargs     — highest priority, overrides everything
+Config merge order:
+    1. Package defaults — stacktracer/config/defaults.yaml
+    2. User yaml file — searched from cwd upward, or explicit config= path
+    3. init() kwargs — highest priority, overrides everything
 """
 
 from __future__ import annotations
@@ -930,7 +923,13 @@ def _traced_call(fn, fn_name, args, kwargs, is_async):
 
 def mark_deployment(label: str = "deployment") -> None:
     if _engine:
-        _engine.mark_deployment(label)
+        _engine.mark_deployment(
+            label
+        )  # writes to local TemporalStore
+    if _uploader:
+        _uploader.send_deployment_marker(
+            label
+        )  # tells FastAPI backend
     else:
         logger.warning("mark_deployment called before init()")
 

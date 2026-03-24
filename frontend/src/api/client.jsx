@@ -9,7 +9,7 @@
 // When the backend is unavailable, all calls throw and App.jsx
 // catches silently — mock data stays visible with no errors shown.
 
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL || "http://13.247.195.101";
 const KEY  = import.meta.env.VITE_API_KEY  || "test-key-123";
 
 async function request(path) {
@@ -26,4 +26,5 @@ export const api = {
   events: (limit = 30) => request(`/api/v1/events/recent?limit=${limit}`),
   trace:  (id)         => request(`/api/v1/traces/${id}`),
   status: ()           => request("/api/v1/status"),
+  diff:   (label = "deployment") => request(`/api/v1/diff?since=${label}`),
 };

@@ -110,6 +110,30 @@ class BaseRepository(ABC):
         """Release any open connections."""
         ...
 
+    @abstractmethod
+    def insert_deployment_marker(
+        self, customer_id: str, label: str
+    ) -> None:
+        """Store a deployment marker with the current timestamp."""
+        ...
+
+    @abstractmethod
+    def insert_graph_diff(
+        self, customer_id: str, diff: Dict
+    ) -> None:
+        """Store one graph diff snapshot from the agent."""
+        ...
+
+    @abstractmethod
+    def get_diffs_since_deployment(
+        self, customer_id: str, label: str = "deployment"
+    ) -> List[Dict]:
+        """
+        Return all diffs captured after the most recent marker with
+        this label.
+        """
+        ...
+
 
 # ====================================================================== #
 # PostgreSQL
@@ -163,7 +187,21 @@ CREATE INDEX IF NOT EXISTS idx_st_markers_customer
 """
 
 
-class EventRepository(BaseRepository):
+_PG_CREATE_GRAPH_DIFFS = """
+CREATE TABLE graph_diffs (
+    id              SERIAL PRIMARY KEY,
+    customer_id     VARCHAR(100) NOT NULL,
+    snapshot_time   TIMESTAMPTZ  DEFAULT NOW(),
+    added_nodes     JSONB,
+    removed_nodes   JSONB,
+    added_edges     JSONB,
+    removed_edges   JSONB,
+    label           VARCHAR(200)   -- populated when a deployment marker exists
+);
+"""
+
+
+class PGEventRepository(BaseRepository):
     """
     PostgreSQL-backed store.
     Uses psycopg2 with a plain connection for MVP.
@@ -180,6 +218,7 @@ class EventRepository(BaseRepository):
             cur.execute(_PG_CREATE_EVENTS)
             cur.execute(_PG_CREATE_SNAPSHOTS)
             cur.execute(_PG_CREATE_MARKERS)
+            cur.execute(_PG_CREATE_GRAPH_DIFFS)
         self._conn.commit()
 
     # ── Events ──────────────────────────────────────────────────────────
@@ -344,6 +383,35 @@ class EventRepository(BaseRepository):
             )
             return None
 
+    # --------------------- Graph diffs-------------------------------
+
+    def insert_graph_diff(
+        self, customer_id: str, diff: Dict
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO graph_diffs
+                (customer_id, added_nodes, removed_nodes, added_edges, removed_edges, label)
+                VALUES (%s, %s, %s, %s, %s, %s)""",
+                (
+                    customer_id,
+                    json.dumps(
+                        list(diff.get("added_nodes", []))
+                    ),
+                    json.dumps(
+                        list(diff.get("removed_nodes", []))
+                    ),
+                    json.dumps(
+                        list(diff.get("added_edges", []))
+                    ),
+                    json.dumps(
+                        list(diff.get("removed_edges", []))
+                    ),
+                    diff.get("label"),
+                ),
+            )
+        self._conn.commit()
+
     # ── Markers ──────────────────────────────────────────────────────────
 
     def insert_marker(
@@ -444,6 +512,20 @@ ORDER BY (customer_id, created_at)
 """
 
 
+_CH_GRAPH_DIFFS_DDL = """
+CREATE TABLE IF NOT EXISTS graph_diffs (
+    customer_id    String,
+    snapshot_time  DateTime64(3) DEFAULT now(),
+    added_nodes    String,   -- JSON array
+    removed_nodes  String,
+    added_edges    String,
+    removed_edges  String,
+    label          Nullable(String)
+) ENGINE = MergeTree()
+ORDER BY (customer_id, snapshot_time);
+"""
+
+
 class ClickHouseRepository(BaseRepository):
     """
     ClickHouse-backed analytical store.
@@ -484,6 +566,7 @@ class ClickHouseRepository(BaseRepository):
             _CH_TRACE_SUMMARY_DDL,
             _CH_SNAPSHOTS_DDL,
             _CH_MARKERS_DDL,
+            _CH_GRAPH_DIFFS_DDL,
         ):
             try:
                 self._client.execute(ddl)
@@ -653,18 +736,43 @@ class ClickHouseRepository(BaseRepository):
 
     # ── Markers ──────────────────────────────────────────────────────────
 
-    def insert_marker(
+    def insert_deployment_marker(
         self, customer_id: str, label: str
     ) -> None:
-        try:
-            self._client.execute(
-                "INSERT INTO st_markers (customer_id, label, created_at) VALUES",
-                [(customer_id, label, time.time())],
-            )
-        except Exception as exc:
-            logger.warning(
-                "ClickHouse insert_marker failed: %s", exc
-            )
+        self._client.execute(
+            "INSERT INTO deployment_markers (customer_id, label) VALUES",
+            [{"customer_id": customer_id, "label": label}],
+        )
+
+    def insert_graph_diff(
+        self, customer_id: str, diff: Dict
+    ) -> None:
+        import json
+
+        self._client.execute(
+            """INSERT INTO graph_diffs
+            (customer_id, added_nodes, removed_nodes,
+                added_edges, removed_edges, label)
+            VALUES""",
+            [
+                {
+                    "customer_id": customer_id,
+                    "added_nodes": json.dumps(
+                        list(diff.get("added_nodes", []))
+                    ),
+                    "removed_nodes": json.dumps(
+                        list(diff.get("removed_nodes", []))
+                    ),
+                    "added_edges": json.dumps(
+                        list(diff.get("added_edges", []))
+                    ),
+                    "removed_edges": json.dumps(
+                        list(diff.get("removed_edges", []))
+                    ),
+                    "label": diff.get("label"),
+                }
+            ],
+        )
 
     def close(self) -> None:
         pass  # clickhouse-driver manages connections internally
@@ -687,10 +795,9 @@ class InMemoryRepository(BaseRepository):
         from collections import deque
 
         self._events: deque = deque(maxlen=max_events)
-        self._snapshots: Dict[str, Dict] = (
-            {}
-        )  # customer_id → latest snapshot dict
-        self._markers: List[Dict[str, Any]] = []
+        self._snapshots: Dict[str, Dict] = {}
+        self._markers = {}
+        self._diffs = {}
 
     # ── Events ──────────────────────────────────────────────────────────
 
@@ -754,16 +861,20 @@ class InMemoryRepository(BaseRepository):
 
     # ── Markers ──────────────────────────────────────────────────────────
 
-    def insert_marker(
+    def insert_deployment_marker(
         self, customer_id: str, label: str
     ) -> None:
-        self._markers.append(
-            {
-                "customer_id": customer_id,
-                "label": label,
-                "created_at": time.time(),
-            }
+        self._markers.setdefault(customer_id, []).append(
+            {"label": label, "created_at": time.time()}
         )
+
+    def insert_graph_diff(
+        self, customer_id: str, diff: Dict
+    ) -> None:
+        self._diffs.setdefault(customer_id, []).append(diff)
+        self._diffs[customer_id] = self._diffs[customer_id][
+            -500:
+        ]
 
     def close(self) -> None:
         pass

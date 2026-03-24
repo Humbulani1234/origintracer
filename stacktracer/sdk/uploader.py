@@ -186,8 +186,10 @@ class Uploader:
         # Stats
         self._events_sent_total: int = 0
         self._snapshots_sent: int = 0
+        self._diffs_sent: int = 0
         self._failed_event_sends: int = 0
         self._failed_snap_sends: int = 0
+        self._failed_diffs_sends: int = 0
 
     # ------------------------------------------------------------------ #
     # BaseRepository interface — Engine calls this per event
@@ -295,7 +297,6 @@ class Uploader:
         batch = self._event_buffer.drain(self._max_batch)
         if not batch:
             return
-        print(">>>>I RUN TOO")
         payload = {"events": batch, "count": len(batch)}
 
         try:
@@ -335,11 +336,11 @@ class Uploader:
                 "(pip install httpx)"
             )
         except httpx.TimeoutException:
-            print(">>>>TIMEOUT — backend not responding")
+            logger.debug(
+                "Timeout — backend not responding: %s", e
+            )
         except httpx.ConnectError as e:
-            print(">>>>CONNECT ERROR", e)
-        except Exception as e:
-            print(">>>>ERROR", type(e).__name__, e)
+            logger.debug("Connection error: %s", e)
         except Exception as exc:
             self._failed_event_sends += 1
             logger.debug("Event upload error: %s", exc)
@@ -350,48 +351,66 @@ class Uploader:
 
     def _flush_snapshot(self) -> None:
         """
-        Serialise the current RuntimeGraph and POST to /api/v1/graph/snapshot.
+        Serialize the current RuntimeGraph and upload it to the backend.
 
-        Serialisation happens here on the uploader thread — not on the
-        application thread and not on the drain thread. The graph's RLock
-        is held only for the duration of the serialisation read, which is
-        proportional to graph size (~5ms for 5000 nodes).
+        This method runs on the uploader thread and is responsible for:
+        1. Serializing the in-memory graph into a compact binary format
+        2. Sending a full snapshot to the backend
+        3. Optionally sending the latest incremental diff
 
-        FastAPI deserialises the bytes, stores them in memory and in the
-        database, and serves all graph queries from the deserialised graph.
+        Concurrency model:
+        - Serialization acquires the graph's RLock only for the duration
+            of the read, keeping contention minimal.
+        - Work is intentionally off the application thread to avoid
+            impacting request latency.
+
+        Network behavior:
+        - Snapshot uploads are relatively large (~MB scale) and use a longer timeout.
+        - Diff uploads are lightweight and use a shorter timeout.
+
+        Failure handling:
+        - Serialization failures abort the entire operation.
+        - Snapshot and diff uploads are tracked independently.
+        - All errors are logged at debug/warning level; no exceptions escape.
+
+        Backend contract:
+        - POST /api/v1/graph/snapshot → full graph replacement
+        - POST /api/v1/graph/diff     → incremental update
         """
         if self._engine is None:
-            print(">>>GRAPH SERIALISATION and we return home")
+            logger.debug(
+                "Snapshot skipped: engine not initialized"
+            )
             return
 
+        # --- Serialize graph ---
         try:
             data, content_type = _serialize_graph(
                 self._engine.graph
             )
-            print(">>>GRAPH SERIALISATION", data)
         except Exception as exc:
-            print(">>>GRAPH SERIALISATION")
-            logger.debug("Graph serialisation failed: %s", exc)
+            logger.debug("Graph serialization failed: %s", exc)
             return
 
-        try:
-            import httpx
+        import httpx
 
-            response = httpx.post(
+        # --- Send snapshot ---
+        try:
+            snapshot_resp = httpx.post(
                 f"{self._endpoint}/api/v1/graph/snapshot",
                 content=data,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": content_type,
                 },
-                timeout=30.0,  # snapshot can be ~1MB — allow more time
+                timeout=30.0,
             )
-            print(">>>GRAPH RESPONSE", response)
-            if response.status_code == 200:
+
+            if snapshot_resp.status_code == 200:
                 self._snapshots_sent += 1
-                info = response.json()
+                info = snapshot_resp.json()
                 logger.debug(
-                    "Snapshot uploaded: %d bytes  nodes=%s  edges=%s",
+                    "Snapshot uploaded: %d bytes nodes=%s edges=%s",
                     len(data),
                     info.get("nodes", "?"),
                     info.get("edges", "?"),
@@ -400,24 +419,85 @@ class Uploader:
                 self._failed_snap_sends += 1
                 logger.warning(
                     "Snapshot upload failed: HTTP %d — %s",
-                    response.status_code,
-                    response.text[:200],
+                    snapshot_resp.status_code,
+                    snapshot_resp.text[:200],
                 )
+                return  # ⛔ don’t send diff if snapshot failed
 
-        except ImportError:
-            pass  # already warned by _flush_events
-        except httpx.TimeoutException:
-            print(">>>>TIMEOUT — backend not responding")
-        except httpx.ConnectError as e:
-            print(">>>>CONNECT ERROR", e)
-        except Exception as e:
-            print(">>>>ERROR", type(e).__name__, e)
-        except Exception as exc:
-            self._failed_event_sends += 1
-            logger.debug("Event upload error: %s", exc)
+        except httpx.TimeoutException as exc:
+            self._failed_snap_sends += 1
+            logger.debug("Snapshot timeout: %s", exc)
+            return
+        except httpx.ConnectError as exc:
+            self._failed_snap_sends += 1
+            logger.debug("Snapshot connection error: %s", exc)
+            return
         except Exception as exc:
             self._failed_snap_sends += 1
             logger.debug("Snapshot upload error: %s", exc)
+            return
+
+        # --- Send latest diff (optional) ---
+        latest_diff = self._engine.temporal.latest_diff()
+        if not latest_diff:
+            return
+
+        try:
+            diff_resp = httpx.post(
+                f"{self._endpoint}/api/v1/graph/diff",
+                json=latest_diff,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}"
+                },
+                timeout=5.0,
+            )
+
+            if diff_resp.status_code == 200:
+                self._diffs_sent += 1
+                info = diff_resp.json()
+                logger.debug(
+                    "Diff uploaded: nodes=%s edges=%s",
+                    info.get("nodes", "?"),
+                    info.get("edges", "?"),
+                )
+            else:
+                self._failed_diffs_sends += 1
+                logger.warning(
+                    "Diff upload failed: HTTP %d — %s",
+                    diff_resp.status_code,
+                    diff_resp.text[:200],
+                )
+
+        except httpx.TimeoutException as exc:
+            self._failed_diffs_sends += 1
+            logger.debug("Diff timeout: %s", exc)
+        except httpx.ConnectError as exc:
+            self._failed_diffs_sends += 1
+            logger.debug("Diff connection error: %s", exc)
+        except Exception as exc:
+            self._failed_diffs_sends += 1
+            logger.debug("Diff upload error: %s", exc)
+
+    def send_deployment_marker(self, label: str) -> None:
+        try:
+            httpx.post(
+                f"{self._endpoint}/api/v1/deployment",
+                json={"label": label},
+                headers={
+                    "Authorization": f"Bearer {self._api_key}"
+                },
+                timeout=5.0,
+            )
+        except httpx.TimeoutException:
+            logger.debug(
+                "Timeout — backend not responding: %s", e
+            )
+        except httpx.ConnectError as e:
+            logger.debug("Connection error: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Failed to send deployment marker: %s", exc
+            )
 
     # ------------------------------------------------------------------ #
     # Stats
