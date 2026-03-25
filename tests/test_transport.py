@@ -16,7 +16,10 @@ import time
 import pytest
 
 from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.sdk.uploader import Uploader, _UploaderEventBuffer
+from stacktracer.sdk.uploader import (
+    Uploader,
+    _UploaderEventBuffer,
+)
 
 from .conftest import evt
 
@@ -72,7 +75,9 @@ class TestEventBuffer:
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=pusher) for _ in range(4)]
+        threads = [
+            threading.Thread(target=pusher) for _ in range(4)
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -102,7 +107,11 @@ class TestEmitter:
         emit(evt())
 
     def test_emit_after_bind_calls_engine_process(self):
-        from stacktracer.sdk.emitter import bind_engine, emit, flush
+        from stacktracer.sdk.emitter import (
+            bind_engine,
+            emit,
+            flush,
+        )
 
         processed = []
 
@@ -120,7 +129,12 @@ class TestEmitter:
         assert len(processed) == 1
 
     def test_bind_engine_twice_replaces_reference(self):
-        from stacktracer.sdk.emitter import bind_engine, emit, flush, unbind_engine
+        from stacktracer.sdk.emitter import (
+            bind_engine,
+            emit,
+            flush,
+            unbind_engine,
+        )
 
         calls_a, calls_b = [], []
 
@@ -234,7 +248,9 @@ class TestUploaderHTTPFlush:
     def setup_method(self):
         pytest.importorskip("httpx")
 
-    def test_flush_events_posts_to_correct_endpoint(self, monkeypatch):
+    def test_flush_events_posts_to_correct_endpoint(
+        self, monkeypatch
+    ):
         import httpx
 
         from stacktracer.sdk.uploader import Uploader
@@ -243,20 +259,29 @@ class TestUploaderHTTPFlush:
 
         def mock_post(url, **kwargs):
             requests_made.append({"url": url, "kwargs": kwargs})
-            return httpx.Response(200, json={"status": "ok", "stored": 1})
+            return httpx.Response(
+                200, json={"status": "ok", "stored": 1}
+            )
 
         monkeypatch.setattr(httpx, "post", mock_post)
 
-        u = Uploader(endpoint="http://backend:8000", api_key="sk_test")
+        u = Uploader(
+            endpoint="http://backend:8000", api_key="sk_test"
+        )
         u.insert_event(evt())
         u._flush_events()
 
         assert len(requests_made) == 1
-        assert requests_made[0]["url"] == "http://backend:8000/api/v1/events"
+        assert (
+            requests_made[0]["url"]
+            == "http://backend:8000/api/v1/events"
+        )
         headers = requests_made[0]["kwargs"]["headers"]
         assert headers["Authorization"] == "Bearer sk_test"
 
-    def test_flush_snapshot_posts_to_correct_endpoint(self, monkeypatch):
+    def test_flush_snapshot_posts_to_correct_endpoint(
+        self, monkeypatch
+    ):
         import httpx
 
         from stacktracer.core.runtime_graph import RuntimeGraph
@@ -275,17 +300,25 @@ class TestUploaderHTTPFlush:
         monkeypatch.setattr(httpx, "post", mock_post)
 
         # Initialize Uploader
-        u = Uploader(endpoint="http://backend:8000", api_key="sk_test")
+        u = Uploader(
+            endpoint="http://backend:8000", api_key="sk_test"
+        )
 
         # --- FIX: Mock the Engine's Temporal interface ---
         class FakeTemporal:
             def latest_diff(self):
                 # Return a dummy dict so the Uploader has something to send
-                return {"nodes": [], "edges": [], "label": "test-sync"}
+                return {
+                    "nodes": [],
+                    "edges": [],
+                    "label": "test-sync",
+                }
 
         class FakeEngine:
             graph = RuntimeGraph()
-            temporal = FakeTemporal()  # <--- This prevents the AttributeError
+            temporal = (
+                FakeTemporal()
+            )  # <--- This prevents the AttributeError
 
         u.bind_engine(FakeEngine())
         u._last_snapshot_flush_s = 0  # force immediate flush
@@ -293,32 +326,47 @@ class TestUploaderHTTPFlush:
         # This should now run without crashing
         u._flush_snapshot()
 
-        assert any("/api/v1/graph/snapshot" in url for url in requests_made)
+        assert any(
+            "/api/v1/graph/snapshot" in url
+            for url in requests_made
+        )
 
-    def test_flush_events_skips_when_buffer_empty(self, monkeypatch):
+    def test_flush_events_skips_when_buffer_empty(
+        self, monkeypatch
+    ):
         import httpx
 
         from stacktracer.sdk.uploader import Uploader
 
         calls = []
-        monkeypatch.setattr(httpx, "post", lambda *a, **k: calls.append(1))
+        monkeypatch.setattr(
+            httpx, "post", lambda *a, **k: calls.append(1)
+        )
 
-        u = Uploader(endpoint="http://backend:8000", api_key="sk_test")
+        u = Uploader(
+            endpoint="http://backend:8000", api_key="sk_test"
+        )
         u._flush_events()  # nothing in buffer
 
         assert calls == []
 
-    def test_failed_upload_increments_failed_counter(self, monkeypatch):
+    def test_failed_upload_increments_failed_counter(
+        self, monkeypatch
+    ):
         import httpx
 
         from stacktracer.sdk.uploader import Uploader
 
         def mock_post(*a, **k):
-            return httpx.Response(500, text="Internal Server Error")
+            return httpx.Response(
+                500, text="Internal Server Error"
+            )
 
         monkeypatch.setattr(httpx, "post", mock_post)
 
-        u = Uploader(endpoint="http://backend:8000", api_key="sk_test")
+        u = Uploader(
+            endpoint="http://backend:8000", api_key="sk_test"
+        )
         u.insert_event(evt())
         u._flush_events()
 

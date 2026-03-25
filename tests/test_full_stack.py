@@ -120,7 +120,9 @@ class TestNormalizedEvent:
     def test_round_trip_serialisation(self):
         from stacktracer.core.event_schema import NormalizedEvent
 
-        e = NormalizedEvent.now("request.entry", "t1", "django", "/api", method="GET")
+        e = NormalizedEvent.now(
+            "request.entry", "t1", "django", "/api", method="GET"
+        )
         d = e.to_dict()
         restored = NormalizedEvent.from_dict(d)
         assert restored.probe == e.probe
@@ -159,8 +161,12 @@ class TestRuntimeGraph:
         from stacktracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
-        g.upsert_node("svc::fn", "function", "svc", duration_ns=1000)
-        g.upsert_node("svc::fn", "function", "svc", duration_ns=2000)
+        g.upsert_node(
+            "svc::fn", "function", "svc", duration_ns=1000
+        )
+        g.upsert_node(
+            "svc::fn", "function", "svc", duration_ns=2000
+        )
         n = g._nodes["svc::fn"]
         assert n.call_count == 2
         assert n.total_duration_ns == 3000
@@ -169,8 +175,12 @@ class TestRuntimeGraph:
         from stacktracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
-        g.upsert_node("svc::fn", "function", "svc", duration_ns=1000)
-        g.upsert_node("svc::fn", "function", "svc", duration_ns=3000)
+        g.upsert_node(
+            "svc::fn", "function", "svc", duration_ns=1000
+        )
+        g.upsert_node(
+            "svc::fn", "function", "svc", duration_ns=3000
+        )
         assert g._nodes["svc::fn"].avg_duration_ns == 2000
 
     def test_add_edge_and_neighbors(self):
@@ -216,7 +226,9 @@ class TestRuntimeGraph:
         g.upsert_edge("A", "B", "calls")
         g.upsert_edge("B", "A", "calls")  # cycle
         reachable = g.reachable_from("A")
-        assert "B" in reachable  # should terminate, not loop forever
+        assert (
+            "B" in reachable
+        )  # should terminate, not loop forever
 
     def test_snapshot_contains_node_and_edge_ids(self):
         from stacktracer.core.runtime_graph import RuntimeGraph
@@ -233,7 +245,9 @@ class TestRuntimeGraph:
         from stacktracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
-        e = make_event("function.call", "django", "handle_export")
+        e = make_event(
+            "function.call", "django", "handle_export"
+        )
         g.add_from_event(e)
         assert "django::handle_export" in g._nodes
 
@@ -276,7 +290,9 @@ class TestTemporalStore:
         t.capture(g.snapshot())
         g.upsert_edge("A", "B", "calls")
         diff = t.capture(g.snapshot())
-        assert any("A" in k and "B" in k for k in diff.added_edge_keys)
+        assert any(
+            "A" in k and "B" in k for k in diff.added_edge_keys
+        )
 
     def test_new_edges_since(self):
         import time
@@ -313,7 +329,9 @@ class TestTemporalStore:
 class TestPatternRegistry:
 
     def test_register_and_match(self):
-        from stacktracer.core.active_requests import ActiveRequestTracker
+        from stacktracer.core.active_requests import (
+            ActiveRequestTracker,
+        )
         from stacktracer.core.causal import (
             CausalRule,
             PatternRegistry,
@@ -325,7 +343,11 @@ class TestPatternRegistry:
             return True, {"evidence": "always"}
 
         registry = PatternRegistry()
-        registry.register(CausalRule("test_rule", "Always matches", always_match, 0.9))
+        registry.register(
+            CausalRule(
+                "test_rule", "Always matches", always_match, 0.9
+            )
+        )
 
         g = RuntimeGraph()
         t = TemporalStore()
@@ -347,9 +369,13 @@ class TestPatternRegistry:
             raise RuntimeError("oops")
 
         registry = PatternRegistry()
-        registry.register(CausalRule("broken", "Broken rule", broken_rule, 0.5))
+        registry.register(
+            CausalRule("broken", "Broken rule", broken_rule, 0.5)
+        )
 
-        matches = registry.evaluate(RuntimeGraph(), TemporalStore())
+        matches = registry.evaluate(
+            RuntimeGraph(), TemporalStore()
+        )
         assert len(matches) == 1
         assert matches[0].confidence == 0.0
 
@@ -373,7 +399,9 @@ class TestPatternRegistry:
             duration_ns=50_000_000,
         )
 
-        matched, evidence = LOOP_STARVATION.predicate(g, TemporalStore())
+        matched, evidence = LOOP_STARVATION.predicate(
+            g, TemporalStore()
+        )
         assert matched
 
 
@@ -392,7 +420,9 @@ class TestSemanticLayer:
         )
 
         g = RuntimeGraph()
-        g.upsert_node("django::handle_export", "function", "django")
+        g.upsert_node(
+            "django::handle_export", "function", "django"
+        )
         g.upsert_node("django::other_fn", "function", "django")
 
         layer = SemanticLayer()
@@ -418,7 +448,9 @@ class TestSemanticLayer:
 
         g = RuntimeGraph()
         g.upsert_node("exporter::run", "function", "exporter")
-        g.upsert_node("exporter::cleanup", "function", "exporter")
+        g.upsert_node(
+            "exporter::cleanup", "function", "exporter"
+        )
         g.upsert_node("django::view", "function", "django")
 
         layer = SemanticLayer()
@@ -441,7 +473,10 @@ class TestSemanticLayer:
         from stacktracer.core.semantic import SemanticLayer
 
         layer = SemanticLayer()
-        assert layer.resolve_nodes("nonexistent", RuntimeGraph()) == set()
+        assert (
+            layer.resolve_nodes("nonexistent", RuntimeGraph())
+            == set()
+        )
 
     def test_regex_pattern(self):
         from stacktracer.core.runtime_graph import RuntimeGraph
@@ -451,8 +486,12 @@ class TestSemanticLayer:
         )
 
         g = RuntimeGraph()
-        g.upsert_node("django::flags_client.call", "function", "django")
-        g.upsert_node("django::flags_client.retry", "function", "django")
+        g.upsert_node(
+            "django::flags_client.call", "function", "django"
+        )
+        g.upsert_node(
+            "django::flags_client.retry", "function", "django"
+        )
         g.upsert_node("django::other", "function", "django")
 
         layer = SemanticLayer()
@@ -499,7 +538,11 @@ class TestEngine:
         ]
         for p in probes_in_order:
             time.sleep(0.001)  # ensure distinct timestamps
-            engine.process(make_event(p, "django", "/api", trace_id=trace_id))
+            engine.process(
+                make_event(
+                    p, "django", "/api", trace_id=trace_id
+                )
+            )
 
         path = engine.critical_path(trace_id)
         probes_found = [s["probe"] for s in path]
@@ -509,7 +552,9 @@ class TestEngine:
         path = engine.critical_path("nonexistent-trace")
         assert path == []
 
-    def test_hotspots_sorted_by_call_count(self, engine, trace_id):
+    def test_hotspots_sorted_by_call_count(
+        self, engine, trace_id
+    ):
         for _ in range(5):
             engine.process(
                 make_event(
@@ -529,12 +574,18 @@ class TestEngine:
         )
         hotspots = engine.hotspots(top_n=5)
         names = [h["node"] for h in hotspots]
-        assert names.index("django::hot_fn") < names.index("django::cold_fn")
+        assert names.index("django::hot_fn") < names.index(
+            "django::cold_fn"
+        )
 
     def test_snapshot_triggers_temporal_diff(self, engine):
-        engine.process(make_event("function.call", "django", "fn_a"))
+        engine.process(
+            make_event("function.call", "django", "fn_a")
+        )
         engine.snapshot()
-        engine.process(make_event("function.call", "django", "fn_b"))
+        engine.process(
+            make_event("function.call", "django", "fn_b")
+        )
         diff = engine.snapshot()
         assert "django::fn_b" in diff["added_nodes"]
 
@@ -571,7 +622,9 @@ class TestQueryParser:
     def test_show_events_with_limit(self):
         from stacktracer.query.parser import parse
 
-        q = parse('SHOW events WHERE probe = "asyncio.task.block" LIMIT 50')
+        q = parse(
+            'SHOW events WHERE probe = "asyncio.task.block" LIMIT 50'
+        )
         assert q.verb == "SHOW"
         assert q.filters["probe"] == "asyncio.task.block"
         assert q.limit == 50
@@ -647,7 +700,9 @@ class TestQueryExecutor:
             engine,
         )
         assert "data" in result
-        assert any(r["service"] == "django" for r in result["data"])
+        assert any(
+            r["service"] == "django" for r in result["data"]
+        )
 
     def test_hotspot_executor(self, engine, trace_id):
         for _ in range(3):
@@ -674,7 +729,9 @@ class TestQueryExecutor:
     def test_blame_unknown_system(self, engine):
         from stacktracer.query.parser import execute, parse
 
-        result = execute(parse('BLAME WHERE system = "nonexistent"'), engine)
+        result = execute(
+            parse('BLAME WHERE system = "nonexistent"'), engine
+        )
         assert "error" in result
 
     def test_trace_executor(self, engine, trace_id):
@@ -714,7 +771,9 @@ class TestInMemoryRepository:
         )
 
         repo = InMemoryRepository()
-        e = make_event("request.entry", "django", "/api", trace_id="t-1")
+        e = make_event(
+            "request.entry", "django", "/api", trace_id="t-1"
+        )
         repo.insert_event(e)
         results = repo.query_events(trace_id="t-1")
         assert len(results) == 1
@@ -726,10 +785,16 @@ class TestInMemoryRepository:
         )
 
         repo = InMemoryRepository()
-        repo.insert_event(make_event("request.entry", trace_id="t-2"))
-        repo.insert_event(make_event("asyncio.loop.tick", trace_id="t-2"))
+        repo.insert_event(
+            make_event("request.entry", trace_id="t-2")
+        )
+        repo.insert_event(
+            make_event("asyncio.loop.tick", trace_id="t-2")
+        )
         results = repo.query_events(probe="request.entry")
-        assert all(r["probe"] == "request.entry" for r in results)
+        assert all(
+            r["probe"] == "request.entry" for r in results
+        )
 
     def test_limit(self):
         from stacktracer.storage.base import (
@@ -738,7 +803,9 @@ class TestInMemoryRepository:
 
         repo = InMemoryRepository()
         for i in range(20):
-            repo.insert_event(make_event("request.entry", trace_id=f"t-{i}"))
+            repo.insert_event(
+                make_event("request.entry", trace_id=f"t-{i}")
+            )
         results = repo.query_events(limit=5)
         assert len(results) == 5
 
@@ -749,7 +816,9 @@ class TestInMemoryRepository:
 
         repo = InMemoryRepository(max_events=10)
         for i in range(20):
-            repo.insert_event(make_event("request.entry", trace_id=f"t-{i}"))
+            repo.insert_event(
+                make_event("request.entry", trace_id=f"t-{i}")
+            )
         assert len(repo) == 10
 
 
@@ -771,7 +840,9 @@ class TestAsyncioProbe:
         probe.stop()
 
     @pytest.mark.asyncio
-    async def test_task_step_does_not_break_execution(self, engine, trace_id):
+    async def test_task_step_does_not_break_execution(
+        self, engine, trace_id
+    ):
         """Most important test: patching must not interfere with async execution."""
         from stacktracer.context.vars import (
             reset_trace,

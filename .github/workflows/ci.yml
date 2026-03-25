@@ -31,7 +31,7 @@ jobs:
         run: pip install black ruff
 
       - name: black check
-        run: black --check --line-length 100 stacktracer/
+        run: black --check --line-length 65 stacktracer/
 
       - name: ruff check
         run: ruff check stacktracer/

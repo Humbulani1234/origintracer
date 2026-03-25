@@ -34,14 +34,20 @@ class TestRuntimeGraph:
 
     def test_upsert_node_creates_and_increments(self):
         self.g.upsert_node("svc::fn", "function", "svc")
-        self.g.upsert_node("svc::fn", "function", "svc", duration_ns=2000)
+        self.g.upsert_node(
+            "svc::fn", "function", "svc", duration_ns=2000
+        )
         n = self.g._nodes["svc::fn"]
         assert n.call_count == 2
         assert n.total_duration_ns == 2000
 
     def test_avg_duration_computed_correctly(self):
-        self.g.upsert_node("svc::fn", "function", "svc", duration_ns=1000)
-        self.g.upsert_node("svc::fn", "function", "svc", duration_ns=3000)
+        self.g.upsert_node(
+            "svc::fn", "function", "svc", duration_ns=1000
+        )
+        self.g.upsert_node(
+            "svc::fn", "function", "svc", duration_ns=3000
+        )
         assert self.g._nodes["svc::fn"].avg_duration_ns == 2000
 
     def test_edge_deduplication(self):
@@ -102,7 +108,10 @@ class TestRuntimeGraph:
         self.g.add_from_event(e1)
         self.g.add_from_event(e2, parent_event=e1)
         assert len(self.g.neighbors("nginx::upstream")) == 1
-        assert self.g.neighbors("nginx::upstream")[0].target == "django::view"
+        assert (
+            self.g.neighbors("nginx::upstream")[0].target
+            == "django::view"
+        )
 
     def test_add_from_event_duration_ns_top_level_field(self):
         """
@@ -245,14 +254,19 @@ class TestRuntimeGraph:
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=worker, args=(f"svc{i}",)) for i in range(5)]
+        threads = [
+            threading.Thread(target=worker, args=(f"svc{i}",))
+            for i in range(5)
+        ]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
         assert not errors
-        assert len(self.g._nodes) == 500  # 5 services × 100 nodes each
+        assert (
+            len(self.g._nodes) == 500
+        )  # 5 services × 100 nodes each
 
 
 # ====================================================================== #
@@ -282,7 +296,9 @@ class TestTemporalStore:
     def test_capture_detects_removed_node(self):
         self.g.upsert_node("A", "fn", "svc")
         self.store.capture(self.g.snapshot())
-        del self.g._nodes["A"]  # simulate compaction removing node
+        del self.g._nodes[
+            "A"
+        ]  # simulate compaction removing node
         diff = self.store.capture(self.g.snapshot())
         assert "A" in diff.removed_node_ids
 
@@ -324,7 +340,9 @@ class TestTemporalStore:
         time.sleep(0.01)
         self.store.mark_event("after")
         target = self.store.label_diff("target")
-        nearby = self.store.changes_around(target.timestamp, window_seconds=0.05)
+        nearby = self.store.changes_around(
+            target.timestamp, window_seconds=0.05
+        )
         labels = [d.label for d in nearby]
         assert "before" in labels
         assert "target" in labels
@@ -367,12 +385,16 @@ class TestGraphNormalizer:
         assert "{uuid}" in result
 
     def test_numeric_id_collapsed(self):
-        result = self.n.normalize("django", "/api/orders/12345/items")
+        result = self.n.normalize(
+            "django", "/api/orders/12345/items"
+        )
         assert "12345" not in result
         assert "{id}" in result
 
     def test_memory_address_collapsed(self):
-        result = self.n.normalize("asyncio", "coro <coroutine object at 0x7f3a2b4c>")
+        result = self.n.normalize(
+            "asyncio", "coro <coroutine object at 0x7f3a2b4c>"
+        )
         assert "0x7f3a" not in result
 
     def test_sql_literals_collapsed(self):
@@ -399,7 +421,9 @@ class TestGraphNormalizer:
             service="celery",
             fn=lambda name: name.split("[")[0].strip(),
         )
-        result = self.n.normalize("celery", "tasks.process_order[abc-123]")
+        result = self.n.normalize(
+            "celery", "tasks.process_order[abc-123]"
+        )
         assert "[" not in result
         assert result == "tasks.process_order"
 
@@ -419,12 +443,17 @@ class TestGraphNormalizer:
         n = __import__(
             "stacktracer.core.graph_normalizer",
             fromlist=["GraphNormalizer"],
-        ).GraphNormalizer(enable_builtins=False, max_unique_names_per_service=5)
+        ).GraphNormalizer(
+            enable_builtins=False, max_unique_names_per_service=5
+        )
         results = set()
         for i in range(10):
             results.add(n.normalize("svc", f"unique_name_{i}"))
         # First 5 pass through, remaining overflow to sentinel
-        assert any("overflow" in r or "high_cardinality" in r for r in results)
+        assert any(
+            "overflow" in r or "high_cardinality" in r
+            for r in results
+        )
 
 
 # ====================================================================== #
@@ -434,7 +463,9 @@ class TestGraphNormalizer:
 
 class TestGraphCompactor:
 
-    def _make_graph_with_nodes(self, count: int, cold: bool = False):
+    def _make_graph_with_nodes(
+        self, count: int, cold: bool = False
+    ):
         from stacktracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
@@ -455,7 +486,9 @@ class TestGraphCompactor:
         c = GraphCompactor(node_ttl_s=3600.0, min_call_count=999)
         stats = c.compact(g)
         assert stats["evicted_nodes"] == 10
-        assert stats["reason"].startswith("ttl")  # Verify it was a TTL eviction
+        assert stats["reason"].startswith(
+            "ttl"
+        )  # Verify it was a TTL eviction
         assert stats["node_count_after"] == 0
 
     def test_ttl_eviction_spares_hot_nodes(self):
@@ -478,7 +511,9 @@ class TestGraphCompactor:
         c = GraphCompactor(node_ttl_s=3600.0, min_call_count=5)
         c.compact(g)
 
-        assert "svc::hot" in g._nodes  # protected by min_call_count
+        assert (
+            "svc::hot" in g._nodes
+        )  # protected by min_call_count
         assert "svc::cold" not in g._nodes
 
     def test_cap_eviction_when_over_limit(self):
@@ -490,14 +525,19 @@ class TestGraphCompactor:
 
         # FIX: Set min_call_count to 0 so the "hot node" protection is disabled
         c = GraphCompactor(
-            max_nodes=50, evict_to_ratio=0.8, node_ttl_s=999_999, min_call_count=0  # <--- ADD THIS
+            max_nodes=50,
+            evict_to_ratio=0.8,
+            node_ttl_s=999_999,
+            min_call_count=0,  # <--- ADD THIS
         )
 
         stats = c.compact(g)
 
         # Also fix the stats key mismatch we found earlier
         assert len(g._nodes) <= 50
-        assert stats["evicted_nodes"] > 0  # Use "evicted_nodes" instead of "cap_evicted"
+        assert (
+            stats["evicted_nodes"] > 0
+        )  # Use "evicted_nodes" instead of "cap_evicted"
 
     def test_compact_runs_counter_increments(self):
         from stacktracer.core.graph_compactor import (

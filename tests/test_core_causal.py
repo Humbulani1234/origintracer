@@ -43,7 +43,11 @@ from stacktracer.core.temporal import TemporalStore
 
 def fresh():
     """Return a clean (graph, temporal) pair."""
-    return RuntimeGraph(), TemporalStore(), ActiveRequestTracker()
+    return (
+        RuntimeGraph(),
+        TemporalStore(),
+        ActiveRequestTracker(),
+    )
 
 
 # ====================================================================== #
@@ -72,7 +76,9 @@ class TestPatternRegistry:
             return True, {"key": "value"}
 
         r = PatternRegistry()
-        r.register(CausalRule(name="r", description="d", predicate=pred))
+        r.register(
+            CausalRule(name="r", description="d", predicate=pred)
+        )
         g, t, a = fresh()
         matches = r.evaluate(g, t, a)
         assert len(matches) == 1
@@ -163,8 +169,12 @@ class TestPatternRegistry:
         """
         r = build_default_registry()
         names = r.rule_names()
-        assert names.index("n_plus_one_queries") < names.index("db_query_hotspot")
-        assert names.index("new_sync_call_after_deployment") < names.index("retry_amplification")
+        assert names.index("n_plus_one_queries") < names.index(
+            "db_query_hotspot"
+        )
+        assert names.index(
+            "new_sync_call_after_deployment"
+        ) < names.index("retry_amplification")
 
     def test_build_default_registry_without_tracker_is_safe(
         self,
@@ -173,7 +183,11 @@ class TestPatternRegistry:
         r = build_default_registry(tracker=None)
         g, t, a = fresh()
         matches = r.evaluate(g, t, a)
-        anomalies = [m for m in matches if m.rule_name == "request_duration_anomaly"]
+        anomalies = [
+            m
+            for m in matches
+            if m.rule_name == "request_duration_anomaly"
+        ]
         assert anomalies == []
 
 
@@ -196,7 +210,9 @@ class TestRetryAmplification:
         r = PatternRegistry()
         r.register(RETRY_AMPLIFICATION)
         matches = r.evaluate(g, t, a)
-        assert any(m.rule_name == "retry_amplification" for m in matches)
+        assert any(
+            m.rule_name == "retry_amplification" for m in matches
+        )
 
     def test_silent_when_no_retries(self):
         g, t, a = fresh()
@@ -232,7 +248,10 @@ class TestNewSyncCallAfterDeployment:
         r = PatternRegistry()
         r.register(NEW_SYNC_CALL)
         matches = r.evaluate(g, t, a)
-        assert any(m.rule_name == "new_sync_call_after_deployment" for m in matches)
+        assert any(
+            m.rule_name == "new_sync_call_after_deployment"
+            for m in matches
+        )
 
     def test_silent_without_deployment_marker(self):
         g, t, a = fresh()
@@ -265,13 +284,18 @@ class TestLoopStarvation:
         r = PatternRegistry()
         r.register(LOOP_STARVATION)
         matches = r.evaluate(g, t, a)
-        assert any(m.rule_name == "asyncio_event_loop_starvation" for m in matches)
+        assert any(
+            m.rule_name == "asyncio_event_loop_starvation"
+            for m in matches
+        )
 
     def test_silent_when_loop_tick_fast(self):
         g, t, a = fresh()
         g.upsert_node("asyncio::loop.tick", "asyncio", "asyncio")
         node = g._nodes["asyncio::loop.tick"]
-        node.total_duration_ns = 1_000_000  # 1ms — well below 10ms threshold
+        node.total_duration_ns = (
+            1_000_000  # 1ms — well below 10ms threshold
+        )
         node.call_count = 1
         node.node_type = "asyncio"
 
@@ -292,7 +316,9 @@ class TestDbQueryHotspot:
     Threshold: a single query node call_count > 30% of total and > 5.
     """
 
-    def _db_node(self, g: RuntimeGraph, node_id: str, call_count: int) -> None:
+    def _db_node(
+        self, g: RuntimeGraph, node_id: str, call_count: int
+    ) -> None:
         """Add a DB query node with correct probe metadata."""
         for _ in range(call_count):
             g.upsert_node(
@@ -312,21 +338,34 @@ class TestDbQueryHotspot:
             call_count=10,
         )
         self._db_node(g, "django::SELECT author", call_count=1)
-        g.upsert_node("django::NPlusOneView", "django", "django")  # no probe metadata
+        g.upsert_node(
+            "django::NPlusOneView", "django", "django"
+        )  # no probe metadata
 
         r = PatternRegistry()
         r.register(DB_HOTSPOT)
         matches = r.evaluate(g, t, a)
-        assert any(m.rule_name == "db_query_hotspot" for m in matches)
+        assert any(
+            m.rule_name == "db_query_hotspot" for m in matches
+        )
         # Evidence must name the hotspot query
-        evidence = next(m for m in matches if m.rule_name == "db_query_hotspot").evidence
-        assert any("SELECT book" in q["node"] for q in evidence.get("hotspot_queries", []))
+        evidence = next(
+            m
+            for m in matches
+            if m.rule_name == "db_query_hotspot"
+        ).evidence
+        assert any(
+            "SELECT book" in q["node"]
+            for q in evidence.get("hotspot_queries", [])
+        )
 
     def test_silent_when_calls_evenly_distributed(self):
         g, t, a = fresh()
         # Ten DB queries with equal counts — none exceeds 30%
         for i in range(10):
-            self._db_node(g, f"django::SELECT table_{i}", call_count=2)
+            self._db_node(
+                g, f"django::SELECT table_{i}", call_count=2
+            )
 
         r = PatternRegistry()
         r.register(DB_HOTSPOT)
@@ -359,7 +398,9 @@ class TestNPlusOne:
     view parents. Ratio = db.call_count / view.call_count.
     """
 
-    def _build_nplusone_graph(self, db_calls: int = 10, view_calls: int = 1) -> RuntimeGraph:
+    def _build_nplusone_graph(
+        self, db_calls: int = 10, view_calls: int = 1
+    ) -> RuntimeGraph:
         g = RuntimeGraph()
         # View node
         g.upsert_node(
@@ -401,7 +442,9 @@ class TestNPlusOne:
         r = PatternRegistry()
         r.register(N_PLUS_ONE)
         matches = r.evaluate(g, t, a)
-        assert any(m.rule_name == "n_plus_one_queries" for m in matches)
+        assert any(
+            m.rule_name == "n_plus_one_queries" for m in matches
+        )
 
     def test_evidence_contains_ratio(self):
         g, t, a = fresh()
@@ -411,7 +454,11 @@ class TestNPlusOne:
         r.register(N_PLUS_ONE)
         # In test_core_causal.py
         matches = r.evaluate(g, t, a)
-        m = next(m for m in matches if m.rule_name == "n_plus_one_queries")
+        m = next(
+            m
+            for m in matches
+            if m.rule_name == "n_plus_one_queries"
+        )
         # 1. Get the list of patterns
         patterns = m.evidence.get("n_plus_one_patterns", [])
         # 2. Verify we found at least one pattern
@@ -419,9 +466,17 @@ class TestNPlusOne:
         # 3. Check that the pattern we care about has the correct ratio
         # This works whether there is 1 pattern or 100 patterns.
         target_pattern = next(
-            (p for p in patterns if p["query"] == "django::SELECT book WHERE author_id=%s"), None
+            (
+                p
+                for p in patterns
+                if p["query"]
+                == "django::SELECT book WHERE author_id=%s"
+            ),
+            None,
         )
-        assert target_pattern is not None, "The expected N+1 query was not found in evidence"
+        assert (
+            target_pattern is not None
+        ), "The expected N+1 query was not found in evidence"
         assert target_pattern["ratio"] >= 5
 
     def test_silent_when_ratio_below_threshold(self):
@@ -499,11 +554,15 @@ class TestWorkerImbalance:
         r = PatternRegistry()
         r.register(WORKER_IMBALANCE)
         matches = r.evaluate(g, t, a)
-        assert any(m.rule_name == "worker_imbalance" for m in matches)
+        assert any(
+            m.rule_name == "worker_imbalance" for m in matches
+        )
 
     def test_silent_when_workers_balanced(self):
         g, t, a = fresh()
-        g = self._build_imbalanced_workers([5, 5, 4])  # ratio ≈ 1.25 — balanced
+        g = self._build_imbalanced_workers(
+            [5, 5, 4]
+        )  # ratio ≈ 1.25 — balanced
 
         r = PatternRegistry()
         r.register(WORKER_IMBALANCE)
@@ -525,7 +584,11 @@ class TestWorkerImbalance:
         r = PatternRegistry()
         r.register(WORKER_IMBALANCE)
         matches = r.evaluate(g, t, a)
-        m = next(m for m in matches if m.rule_name == "worker_imbalance")
+        m = next(
+            m
+            for m in matches
+            if m.rule_name == "worker_imbalance"
+        )
         assert "busiest_worker" in m.evidence
         assert "ratio" in m.evidence
         assert m.evidence["ratio"] >= 2.0
@@ -555,15 +618,21 @@ class TestRequestDurationAnomaly:
         # Simulate 50 historical completions
         for i in range(50):
             tid = f"hist-{i}"
-            tracker.start(trace_id=tid, service="django", pattern=pattern)
+            tracker.start(
+                trace_id=tid, service="django", pattern=pattern
+            )
             span = tracker._active[tid]
-            span.start_time -= fast_avg_ms / 1000  # fast completion
+            span.start_time -= (
+                fast_avg_ms / 1000
+            )  # fast completion
             tracker.complete(trace_id=tid)
 
         # Simulate 10 recent slow completions
         for i in range(10):
             tid = f"slow-{i}"
-            tracker.start(trace_id=tid, service="django", pattern=pattern)
+            tracker.start(
+                trace_id=tid, service="django", pattern=pattern
+            )
             span = tracker._active[tid]
             span.start_time -= slow_p99_ms / 1000
             tracker.complete(trace_id=tid)
@@ -592,10 +661,15 @@ class TestRequestDurationAnomaly:
         r = PatternRegistry()
         r.register(REQUEST_DURATION_ANOMALY)
         matches = r.evaluate(g, t, tracker)
-        assert any(m.rule_name == "request_duration_anomaly" for m in matches)
+        assert any(
+            m.rule_name == "request_duration_anomaly"
+            for m in matches
+        )
 
     def test_silent_when_latency_within_normal_range(self):
-        from stacktracer.core.causal import REQUEST_DURATION_ANOMALY
+        from stacktracer.core.causal import (
+            REQUEST_DURATION_ANOMALY,
+        )
 
         pattern = "django::/api/users/{id}/"
         self._make_tracker_with_history(
@@ -616,7 +690,9 @@ class TestRequestDurationAnomaly:
 
     def test_silent_when_tracker_is_none(self):
         """Anomaly rule with tracker=None must never crash."""
-        from stacktracer.core.causal import REQUEST_DURATION_ANOMALY
+        from stacktracer.core.causal import (
+            REQUEST_DURATION_ANOMALY,
+        )
 
         rule = REQUEST_DURATION_ANOMALY
         g, t, a = fresh()

@@ -60,7 +60,9 @@ def _load_package_defaults() -> Dict[str, Any]:
     """
     import yaml
 
-    defaults_path = os.path.join(os.path.dirname(__file__), "config", "defaults.yaml")
+    defaults_path = os.path.join(
+        os.path.dirname(__file__), "config", "defaults.yaml"
+    )
     if not os.path.exists(defaults_path):
         logger.warning(
             "stacktracer: defaults.yaml missing from package installation at %s. "
@@ -71,7 +73,9 @@ def _load_package_defaults() -> Dict[str, Any]:
         return {}
     with open(defaults_path) as f:
         data = yaml.safe_load(f) or {}
-    logger.debug("Package defaults loaded from %s", defaults_path)
+    logger.debug(
+        "Package defaults loaded from %s", defaults_path
+    )
     return data
 
 
@@ -89,7 +93,9 @@ def _find_user_config(
     if explicit_path:
         if os.path.exists(explicit_path):
             return explicit_path
-        logger.warning("Explicit config path not found: %s", explicit_path)
+        logger.warning(
+            "Explicit config path not found: %s", explicit_path
+        )
         return None
 
     env_path = os.getenv("STACKTRACER_CONFIG")
@@ -121,25 +127,43 @@ def _load_user_config(path: Optional[str]) -> Dict[str, Any]:
         logger.info("User config loaded from %s", path)
         return data
     except Exception as exc:
-        logger.warning("Could not load user config %s: %s", path, exc)
+        logger.warning(
+            "Could not load user config %s: %s", path, exc
+        )
         return {}
 
 
 def _deep_merge(base: Dict, override: Dict) -> Dict:
     result = dict(base)
     for key, val in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+        if (
+            key in result
+            and isinstance(result[key], dict)
+            and isinstance(val, dict)
+        ):
             result[key] = _deep_merge(result[key], val)
 
         # ADD THIS EXCEPTION:
-        elif key == "semantic" and key in result and isinstance(val, list):
+        elif (
+            key == "semantic"
+            and key in result
+            and isinstance(val, list)
+        ):
             # Pass an empty list for the init_kwarg since we are only
             # merging the file-based configurations here.
-            result[key] = _merge_semantic(defaults=result[key], user_yaml=val, init_kwarg=[])
+            result[key] = _merge_semantic(
+                defaults=result[key],
+                user_yaml=val,
+                init_kwarg=[],
+            )
 
         # Inside _deep_merge in stacktracer/__init__.py
 
-        elif key == "normalize" and key in result and isinstance(val, list):
+        elif (
+            key == "normalize"
+            and key in result
+            and isinstance(val, list)
+        ):
             # If the user provides an empty list, it means "clear the defaults"
             # If they provide rules, they override the defaults
             if not val:
@@ -205,7 +229,9 @@ class ResolvedConfig:
     snapshot_interval: float
     redact_fields: List[str]
     probes: List[str]
-    builtin_probes: List[str]  # module paths — from defaults.yaml
+    builtin_probes: List[
+        str
+    ]  # module paths — from defaults.yaml
     semantic: List[Dict]
     normalize: List[Dict]
     compactor: Dict[str, Any]
@@ -218,7 +244,10 @@ class ResolvedConfig:
     config_path: Optional[str]
 
     def __post_init__(self) -> None:
-        if os.getenv("DJANGO_DEBUG", "false").lower() == "true" and not self.debug:
+        if (
+            os.getenv("DJANGO_DEBUG", "false").lower() == "true"
+            and not self.debug
+        ):
             logger.info(
                 "StackTracer: DJANGO_DEBUG=True — disabling. "
                 "Pass debug=True to stacktracer.init() to enable in dev."
@@ -265,11 +294,15 @@ def _build_resolved_config(
         api_key=api_key,
         endpoint=endpoint,
         sample_rate=(
-            sample_rate if sample_rate is not None else merged_yaml.get("sample_rate", 0.01)
+            sample_rate
+            if sample_rate is not None
+            else merged_yaml.get("sample_rate", 0.01)
         ),
         buffer_size=merged_yaml.get("buffer_size", 10_000),
         flush_interval=(
-            flush_interval if flush_interval is not None else merged_yaml.get("flush_interval", 10)
+            flush_interval
+            if flush_interval is not None
+            else merged_yaml.get("flush_interval", 10)
         ),
         snapshot_interval=(
             snapshot_interval
@@ -277,18 +310,26 @@ def _build_resolved_config(
             else merged_yaml.get("snapshot_interval", 15.0)
         ),
         redact_fields=merged_yaml.get("redact_fields", []),
-        probes=(probes if probes is not None else merged_yaml.get("probes", [])),
+        probes=(
+            probes
+            if probes is not None
+            else merged_yaml.get("probes", [])
+        ),
         builtin_probes=merged_yaml.get("builtin_probes", []),
         semantic=resolved_semantic,
         normalize=resolved_normalize,
-        compactor=_deep_merge(merged_yaml.get("compactor", {}), compactor or {}),
+        compactor=_deep_merge(
+            merged_yaml.get("compactor", {}), compactor or {}
+        ),
         nginx=merged_yaml.get("nginx", {}),
         gunicorn=merged_yaml.get("gunicorn", {}),
         active_requests=_deep_merge(
             merged_yaml.get("active_requests", {}),
             active_requests or {},
         ),
-        observe=_deep_merge(merged_yaml.get("observe", {}), observe or {}),
+        observe=_deep_merge(
+            merged_yaml.get("observe", {}), observe or {}
+        ),
         debug=debug,
         enabled=True,
         config_path=config_path,
@@ -390,7 +431,9 @@ def _init_engine(
     return engine
 
 
-def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
+def _init_probes(
+    cfg: ResolvedConfig, engine: Any, app_root: str
+) -> List[Any]:
     """
     1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
        Side-effect: each module registers its BaseProbe subclass with ProbeRegistry.
@@ -411,7 +454,9 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
     # Builtin modules from defaults.yaml — no hardcoded list
     for module_path in cfg.builtin_probes:
         try:
-            importlib.import_module(module_path, package=__name__)
+            importlib.import_module(
+                module_path, package=__name__
+            )
         except ImportError as exc:
             logger.debug(
                 "Builtin probe module not available: %s — %s",
@@ -423,7 +468,9 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
     _discover_user_probes(app_root)
 
     # Start probes named in cfg.probes
-    probes = ProbeRegistry.load_from_config({"probes": cfg.probes})
+    probes = ProbeRegistry.load_from_config(
+        {"probes": cfg.probes}
+    )
 
     print(">>>PROBES:", probes)
     started = []
@@ -433,7 +480,9 @@ def _init_probes(cfg: ResolvedConfig, engine: Any, app_root: str) -> List[Any]:
             started.append(probe)
             logger.info("Probe started: %s", probe.name)
         except Exception as exc:
-            logger.warning("Probe %s failed to start: %s", probe.name, exc)
+            logger.warning(
+                "Probe %s failed to start: %s", probe.name, exc
+            )
 
     return started
 
@@ -462,16 +511,22 @@ def _discover_user_probes(app_root: str) -> None:
 
     probes_dir = os.path.join(app_root, "probes")
     if not os.path.isdir(probes_dir):
-        logger.debug("User probe directory not found: %s", probes_dir)
+        logger.debug(
+            "User probe directory not found: %s", probes_dir
+        )
         return
 
     for fname in sorted(os.listdir(probes_dir)):
-        if not fname.endswith("_probe.py") or fname.startswith("__"):
+        if not fname.endswith("_probe.py") or fname.startswith(
+            "__"
+        ):
             continue
         full_path = os.path.join(probes_dir, fname)
         module_name = f"_stacktracer_user_probe_{fname[:-3]}"
         try:
-            spec = importlib.util.spec_from_file_location(module_name, full_path)
+            spec = importlib.util.spec_from_file_location(
+                module_name, full_path
+            )
             module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
             sys.modules[module_name] = module
             spec.loader.exec_module(module)  # type: ignore[union-attr]
@@ -498,12 +553,16 @@ def _discover_user_rules(registry: Any, app_root: str) -> None:
         return
 
     for fname in sorted(os.listdir(rules_dir)):
-        if not fname.endswith("_rules.py") or fname.startswith("__"):
+        if not fname.endswith("_rules.py") or fname.startswith(
+            "__"
+        ):
             continue
         full_path = os.path.join(rules_dir, fname)
         module_name = f"_stacktracer_user_rule_{fname[:-3]}"
         try:
-            spec = importlib.util.spec_from_file_location(module_name, full_path)
+            spec = importlib.util.spec_from_file_location(
+                module_name, full_path
+            )
             module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
             sys.modules[module_name] = module
             spec.loader.exec_module(module)  # type: ignore[union-attr]
@@ -540,11 +599,15 @@ def _init_local_server(engine: Any) -> Any:
         server.start()
         return server
     except Exception as exc:
-        logger.warning("Local query server failed to start: %s", exc)
+        logger.warning(
+            "Local query server failed to start: %s", exc
+        )
         return None
 
 
-def _init_uploader(cfg: ResolvedConfig, engine: Any) -> Optional[Any]:
+def _init_uploader(
+    cfg: ResolvedConfig, engine: Any
+) -> Optional[Any]:
     global _uploader
     if not cfg.api_key:
         logger.debug("Uploader: no api_key — skipping")
@@ -558,7 +621,9 @@ def _init_uploader(cfg: ResolvedConfig, engine: Any) -> Optional[Any]:
             flush_interval=cfg.flush_interval,
             max_batch_size=500,
         )
-        uploader.bind_engine(engine)  # ← give uploader the engine
+        uploader.bind_engine(
+            engine
+        )  # ← give uploader the engine
         uploader.start()
         engine.repository = uploader
         _uploader = uploader
@@ -745,7 +810,9 @@ def init(
 
 def get_config() -> "ResolvedConfig":
     if _config is None:
-        raise RuntimeError("stacktracer.init() has not been called")
+        raise RuntimeError(
+            "stacktracer.init() has not been called"
+        )
     return _config
 
 
@@ -765,7 +832,9 @@ def shutdown() -> None:
         try:
             probe.stop()
         except Exception as exc:
-            logger.debug("Probe %s stop error: %s", probe.name, exc)
+            logger.debug(
+                "Probe %s stop error: %s", probe.name, exc
+            )
     _active_probes = []
 
     if _uploader:
@@ -803,15 +872,21 @@ def trace(name: Optional[str] = None):
         if is_async:
 
             @functools.wraps(fn)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                return await _traced_call(fn, fn_name, args, kwargs, is_async=True)
+            async def async_wrapper(
+                *args: Any, **kwargs: Any
+            ) -> Any:
+                return await _traced_call(
+                    fn, fn_name, args, kwargs, is_async=True
+                )
 
             return async_wrapper
         else:
 
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                return _traced_call(fn, fn_name, args, kwargs, is_async=False)
+                return _traced_call(
+                    fn, fn_name, args, kwargs, is_async=False
+                )
 
             return sync_wrapper
 
@@ -822,7 +897,9 @@ def _is_async_fn(fn: Any) -> bool:
     import asyncio
     import inspect
 
-    return asyncio.iscoroutinefunction(fn) or inspect.iscoroutinefunction(fn)
+    return asyncio.iscoroutinefunction(
+        fn
+    ) or inspect.iscoroutinefunction(fn)
 
 
 def _traced_call(fn, fn_name, args, kwargs, is_async):
@@ -866,16 +943,22 @@ def _traced_call(fn, fn_name, args, kwargs, is_async):
                 trace_id=trace_id,
                 service="user",
                 name=fn_name,
-                duration_ns=int((_time.perf_counter() - start) * 1e9),
+                duration_ns=int(
+                    (_time.perf_counter() - start) * 1e9
+                ),
             )
         )
 
 
 def mark_deployment(label: str = "deployment") -> None:
     if _engine:
-        _engine.mark_deployment(label)  # writes to local TemporalStore
+        _engine.mark_deployment(
+            label
+        )  # writes to local TemporalStore
     if _uploader:
-        _uploader.send_deployment_marker(label)  # tells FastAPI backend
+        _uploader.send_deployment_marker(
+            label
+        )  # tells FastAPI backend
     else:
         logger.warning("mark_deployment called before init()")
 

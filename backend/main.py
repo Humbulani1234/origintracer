@@ -50,7 +50,13 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -112,7 +118,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production with explicit origins
+    allow_origins=[
+        "*"
+    ],  # tighten in production with explicit origins
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -153,7 +161,8 @@ def _load_api_keys() -> None:
     if not _valid_api_keys:
         _valid_api_keys["dev-key-00000000"] = "dev_customer"
         logger.warning(
-            "STACKTRACER_API_KEYS not set — " "dev-key-00000000 accepted (not safe for production)"
+            "STACKTRACER_API_KEYS not set — "
+            "dev-key-00000000 accepted (not safe for production)"
         )
 
 
@@ -176,7 +185,9 @@ def _init_repository() -> None:
 
             conn = psycopg2.connect(db_dsn)
             _repository = EventRepository(conn)
-            logger.info("Storage: PostgreSQL (%s)", db_dsn.split("@")[-1])
+            logger.info(
+                "Storage: PostgreSQL (%s)", db_dsn.split("@")[-1]
+            )
             return
         except Exception as exc:
             logger.warning(
@@ -202,7 +213,9 @@ def _init_repository() -> None:
     from stacktracer.storage.base import InMemoryRepository
 
     _repository = InMemoryRepository()
-    logger.info("Storage: InMemory (dev mode — data lost on restart)")
+    logger.info(
+        "Storage: InMemory (dev mode — data lost on restart)"
+    )
 
 
 def _load_snapshots_on_startup() -> None:
@@ -231,7 +244,8 @@ def _load_snapshots_on_startup() -> None:
 
             serializer = (
                 ProtobufSerializer()
-                if row["content_type"] == "application/x-protobuf"
+                if row["content_type"]
+                == "application/x-protobuf"
                 else MsgpackSerializer()
             )
             graph = serializer.deserialize(row["data"])
@@ -259,7 +273,9 @@ def _load_snapshots_on_startup() -> None:
 
 def _authenticate(authorization: Optional[str]) -> str:
     """Validate Bearer token, return customer_id."""
-    if not authorization or not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith(
+        "Bearer "
+    ):
         raise HTTPException(
             status_code=401,
             detail="Missing Authorization header",
@@ -267,7 +283,9 @@ def _authenticate(authorization: Optional[str]) -> str:
     api_key = authorization[7:]
     customer_id = _valid_api_keys.get(api_key)
     if not customer_id:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(
+            status_code=401, detail="Invalid API key"
+        )
     return customer_id
 
 
@@ -338,10 +356,14 @@ async def receive_snapshot(
     """
     customer_id = _authenticate(authorization)
     body = await request.body()
-    content_type = request.headers.get("content-type", "application/msgpack")
+    content_type = request.headers.get(
+        "content-type", "application/msgpack"
+    )
 
     if not body:
-        raise HTTPException(status_code=400, detail="Empty snapshot body")
+        raise HTTPException(
+            status_code=400, detail="Empty snapshot body"
+        )
 
     try:
         from stacktracer.core.graph_serializer import (
@@ -386,7 +408,9 @@ async def receive_snapshot(
         }
 
     except Exception as exc:
-        logger.error("Snapshot deserialise failed: %s", exc, exc_info=True)
+        logger.error(
+            "Snapshot deserialise failed: %s", exc, exc_info=True
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Snapshot parse error: {exc}",
@@ -451,7 +475,9 @@ async def ingest_events(
     errors = 0
     for raw in payload.get("events", []):
         try:
-            raw.setdefault("metadata", {})["customer_id"] = customer_id
+            raw.setdefault("metadata", {})[
+                "customer_id"
+            ] = customer_id
             from stacktracer.core.event_schema import (
                 NormalizedEvent,
             )
@@ -462,7 +488,9 @@ async def ingest_events(
             stored += 1
         except Exception as exc:
             errors += 1
-            logger.debug("Event store error: %s | raw=%s", exc, raw)
+            logger.debug(
+                "Event store error: %s | raw=%s", exc, raw
+            )
 
     return {"status": "ok", "stored": stored, "errors": errors}
 
@@ -502,7 +530,9 @@ async def query(
         parsed = parse_query(request.query)
         return execute_query(parsed, engine)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Query parse error: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Query parse error: {exc}"
+        )
 
 
 @app.get("/api/v1/graph")
@@ -549,7 +579,9 @@ async def causal(
     """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
-    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    tag_list = (
+        [t.strip() for t in tags.split(",")] if tags else None
+    )
 
     from stacktracer.core.causal import build_default_registry
     from stacktracer.core.temporal import TemporalStore
@@ -583,7 +615,9 @@ async def hotspots(
                 "service": n.service,
                 "call_count": n.call_count,
                 "avg_duration_ms": (
-                    round(n.avg_duration_ns / 1e6, 3) if n.avg_duration_ns else None
+                    round(n.avg_duration_ns / 1e6, 3)
+                    if n.avg_duration_ns
+                    else None
                 ),
             }
             for n in graph.hottest_nodes(top_n=top)
@@ -640,7 +674,9 @@ async def get_trace(
             detail="No storage backend configured — cannot retrieve traces.",
         )
 
-    events = repository.query_events(trace_id=trace_id, limit=500)
+    events = repository.query_events(
+        trace_id=trace_id, limit=500
+    )
     if not events:
         raise HTTPException(
             status_code=404,
@@ -688,7 +724,9 @@ async def mark_deployment_endpoint(
 ) -> Dict:
     customer_id = _authenticate(authorization)
     if repository is not None:
-        repository.insert_deployment_marker(customer_id, body.label)
+        repository.insert_deployment_marker(
+            customer_id, body.label
+        )
     logger.info(
         "Deployment marked: customer=%s label=%s",
         customer_id,
@@ -712,7 +750,9 @@ async def status(
 ) -> Dict:
     """Return snapshot metadata and system state for this customer."""
     customer_id = _authenticate(authorization)
-    graph = get_graph(customer_id)  # None is OK here — status always responds
+    graph = get_graph(
+        customer_id
+    )  # None is OK here — status always responds
 
     snapshot_info: Dict[str, Any] = {"available": False}
     if graph is not None:
@@ -805,7 +845,9 @@ async def get_edges(
 
 
 @app.exception_handler(Exception)
-async def generic_error(request: Request, exc: Exception) -> JSONResponse:
+async def generic_error(
+    request: Request, exc: Exception
+) -> JSONResponse:
     logger.error(
         "Unhandled error on %s: %s",
         request.url.path,

@@ -62,7 +62,9 @@ class CausalMatch:
 
 
 # A rule predicate returns (matched, evidence_dict)
-RuleFn = Callable[[RuntimeGraph, TemporalStore], Tuple[bool, Dict[str, Any]]]
+RuleFn = Callable[
+    [RuntimeGraph, TemporalStore], Tuple[bool, Dict[str, Any]]
+]
 
 
 @dataclass
@@ -108,7 +110,9 @@ class PatternRegistry:
             if tags and not set(tags) & set(rule.tags):
                 continue
             try:
-                matched, evidence = rule.predicate(graph, temporal, tracker)
+                matched, evidence = rule.predicate(
+                    graph, temporal, tracker
+                )
                 if matched:
                     results.append(
                         CausalMatch(
@@ -155,7 +159,10 @@ def _is_view_node(node) -> bool:
 
 
 def _is_gunicorn_worker(node) -> bool:
-    return node.node_type == "gunicorn" and node.metadata.get("probe") == "gunicorn.worker.fork"
+    return (
+        node.node_type == "gunicorn"
+        and node.metadata.get("probe") == "gunicorn.worker.fork"
+    )
 
 
 # ====================================================================== #
@@ -164,9 +171,15 @@ def _is_gunicorn_worker(node) -> bool:
 
 
 def _retry_amplification(
-    graph: RuntimeGraph, temporal: TemporalStore, tracker: Optional[ActiveRequestTracker] = None
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict]:
-    hot_edges = [e for e in graph.all_edges() if e.metadata.get("retries", 0) > 3]
+    hot_edges = [
+        e
+        for e in graph.all_edges()
+        if e.metadata.get("retries", 0) > 3
+    ]
     if not hot_edges:
         return False, {}
     return True, {
@@ -200,13 +213,17 @@ RETRY_AMPLIFICATION = CausalRule(
 
 
 def _new_sync_call_after_deployment(
-    graph: RuntimeGraph, temporal: TemporalStore, tracker: Optional[ActiveRequestTracker] = None
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict]:
     deployment_diff = temporal.label_diff("deployment")
     if not deployment_diff:
         return False, {}
 
-    new_edges = temporal.new_edges_since(deployment_diff.timestamp)
+    new_edges = temporal.new_edges_since(
+        deployment_diff.timestamp
+    )
     sync_edges = [k for k in new_edges if ":calls" in k]
     if not sync_edges:
         return False, {}
@@ -237,7 +254,9 @@ NEW_SYNC_CALL = CausalRule(
 
 
 def _asyncio_loop_starvation(
-    graph: RuntimeGraph, temporal: TemporalStore, tracker: Optional[ActiveRequestTracker] = None
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict]:
     """
     High average loop-tick duration means something is blocking the event
@@ -288,7 +307,9 @@ LOOP_STARVATION = CausalRule(
 
 
 def _n_plus_one_queries(
-    graph: RuntimeGraph, temporal: TemporalStore, tracker: Optional[ActiveRequestTracker] = None
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict]:
     """
     Detects the N+1 pattern: a query node whose call_count is significantly
@@ -333,7 +354,8 @@ def _n_plus_one_queries(
                             "view_count": caller.call_count,
                             "ratio": round(ratio, 1),
                             "avg_query_ms": round(
-                                (node.avg_duration_ns or 0) / 1e6,
+                                (node.avg_duration_ns or 0)
+                                / 1e6,
                                 2,
                             ),
                             "hint": (
@@ -371,7 +393,9 @@ N_PLUS_ONE = CausalRule(
 
 
 def _worker_imbalance(
-    graph: RuntimeGraph, temporal: TemporalStore, tracker: Optional[ActiveRequestTracker] = None
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict]:
     """
     Detects when one gunicorn worker handles significantly more requests
@@ -384,13 +408,19 @@ def _worker_imbalance(
     Fires when: busiest_worker / least_busy_worker >= 2.0
     AND at least 2 workers are present.
     """
-    worker_nodes = [n for n in graph.all_nodes() if _is_gunicorn_worker(n)]
+    worker_nodes = [
+        n for n in graph.all_nodes() if _is_gunicorn_worker(n)
+    ]
     if len(worker_nodes) < 2:
         return False, {}
 
     worker_loads = {}
     for worker in worker_nodes:
-        handled = [e for e in graph.neighbors(worker.id) if e.edge_type == "handled"]
+        handled = [
+            e
+            for e in graph.neighbors(worker.id)
+            if e.edge_type == "handled"
+        ]
         # Sum the call_counts instead of counting the list length
         total_handled = sum(e.call_count for e in handled)
 
@@ -409,7 +439,10 @@ def _worker_imbalance(
 
     # First, identify which worker has the max load
     # (Assuming worker_loads is a dict where keys are IDs)
-    busiest_id = max(worker_loads, key=lambda k: worker_loads[k]["handled_count"])
+    busiest_id = max(
+        worker_loads,
+        key=lambda k: worker_loads[k]["handled_count"],
+    )
 
     return True, {
         "workers": list(worker_loads.values()),
@@ -444,7 +477,9 @@ WORKER_IMBALANCE = CausalRule(
 
 
 def _db_query_hotspot(
-    graph: RuntimeGraph, temporal: TemporalStore, tracker: Optional[ActiveRequestTracker] = None
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict]:
     """
     A single query pattern accounts for >30% of all observed calls.
@@ -458,8 +493,15 @@ def _db_query_hotspot(
     if not db_nodes:
         return False, {}
 
-    total_calls = sum(n.call_count for n in graph.all_nodes()) or 1
-    hotspots = [n for n in db_nodes if n.call_count > 5 and (n.call_count / total_calls > 0.30)]
+    total_calls = (
+        sum(n.call_count for n in graph.all_nodes()) or 1
+    )
+    hotspots = [
+        n
+        for n in db_nodes
+        if n.call_count > 5
+        and (n.call_count / total_calls > 0.30)
+    ]
     if not hotspots:
         return False, {}
 
@@ -468,8 +510,12 @@ def _db_query_hotspot(
             {
                 "node": n.id,
                 "call_count": n.call_count,
-                "pct": round(n.call_count / total_calls * 100, 1),
-                "avg_ms": round((n.avg_duration_ns or 0) / 1e6, 2),
+                "pct": round(
+                    n.call_count / total_calls * 100, 1
+                ),
+                "avg_ms": round(
+                    (n.avg_duration_ns or 0) / 1e6, 2
+                ),
             }
             for n in hotspots
         ]
@@ -494,7 +540,9 @@ DB_HOTSPOT = CausalRule(
 
 
 def _request_duration_anomaly(
-    graph: RuntimeGraph, temporal: TemporalStore, tracker: Optional[ActiveRequestTracker] = None
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Factory that closes over the ActiveRequestTracker instance.
@@ -523,7 +571,10 @@ def _request_duration_anomaly(
             if n.id == pattern or n.id.endswith(f"::{pattern}"):
                 node = n
                 break
-            if "::" in n.id and n.id.split("::", 1)[1] == pattern:
+            if (
+                "::" in n.id
+                and n.id.split("::", 1)[1] == pattern
+            ):
                 node = n
                 break
 
@@ -534,7 +585,11 @@ def _request_duration_anomaly(
         if historical_avg_ms < 1.0:
             continue
 
-        ratio = stats["p99_ms"] / historical_avg_ms if historical_avg_ms else 0
+        ratio = (
+            stats["p99_ms"] / historical_avg_ms
+            if historical_avg_ms
+            else 0
+        )
         if ratio <= 3.0:
             continue
 
@@ -551,7 +606,9 @@ def _request_duration_anomaly(
 
         slow = [
             s
-            for s in tracker.slow_in_flight(threshold_ms=historical_avg_ms * 2)
+            for s in tracker.slow_in_flight(
+                threshold_ms=historical_avg_ms * 2
+            )
             if s.pattern == pattern
         ]
         if slow:
@@ -618,11 +675,19 @@ def build_default_registry(tracker=None) -> PatternRegistry:
     registry = PatternRegistry()
 
     registry.register(N_PLUS_ONE)  # 0.90 — highest confidence
-    registry.register(NEW_SYNC_CALL)  # 0.85 — deployment correlation
+    registry.register(
+        NEW_SYNC_CALL
+    )  # 0.85 — deployment correlation
     registry.register(LOOP_STARVATION)  # 0.80 — asyncio blocking
-    registry.register(WORKER_IMBALANCE)  # 0.80 — gunicorn topology
-    registry.register(RETRY_AMPLIFICATION)  # 0.75 — edge retry counts
+    registry.register(
+        WORKER_IMBALANCE
+    )  # 0.80 — gunicorn topology
+    registry.register(
+        RETRY_AMPLIFICATION
+    )  # 0.75 — edge retry counts
     registry.register(DB_HOTSPOT)  # 0.70 — query call share
-    registry.register(REQUEST_DURATION_ANOMALY)  # 0.85 — live P99
+    registry.register(
+        REQUEST_DURATION_ANOMALY
+    )  # 0.85 — live P99
 
     return registry
