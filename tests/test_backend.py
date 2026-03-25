@@ -12,8 +12,6 @@ Skipped if fastapi or httpx are not installed.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
