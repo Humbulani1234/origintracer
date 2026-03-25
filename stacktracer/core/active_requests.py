@@ -121,12 +121,8 @@ class ActiveRequestTracker:
 
         # Ring buffer of recent completions keyed by pattern.
         # Used by causal rules to compute rolling P99.
-        self._completions: Dict[str, Deque[float]] = (
-            collections.defaultdict(
-                lambda: collections.deque(
-                    maxlen=_COMPLETION_WINDOW
-                )
-            )
+        self._completions: Dict[str, Deque[float]] = collections.defaultdict(
+            lambda: collections.deque(maxlen=_COMPLETION_WINDOW)
         )
 
         # Background eviction thread
@@ -206,9 +202,7 @@ class ActiveRequestTracker:
         # Store duration in the per-pattern completions ring buffer
         if span.duration_ms is not None:
             with self._lock:
-                self._completions[span.pattern].append(
-                    span.duration_ms
-                )
+                self._completions[span.pattern].append(span.duration_ms)
 
         return span
 
@@ -221,15 +215,9 @@ class ActiveRequestTracker:
         with self._lock:
             if service is None:
                 return len(self._active)
-            return sum(
-                1
-                for s in self._active.values()
-                if s.service == service
-            )
+            return sum(1 for s in self._active.values() if s.service == service)
 
-    def slow_in_flight(
-        self, threshold_ms: float = 1000.0
-    ) -> List[RequestSpan]:
+    def slow_in_flight(self, threshold_ms: float = 1000.0) -> List[RequestSpan]:
         """
         Returns in-flight requests that have been running longer than threshold_ms.
         Used by _request_duration_anomaly to detect live slowness.
@@ -237,11 +225,7 @@ class ActiveRequestTracker:
         with self._lock:
             spans = list(self._active.values())
         now = time.monotonic()
-        return [
-            s
-            for s in spans
-            if (now - s.start_time) * 1000 > threshold_ms
-        ]
+        return [s for s in spans if (now - s.start_time) * 1000 > threshold_ms]
 
     def recent_completions(
         self,
@@ -260,9 +244,7 @@ class ActiveRequestTracker:
         with self._lock:
             return list(self._completions.get(pattern, []))
 
-    def percentile(
-        self, durations: List[float], p: float
-    ) -> Optional[float]:
+    def percentile(self, durations: List[float], p: float) -> Optional[float]:
         """Helper for causal rules: p99, p95 from a duration list."""
         if not durations:
             return None
@@ -271,29 +253,21 @@ class ActiveRequestTracker:
         return sorted_d[min(idx, len(sorted_d) - 1)]
 
     def all_patterns_summary(self) -> Dict[str, dict]:
-        """
+        r"""
         Returns a summary of recent completion stats per pattern.
         Used by the REPL \status command to show live throughput.
         """
         with self._lock:
-            completions = {
-                k: list(v) for k, v in self._completions.items()
-            }
+            completions = {k: list(v) for k, v in self._completions.items()}
         result = {}
         for pattern, durations in completions.items():
             if not durations:
                 continue
             result[pattern] = {
                 "count": len(durations),
-                "avg_ms": round(
-                    sum(durations) / len(durations), 1
-                ),
-                "p99_ms": round(
-                    self.percentile(durations, 99) or 0, 1
-                ),
-                "p50_ms": round(
-                    self.percentile(durations, 50) or 0, 1
-                ),
+                "avg_ms": round(sum(durations) / len(durations), 1),
+                "p99_ms": round(self.percentile(durations, 99) or 0, 1),
+                "p50_ms": round(self.percentile(durations, 50) or 0, 1),
             }
         return result
 
@@ -302,27 +276,19 @@ class ActiveRequestTracker:
     # ------------------------------------------------------------------ #
 
     def _evict_loop(self) -> None:
-        """
-        Every 5 seconds, evict entries that have exceeded TTL.
-        A request exceeding TTL is either genuinely slow (tracked by
-        slow_in_flight()) or was never completed (bug in probe teardown).
-        We log a warning for the latter case.
-        """
         while self._alive:
             time.sleep(_EVICT_PERIOD_S)
-            cutoff = time.monotonic() - self._ttl
-            with self._lock:
-                stale = [
-                    tid
-                    for tid, span in self._active.items()
-                    if span.last_event < cutoff
-                ]
-                for tid in stale:
-                    span = self._active.pop(tid)
-                    logger.debug(
-                        "active_requests: TTL eviction trace_id=%s service=%s "
-                        "in_flight_ms=%.1f",
-                        tid,
-                        span.service,
-                        span.in_flight_ms,
-                    )
+            self._evict()  # <--- Call the new method
+
+    def _evict(self) -> None:
+        cutoff = time.monotonic() - self._ttl
+        with self._lock:
+            stale = [tid for tid, span in self._active.items() if span.last_event < cutoff]
+            for tid in stale:
+                span = self._active.pop(tid)
+                logger.debug(
+                    "active_requests: TTL eviction trace_id=%s service=%s " "in_flight_ms=%.1f",
+                    tid,
+                    span.service,
+                    span.in_flight_ms,
+                )

@@ -61,9 +61,7 @@ class ProbeRegistry:
     _registry: Dict[str, Type[BaseProbe]] = {}
 
     @classmethod
-    def register(
-        cls, probe_class: Type[BaseProbe]
-    ) -> Type[BaseProbe]:
+    def register(cls, probe_class: Type[BaseProbe]) -> Type[BaseProbe]:
         """Register a probe class. Called automatically via __init_subclass__."""
         cls._registry[probe_class.name] = probe_class
         return probe_class
@@ -76,9 +74,7 @@ class ProbeRegistry:
     def instantiate(cls, name: str) -> BaseProbe:
         probe_class = cls._registry.get(name)
         if probe_class is None:
-            raise KeyError(
-                f"Probe '{name}' not found. Registered: {list(cls._registry.keys())}"
-            )
+            raise KeyError(f"Probe '{name}' not found. Registered: {list(cls._registry.keys())}")
         return probe_class()
 
     @classmethod
@@ -99,7 +95,5 @@ class ProbeRegistry:
                 probes.append(cls.instantiate(name))
                 logger.info("Loaded probe: %s", name)
             except KeyError as exc:
-                logger.warning(
-                    "Unknown probe in config: %s", exc
-                )
+                logger.warning("Unknown probe in config: %s", exc)
         return probes

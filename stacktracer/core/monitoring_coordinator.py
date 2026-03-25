@@ -130,9 +130,7 @@ class MonitoringCoordinator:
     def _claim(self) -> None:
         """Claim the tool slot and install fan-out callbacks."""
         try:
-            sys.monitoring.use_tool_id(
-                self._tool_id, "stacktracer"
-            )
+            sys.monitoring.use_tool_id(self._tool_id, "stacktracer")
         except Exception as exc:
             logger.warning(
                 "monitoring_coordinator: could not claim tool slot %d: %s",
@@ -186,32 +184,20 @@ class MonitoringCoordinator:
         """Release the tool slot and remove callbacks."""
         events = sys.monitoring.events
         try:
-            sys.monitoring.set_events(
-                self._tool_id, events.NO_EVENTS
-            )
-            sys.monitoring.register_callback(
-                self._tool_id, events.CALL, None
-            )
-            sys.monitoring.register_callback(
-                self._tool_id, events.PY_RETURN, None
-            )
+            sys.monitoring.set_events(self._tool_id, events.NO_EVENTS)
+            sys.monitoring.register_callback(self._tool_id, events.CALL, None)
+            sys.monitoring.register_callback(self._tool_id, events.PY_RETURN, None)
             sys.monitoring.free_tool_id(self._tool_id)
         except Exception as exc:
-            logger.debug(
-                "monitoring_coordinator: release error: %s", exc
-            )
+            logger.debug("monitoring_coordinator: release error: %s", exc)
         self._active = False
-        logger.info(
-            "monitoring_coordinator: released sys.monitoring tool slot"
-        )
+        logger.info("monitoring_coordinator: released sys.monitoring tool slot")
 
     # ------------------------------------------------------------------ #
     # Fan-out callbacks — called by sys.monitoring
     # ------------------------------------------------------------------ #
 
-    def _dispatch_call(
-        self, code: Any, offset: int, callable_: Any, arg0: Any
-    ) -> Any:
+    def _dispatch_call(self, code: Any, offset: int, callable_: Any, arg0: Any) -> Any:
         """
         Fan out CALL events to all registered on_call handlers.
         Returns DISABLE only if ALL handlers returned DISABLE for this code object.
@@ -232,17 +218,13 @@ class MonitoringCoordinator:
                 if result is sys.monitoring.DISABLE:
                     disable_count += 1
             except Exception as exc:
-                logger.debug(
-                    "monitoring on_call handler error: %s", exc
-                )
+                logger.debug("monitoring on_call handler error: %s", exc)
 
         # Only DISABLE if every interested handler said DISABLE
         if total > 0 and disable_count == total:
             return sys.monitoring.DISABLE
 
-    def _dispatch_return(
-        self, code: Any, offset: int, retval: Any
-    ) -> Any:
+    def _dispatch_return(self, code: Any, offset: int, retval: Any) -> Any:
         """Fan out PY_RETURN events to all registered on_return handlers."""
         disable_count = 0
         total = 0
@@ -258,9 +240,7 @@ class MonitoringCoordinator:
                 if result is sys.monitoring.DISABLE:
                     disable_count += 1
             except Exception as exc:
-                logger.debug(
-                    "monitoring on_return handler error: %s", exc
-                )
+                logger.debug("monitoring on_return handler error: %s", exc)
 
         if total > 0 and disable_count == total:
             return sys.monitoring.DISABLE

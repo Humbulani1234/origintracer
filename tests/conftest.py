@@ -14,17 +14,19 @@ The test suite must run with: pytest tests/ -v
 from __future__ import annotations
 
 import uuid
+
 import pytest
 
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.core.engine import Engine
-from stacktracer.core.causal import build_default_registry
-from stacktracer.core.semantic import (
-    SemanticLayer,
-    SemanticAlias,
-)
 from stacktracer.core.active_requests import ActiveRequestTracker
-from stacktracer.sdk.emitter import bind_engine
+from stacktracer.core.causal import build_default_registry
+from stacktracer.core.engine import Engine
+from stacktracer.core.event_schema import NormalizedEvent
+from stacktracer.core.semantic import (
+    SemanticAlias,
+    SemanticLayer,
+)
+from stacktracer.sdk.emitter import bind_engine, unbind_engine
+from stacktracer.storage.base import InMemoryRepository
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -85,6 +87,15 @@ def engine(tracker) -> Engine:
         )
     )
 
+    sem.register(
+        SemanticAlias(
+            label="export",
+            description="The full export pipeline",
+            services=["exporter"],
+            node_patterns=["django::handle_export"],
+        )
+    )
+
     e = Engine(
         causal_registry=build_default_registry(tracker=tracker),
         semantic_layer=sem,
@@ -103,6 +114,14 @@ def graph(engine):
 
 @pytest.fixture
 def repo():
-    from stacktracer.storage.repository import InMemoryRepository
-
     return InMemoryRepository()
+
+
+@pytest.fixture(autouse=True)
+def cleanup_emitter():
+    """
+    This runs automatically after EVERY test.
+    It ensures no background threads are left running.
+    """
+    yield  # Run the test
+    unbind_engine()  # Clean up after the test

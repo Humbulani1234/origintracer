@@ -21,13 +21,13 @@ Usage:
 """
 
 import argparse
-import re
 import random
-import time
+import re
 import threading
-from urllib.request import urlopen, Request
-from urllib.error import HTTPError
+import time
 from collections import Counter
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_WAVES = 4
@@ -43,9 +43,7 @@ def build_pool(base: str) -> list:
     for rid in report_ids:
         pool.append((f"{base}/tasks/report/{rid}/", "GET", None))
         pool.append((f"{base}/tasks/cache/{rid}/", "GET", None))
-        pool.append(
-            (f"{base}/tasks/cache/{rid}/", "GET", None)
-        )  # double weight — cache hits
+        pool.append((f"{base}/tasks/cache/{rid}/", "GET", None))  # double weight — cache hits
     for eid in export_ids:
         pool.append((f"{base}/tasks/export/{eid}/", "GET", None))
     pool.extend(
@@ -78,9 +76,7 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
                 url, method, _ = queue.pop(0)
             t0 = time.perf_counter()
             try:
-                with urlopen(
-                    Request(url, method=method), timeout=15
-                ) as r:
+                with urlopen(Request(url, method=method), timeout=15) as r:
                     status = r.status
                     r.read()
             except HTTPError as exc:
@@ -97,10 +93,7 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
                 results.append({"status": status, "ms": ms})
                 by_path.setdefault(path, []).append(ms)
 
-    threads = [
-        threading.Thread(target=_worker, daemon=True)
-        for _ in range(min(workers, count))
-    ]
+    threads = [threading.Thread(target=_worker, daemon=True) for _ in range(min(workers, count))]
     t0 = time.perf_counter()
     for t in threads:
         t.start()
@@ -129,22 +122,14 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_BASE_URL)
-    parser.add_argument(
-        "--waves", type=int, default=DEFAULT_WAVES
-    )
-    parser.add_argument(
-        "--burst", type=int, default=DEFAULT_BURST_SIZE
-    )
-    parser.add_argument(
-        "--workers", type=int, default=DEFAULT_WORKERS
-    )
-    parser.add_argument(
-        "--quiet", type=float, default=DEFAULT_QUIET_S
-    )
+    parser.add_argument("--waves", type=int, default=DEFAULT_WAVES)
+    parser.add_argument("--burst", type=int, default=DEFAULT_BURST_SIZE)
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--quiet", type=float, default=DEFAULT_QUIET_S)
     args = parser.parse_args()
 
     print()
-    print(f"  celery tasks burst test")
+    print("  celery tasks burst test")
     print(
         f"  {args.waves} waves  ·  {args.burst} req/burst  "
         f"·  {args.workers} workers  ·  {args.quiet}s quiet"
@@ -156,17 +141,14 @@ def main():
 
     for wave in range(1, args.waves + 1):
         print(
-            f"  ── Wave {wave}/{args.waves} "
-            f"── firing {args.burst} requests ...",
+            f"  ── Wave {wave}/{args.waves} " f"── firing {args.burst} requests ...",
             end="",
             flush=True,
         )
         r = fire_burst(args.url, args.burst, args.workers)
         all_results.append(r)
 
-        codes = "  ".join(
-            f"{k}:{v}" for k, v in sorted(r["statuses"].items())
-        )
+        codes = "  ".join(f"{k}:{v}" for k, v in sorted(r["statuses"].items()))
         print(
             f"  {r['elapsed']:.2f}s  {r['rps']:.0f} req/s  "
             f"[{codes}]  "
@@ -190,7 +172,7 @@ def main():
     total_reqs = sum(r["count"] for r in all_results)
     total_ok = sum(r["ok"] for r in all_results)
     total_err = sum(r["err"] for r in all_results)
-    total_s = sum(r["elapsed"] for r in all_results)
+    sum(r["elapsed"] for r in all_results)
     all_ms = []
     agg_paths = {}
     for r in all_results:
@@ -201,26 +183,20 @@ def main():
     mean = sum(all_ms) / len(all_ms) if all_ms else 0
     p95 = all_ms[int(len(all_ms) * 0.95)] if all_ms else 0
 
-    print(
-        f"  Total requests : {total_reqs}  ok={total_ok}  err={total_err}"
-    )
+    print(f"  Total requests : {total_reqs}  ok={total_ok}  err={total_err}")
     print(f"  Mean latency   : {mean:.0f}ms   p95={p95:.0f}ms")
     print()
     print("  Per-URL mean latency (ms):")
     for path, times in sorted(agg_paths.items()):
         avg = sum(times) / len(times)
-        print(
-            f"    {path:<35}  {avg:>8.1f}  ({len(times)} requests)"
-        )
+        print(f"    {path:<35}  {avg:>8.1f}  ({len(times)} requests)")
     print("─" * 66)
     print()
     print("  Explore the graph in the REPL:")
     print("    SHOW nodes")
     print("    SHOW edges")
     print("    SHOW events LIMIT 20")
-    print(
-        "    \\stitch <trace_id>   # stitch gunicorn + celery graphs"
-    )
+    print("    \\stitch <trace_id>   # stitch gunicorn + celery graphs")
     print()
 
 

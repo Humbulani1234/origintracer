@@ -108,12 +108,8 @@ _SOCKET_SUFFIX = ".sock"
 
 def discover_sockets() -> list[str]:
     live = []
-    for path in sorted(
-        glob.glob(f"{_SOCKET_PREFIX}*{_SOCKET_SUFFIX}")
-    ):
-        pid = path.replace(_SOCKET_PREFIX, "").replace(
-            _SOCKET_SUFFIX, ""
-        )
+    for path in sorted(glob.glob(f"{_SOCKET_PREFIX}*{_SOCKET_SUFFIX}")):
+        pid = path.replace(_SOCKET_PREFIX, "").replace(_SOCKET_SUFFIX, "")
         try:
             # Check if the process is actually alive
             os.kill(int(pid), 0)
@@ -138,39 +134,24 @@ def pick_socket() -> str:
     if not sockets:
         err("No StackTracer agent found.")
         dim("Start your Django app with gunicorn first:")
-        dim(
-            "  gunicorn -c gunicorn.conf.py config.asgi:application \\"
-        )
-        dim(
-            "           --worker-class uvicorn.workers.UvicornWorker"
-        )
+        dim("  gunicorn -c gunicorn.conf.py config.asgi:application \\")
+        dim("           --worker-class uvicorn.workers.UvicornWorker")
         dim("Then run this REPL in a separate terminal.")
         sys.exit(1)
 
     if len(sockets) == 1:
-        pid = (
-            sockets[0]
-            .replace(_SOCKET_PREFIX, "")
-            .replace(_SOCKET_SUFFIX, "")
-        )
+        pid = sockets[0].replace(_SOCKET_PREFIX, "").replace(_SOCKET_SUFFIX, "")
         ok(f"Connected to worker pid={pid}")
         return sockets[0]
 
     print(c("\n  Multiple workers found:", BOLD))
     for i, s in enumerate(sockets):
-        pid = s.replace(_SOCKET_PREFIX, "").replace(
-            _SOCKET_SUFFIX, ""
-        )
+        pid = s.replace(_SOCKET_PREFIX, "").replace(_SOCKET_SUFFIX, "")
         print(f"  [{i}] pid={pid}  ({s})")
     print()
     while True:
         try:
-            choice = (
-                input(
-                    c("  Pick worker [0]: ", BOLD, BLUE)
-                ).strip()
-                or "0"
-            )
+            choice = input(c("  Pick worker [0]: ", BOLD, BLUE)).strip() or "0"
             return sockets[int(choice)]
         except (ValueError, IndexError):
             err(f"Enter a number 0–{len(sockets) - 1}")
@@ -182,12 +163,7 @@ def query(sock_path: str, query_str: str) -> dict:
     per call — matches the server's one-query-per-connection protocol.
     Returns the full parsed response dict (always has 'ok' key).
     """
-    msg = (
-        json.dumps(
-            {"id": str(uuid.uuid4())[:8], "query": query_str}
-        ).encode()
-        + b"\n"
-    )
+    msg = json.dumps({"id": str(uuid.uuid4())[:8], "query": query_str}).encode() + b"\n"
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(10.0)
@@ -244,21 +220,13 @@ def render(result: dict) -> None:
         metric = result.get("metric", "")
 
     # error inside executor result
-    if (
-        isinstance(data, dict)
-        and "error" in data
-        and len(data) == 1
-    ):
+    if isinstance(data, dict) and "error" in data and len(data) == 1:
         err(data["error"])
         return
 
     # ── CAUSAL ────────────────────────────────────────────────────
     if verb == "CAUSAL":
-        matches = (
-            data
-            if isinstance(data, list)
-            else (data or {}).get("data", [])
-        )
+        matches = data if isinstance(data, list) else (data or {}).get("data", [])
         if not matches:
             dim("No causal patterns matched.")
             return
@@ -267,9 +235,7 @@ def render(result: dict) -> None:
             pct = int(m["confidence"] * 100)
             bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
             colour = RED if pct >= 80 else YELLOW
-            print(
-                c(f"  [{bar}] {pct}%  {m['rule']}", colour, BOLD)
-            )
+            print(c(f"  [{bar}] {pct}%  {m['rule']}", colour, BOLD))
             wrapped = textwrap.fill(
                 m["explanation"],
                 width=72,
@@ -297,9 +263,7 @@ def render(result: dict) -> None:
             dim("No graph changes detected.")
             return
         if new:
-            print(
-                c(f"\n  + {len(new)} new edge(s):", GREEN, BOLD)
-            )
+            print(c(f"\n  + {len(new)} new edge(s):", GREEN, BOLD))
             for e in new:
                 print(c(f"      {e}", GREEN))
         if gone:
@@ -316,16 +280,8 @@ def render(result: dict) -> None:
         return
 
     # ── HOTSPOT / generic tabular list ────────────────────────────
-    if verb == "HOTSPOT" or (
-        isinstance(data, list)
-        and data
-        and isinstance(data[0], dict)
-    ):
-        rows = (
-            data
-            if isinstance(data, list)
-            else (data or {}).get("data", [])
-        )
+    if verb == "HOTSPOT" or (isinstance(data, list) and data and isinstance(data[0], dict)):
+        rows = data if isinstance(data, list) else (data or {}).get("data", [])
         if not rows:
             dim("No results.")
             return
@@ -334,11 +290,7 @@ def render(result: dict) -> None:
 
     # ── TRACE / critical path ─────────────────────────────────────
     if verb == "TRACE":
-        path = (
-            data
-            if isinstance(data, list)
-            else (data or {}).get("data", [])
-        )
+        path = data if isinstance(data, list) else (data or {}).get("data", [])
         if not path:
             dim("Trace not found in event log.")
             return
@@ -346,25 +298,15 @@ def render(result: dict) -> None:
         total = 0
         for stage in path:
             dur = stage.get("duration_ms")
-            dur_str = (
-                f"{dur:8.2f}ms"
-                if dur is not None
-                else "        —"
-            )
+            dur_str = f"{dur:8.2f}ms" if dur is not None else "        —"
             bar_len = int(min((dur or 0) / 5, 40))
             bar = "▓" * bar_len
-            colour = (
-                RED
-                if (dur or 0) > 100
-                else YELLOW if (dur or 0) > 20 else GREEN
-            )
+            colour = RED if (dur or 0) > 100 else YELLOW if (dur or 0) > 20 else GREEN
             print(
                 c(f"  {dur_str}  ", WHITE)
                 + c(f"{bar:<40}", colour)
                 + c(f"  {stage['probe']}", BOLD)
-                + c(
-                    f"  {stage['service']}::{stage['name']}", DIM
-                )
+                + c(f"  {stage['service']}::{stage['name']}", DIM)
             )
             total += dur or 0
         print(
@@ -380,11 +322,7 @@ def render(result: dict) -> None:
     # ── BLAME ─────────────────────────────────────────────────────
     if verb == "BLAME":
         d = data if isinstance(data, dict) else {}
-        rows = (
-            d.get("data", data)
-            if isinstance(data, list)
-            else d.get("data", [])
-        )
+        rows = d.get("data", data) if isinstance(data, list) else d.get("data", [])
         resolved = d.get("resolved_nodes", [])
         if resolved:
             print(
@@ -398,17 +336,12 @@ def render(result: dict) -> None:
             return
         print()
         for row in rows:
-            print(
-                c(f"  {row['call_count']:6}x  ", YELLOW, BOLD)
-                + c(row["caller"], WHITE)
-            )
+            print(c(f"  {row['call_count']:6}x  ", YELLOW, BOLD) + c(row["caller"], WHITE))
         print()
         return
 
     # ── SHOW STATUS ───────────────────────────────────────────────
-    if verb == "STATUS" or (
-        isinstance(data, dict) and "graph_nodes" in data
-    ):
+    if verb == "STATUS" or (isinstance(data, dict) and "graph_nodes" in data):
         header("Engine Status")
         for k, v in data.items():
             print(f"  {c(k, DIM):<30} {c(v, WHITE)}")
@@ -416,11 +349,7 @@ def render(result: dict) -> None:
         return
 
     # ── SHOW GRAPH ────────────────────────────────────────────────
-    if metric == "graph" or (
-        isinstance(data, dict)
-        and "nodes" in data
-        and "edges" in data
-    ):
+    if metric == "graph" or (isinstance(data, dict) and "nodes" in data and "edges" in data):
         g = data if isinstance(data, dict) else {}
         nodes = g.get("nodes", [])
         edges = g.get("edges", [])
@@ -431,13 +360,9 @@ def render(result: dict) -> None:
             )
         )
         for n in nodes:
-            ntype = n.get(
-                "type", n.get("node_type", n.get("service", ""))
-            )
+            ntype = n.get("type", n.get("node_type", n.get("service", "")))
             print(
-                c(f"  [{ntype:12}]  ", DIM)
-                + c(n["id"], WHITE)
-                + c(f"  ×{n['call_count']}", CYAN)
+                c(f"  [{ntype:12}]  ", DIM) + c(n["id"], WHITE) + c(f"  ×{n['call_count']}", CYAN)
             )
         if edges:
             print()
@@ -446,19 +371,8 @@ def render(result: dict) -> None:
                 tgt = e.get("target", e.get("to", "?"))
                 etype = e.get("type", "")
                 cnt = e.get("call_count", e.get("weight", ""))
-                suffix = (
-                    f" [{etype}"
-                    + (f" ×{cnt}" if cnt else "")
-                    + "]"
-                    if etype or cnt
-                    else ""
-                )
-                print(
-                    c(f"  {src}", YELLOW)
-                    + c(f"  →  ", DIM)
-                    + c(tgt, YELLOW)
-                    + c(suffix, DIM)
-                )
+                suffix = f" [{etype}" + (f" ×{cnt}" if cnt else "") + "]" if etype or cnt else ""
+                print(c(f"  {src}", YELLOW) + c("  →  ", DIM) + c(tgt, YELLOW) + c(suffix, DIM))
         print()
         return
 
@@ -468,18 +382,12 @@ def render(result: dict) -> None:
         new_e = len(data.get("added_edges", []))
         label = data.get("label", "")
         header(f"Snapshot {'(' + label + ')' if label else ''}")
-        print(
-            f"  New nodes: {c(new_n, CYAN)}  New edges: {c(new_e, CYAN)}"
-        )
+        print(f"  New nodes: {c(new_n, CYAN)}  New edges: {c(new_e, CYAN)}")
         print()
         return
 
     # ── Plain list of strings (e.g. SHOW PROBES, SHOW RULES) ──────
-    if (
-        isinstance(data, list)
-        and data
-        and isinstance(data[0], str)
-    ):
+    if isinstance(data, list) and data and isinstance(data[0], str):
         print()
         for item in data:
             print(f"  {c(item, WHITE)}")
@@ -505,23 +413,16 @@ def _render_table(rows: list) -> None:
     if not rows:
         return
     keys = list(rows[0].keys())
-    widths = {
-        k: max(len(k), max(len(str(r.get(k, ""))) for r in rows))
-        for k in keys
-    }
+    widths = {k: max(len(k), max(len(str(r.get(k, ""))) for r in rows)) for k in keys}
 
     print()
     header_line = "  " + "  ".join(
-        c(k.upper().replace("_", " "), BOLD, DIM).ljust(
-            widths[k] + 11
-        )
-        for k in keys
+        c(k.upper().replace("_", " "), BOLD, DIM).ljust(widths[k] + 11) for k in keys
     )
     print(header_line)
     print(
         c(
-            "  "
-            + "─" * (sum(widths.values()) + len(keys) * 2 + 2),
+            "  " + "─" * (sum(widths.values()) + len(keys) * 2 + 2),
             DIM,
         )
     )
@@ -532,11 +433,7 @@ def _render_table(rows: list) -> None:
             val = str(row.get(k, "—"))
             try:
                 f = float(val)
-                colour = (
-                    RED
-                    if f > 100
-                    else YELLOW if f > 20 else GREEN
-                )
+                colour = RED if f > 100 else YELLOW if f > 20 else GREEN
                 parts.append(c(val.ljust(widths[k]), colour))
             except ValueError:
                 parts.append(val.ljust(widths[k]))
@@ -556,9 +453,7 @@ def cmd_status(sock_path: str) -> None:
 def cmd_probes(sock_path: str) -> None:
     result = query(sock_path, "SHOW PROBES")
     if not result.get("ok"):
-        warn(
-            "SHOW PROBES not yet supported by this server version."
-        )
+        warn("SHOW PROBES not yet supported by this server version.")
         dim("Add it to local_server.py _evaluate() when ready.")
         return
     header("Registered Probes")
@@ -566,7 +461,7 @@ def cmd_probes(sock_path: str) -> None:
     if not data:
         dim("None registered")
         return
-    for name in (data if isinstance(data, list) else [data]):
+    for name in data if isinstance(data, list) else [data]:
         ok(str(name))
     print()
 
@@ -574,9 +469,7 @@ def cmd_probes(sock_path: str) -> None:
 def cmd_rules(sock_path: str) -> None:
     result = query(sock_path, "SHOW RULES")
     if not result.get("ok"):
-        warn(
-            "SHOW RULES not yet supported by this server version."
-        )
+        warn("SHOW RULES not yet supported by this server version.")
         dim("Add it to local_server.py _evaluate() when ready.")
         return
     header("Causal Rules")
@@ -584,7 +477,7 @@ def cmd_rules(sock_path: str) -> None:
     if not data:
         dim("None registered")
         return
-    for name in (data if isinstance(data, list) else [data]):
+    for name in data if isinstance(data, list) else [data]:
         ok(str(name))
     print()
 
@@ -592,9 +485,7 @@ def cmd_rules(sock_path: str) -> None:
 def cmd_semantic(sock_path: str) -> None:
     result = query(sock_path, "SHOW SEMANTIC")
     if not result.get("ok"):
-        warn(
-            "SHOW SEMANTIC not yet supported by this server version."
-        )
+        warn("SHOW SEMANTIC not yet supported by this server version.")
         dim("Add it to local_server.py _evaluate() when ready.")
         return
     header("Semantic Aliases")
@@ -602,7 +493,7 @@ def cmd_semantic(sock_path: str) -> None:
     if not data:
         dim("None registered")
         return
-    for entry in (data if isinstance(data, list) else [data]):
+    for entry in data if isinstance(data, list) else [data]:
         if isinstance(entry, dict):
             label = entry.get("label", "")
             desc = entry.get("description", "")
@@ -634,31 +525,19 @@ def cmd_emit(sock_path: str, args: str) -> None:
     )
     result = query(sock_path, f"INJECT {payload}")
     if result.get("ok"):
-        ok(
-            f"Emitted  {probe}  {service}::{name}  trace={trace_id[:8]}"
-        )
+        ok(f"Emitted  {probe}  {service}::{name}  trace={trace_id[:8]}")
     else:
-        warn(
-            "INJECT not yet supported by this server version. Event NOT processed."
-        )
-        dim(
-            f"  probe={probe}  service={service}  name={name}  trace={trace_id[:8]}"
-        )
-        dim(
-            "Add INJECT to local_server.py _evaluate() when ready."
-        )
+        warn("INJECT not yet supported by this server version. Event NOT processed.")
+        dim(f"  probe={probe}  service={service}  name={name}  trace={trace_id[:8]}")
+        dim("Add INJECT to local_server.py _evaluate() when ready.")
 
 
 def cmd_snapshot(sock_path: str, args: str) -> None:
     """Ask the live engine to capture a temporal diff snapshot."""
     label = args.strip()
-    result = query(
-        sock_path, f"SNAPSHOT {label}" if label else "SNAPSHOT"
-    )
+    result = query(sock_path, f"SNAPSHOT {label}" if label else "SNAPSHOT")
     if not result.get("ok"):
-        warn(
-            "SNAPSHOT not yet supported by this server version."
-        )
+        warn("SNAPSHOT not yet supported by this server version.")
         dim("Add it to local_server.py _evaluate() when ready.")
         return
     render(result)
@@ -765,17 +644,11 @@ def cmd_stitch(trace_id: str) -> None:
     found_in: list[str] = []
 
     for sock in sockets:
-        pid = sock.replace(_SOCKET_PREFIX, "").replace(
-            _SOCKET_SUFFIX, ""
-        )
+        pid = sock.replace(_SOCKET_PREFIX, "").replace(_SOCKET_SUFFIX, "")
         try:
             result = query(sock, f"TRACE {trace_id}")
-            payload = result.get(
-                "data", {}
-            )  # the inner dict with verb/trace_id/stages/data
-            stages = payload.get(
-                "data", []
-            )  # the actual list of stage dicts
+            payload = result.get("data", {})  # the inner dict with verb/trace_id/stages/data
+            stages = payload.get("data", [])  # the actual list of stage dicts
             if isinstance(stages, list) and stages:
                 for s in stages:
                     s["_pid"] = pid
@@ -796,7 +669,7 @@ def cmd_stitch(trace_id: str) -> None:
     # Print unified timeline
     print()
     print(
-        c(f"  Trace  ", BOLD)
+        c("  Trace  ", BOLD)
         + c(trace_id[:24] + "…", CYAN)
         + c(
             f"  across {len(found_in)} process(es): pid {', '.join(found_in)}",
@@ -818,11 +691,6 @@ def cmd_stitch(trace_id: str) -> None:
 
         # Print process boundary header when we cross into a new process
         if pid != prev_pid:
-            process_label = (
-                "gunicorn/django worker"
-                if "gunicorn" not in probe
-                else "gunicorn worker"
-            )
             print(
                 c(
                     f"  ── pid={pid} ({'celery worker' if 'celery' in probe else 'gunicorn worker'}) ──",
@@ -831,16 +699,10 @@ def cmd_stitch(trace_id: str) -> None:
             )
             prev_pid = pid
 
-        dur_str = (
-            f"{dur:8.2f}ms" if dur is not None else "        —"
-        )
+        dur_str = f"{dur:8.2f}ms" if dur is not None else "        —"
         bar_len = int(min((dur or 0) / 5, 40))
         bar = "▓" * bar_len
-        colour = (
-            RED
-            if (dur or 0) > 100
-            else YELLOW if (dur or 0) > 20 else GREEN
-        )
+        colour = RED if (dur or 0) > 100 else YELLOW if (dur or 0) > 20 else GREEN
 
         print(
             c(f"  {dur_str}  ", WHITE)
@@ -876,10 +738,7 @@ def main():
     except ImportError:
         pass  # Windows — fine without it
 
-    print(
-        c("\n  StackTracer REPL", BOLD, CYAN)
-        + c("  live agent mode", DIM)
-    )
+    print(c("\n  StackTracer REPL", BOLD, CYAN) + c("  live agent mode", DIM))
     print(c("  Type \\help for commands, Ctrl+C to exit\n", DIM))
 
     sock_path = pick_socket()

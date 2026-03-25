@@ -19,11 +19,11 @@ Usage:
 
 import argparse
 import random
-import time
 import threading
-from urllib.request import urlopen, Request
-from urllib.error import HTTPError
+import time
 from collections import Counter
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_REQUESTS = 100
@@ -110,9 +110,7 @@ def worker(
             status = 0
         ms = (time.perf_counter() - t0) * 1000
         with lock:
-            results.append(
-                {"url": url, "status": status, "ms": ms}
-            )
+            results.append({"url": url, "status": status, "ms": ms})
         if delay:
             time.sleep(delay)
 
@@ -138,9 +136,7 @@ def summarise(results, elapsed):
     by_path = {}
     for r in results:
         # extract /tasks/xxx/ from full URL
-        path = (
-            "/" + r["url"].split("//", 1)[-1].split("/", 1)[-1]
-        )
+        path = "/" + r["url"].split("//", 1)[-1].split("/", 1)[-1]
         # collapse numeric IDs for display
         import re
 
@@ -155,7 +151,7 @@ def summarise(results, elapsed):
 
     print()
     print("─" * 66)
-    print(f"  celery tasks load summary")
+    print("  celery tasks load summary")
     print(f"  Requests   : {total}")
     print(f"  Elapsed    : {elapsed:.2f}s")
     print(f"  Throughput : {total / elapsed:.1f} req/s")
@@ -170,42 +166,28 @@ def summarise(results, elapsed):
         print(f"    {code}  {count:>5}  {note}")
     print()
     print("  Latency (ms)  overall:")
-    print(
-        f"    mean {mean:>8.1f}  p50 {p50:>8.1f}  p95 {p95:>8.1f}  p99 {p99:>8.1f}"
-    )
+    print(f"    mean {mean:>8.1f}  p50 {p50:>8.1f}  p95 {p95:>8.1f}  p99 {p99:>8.1f}")
     print()
     print("  Per-URL mean latency (ms):")
     for path, times in sorted(by_path.items()):
         avg = sum(times) / len(times)
-        print(
-            f"    {path:<35}  {avg:>8.1f}  ({len(times)} requests)"
-        )
+        print(f"    {path:<35}  {avg:>8.1f}  ({len(times)} requests)")
     print("─" * 66)
     print()
-    print(
-        "  Explore the graph in the REPL (both gunicorn and celery sockets):"
-    )
+    print("  Explore the graph in the REPL (both gunicorn and celery sockets):")
     print("    SHOW nodes")
     print("    SHOW edges")
     print("    SHOW events LIMIT 20")
-    print(
-        "    \\stitch <trace_id>   # cross-process trace assembly"
-    )
+    print("    \\stitch <trace_id>   # cross-process trace assembly")
     print()
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_BASE_URL)
-    parser.add_argument(
-        "--requests", type=int, default=DEFAULT_REQUESTS
-    )
-    parser.add_argument(
-        "--workers", type=int, default=DEFAULT_WORKERS
-    )
-    parser.add_argument(
-        "--delay", type=float, default=DEFAULT_DELAY
-    )
+    parser.add_argument("--requests", type=int, default=DEFAULT_REQUESTS)
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--delay", type=float, default=DEFAULT_DELAY)
     args = parser.parse_args()
 
     queue = build_queue(args.url, args.requests)
@@ -214,10 +196,8 @@ def main():
     stop = threading.Event()
 
     print()
-    print(f"  celery tasks load test")
-    print(
-        f"  {args.requests} requests  ·  {args.workers} workers  ·  delay={args.delay}s"
-    )
+    print("  celery tasks load test")
+    print(f"  {args.requests} requests  ·  {args.workers} workers  ·  delay={args.delay}s")
     print(f"  Target: {args.url}")
     print()
 

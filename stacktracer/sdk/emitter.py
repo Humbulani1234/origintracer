@@ -1,16 +1,11 @@
 """
-sdk/emitter.py
+The emitter is the interface between probes and the Engine.
+Probes do not import Engine directly — they call emit().
 
-The emitter is the sole interface between probes and the Engine.
-Probes never import Engine directly — they call emit().
-
-This indirection lets the Engine be swapped, mocked in tests,
-or run remotely without changing any probe code.
+This design allows the Engine be swapped.
 
 Architecture:
-    Probe → emit(event) → EventBuffer → Engine.process(event)
-
-The buffer absorbs bursts and decouples probe latency from Engine latency.
+    Probe >> emit(event) >> EventBuffer >> Engine.process(event)
 """
 
 from __future__ import annotations
@@ -49,9 +44,7 @@ class _DrainEventBuffer:
                 return
             self._q.append(event)
 
-    def drain(
-        self, max_batch: int = 500
-    ) -> List[NormalizedEvent]:
+    def drain(self, max_batch: int = 500) -> List[NormalizedEvent]:
         with self._lock:
             batch = []
             for _ in range(min(max_batch, len(self._q))):
@@ -71,9 +64,7 @@ class _DrainThread(threading.Thread):
     one deque.append(), done. Cost: ~0.5 microseconds per emit().
     """
 
-    def __init__(
-        self, buffer: _DrainEventBuffer, interval_s: float = 0.05
-    ) -> None:
+    def __init__(self, buffer: _DrainEventBuffer, interval_s: float = 0.05) -> None:
         super().__init__(daemon=True, name="stacktracer-drain")
         self._buffer = buffer
         self._interval = interval_s  # drain every 50ms
@@ -103,39 +94,68 @@ class _DrainThread(threading.Thread):
                         try:
                             _engine.process(event)
                         except Exception as exc:
-                            logger.debug(
-                                "drain: process error: %s", exc
-                            )
+                            logger.debug("drain: process error: %s", exc)
             except Exception as exc:
                 logger.debug("drain: loop error: %s", exc)
             time.sleep(self._interval)
 
 
-# ------------------------------------------------------------------ #
-# Module-level state
-# ------------------------------------------------------------------ #
+# --------------- Module-level state -------------------------
 
 _engine = None  # Set by bind_engine()
 _buffer = _DrainEventBuffer()
-_direct_mode = (
-    False  # True = emit directly into Engine (MVP default)
-)
-# False = buffer + drain thread (high-throughput)
+_direct_mode = False  # True = emit directly into Engine (MVP default)
+_drain_thread: Optional[_DrainThread] = None  # add to module-level state
 
 
-_drain_thread: Optional[_DrainThread] = (
-    None  # add to module-level state
-)
+# For testing
+_SYNC_MODE = False
+
+
+def enable_sync_mode():
+    global _SYNC_MODE
+    _SYNC_MODE = True
 
 
 def bind_engine(engine: object) -> None:
     global _engine, _drain_thread
+
+    # 1. If a thread is already running, stop it first!
+    if _drain_thread:
+        _drain_thread.stop()
+
+    # 2. Flush any remaining events to the OLD engine before swapping
+    if _engine:
+        flush()
+
     _engine = engine
     _drain_thread = _DrainThread(_buffer, interval_s=0.05)
     _drain_thread.start_draining()
-    logger.info(
-        "StackTracer emitter bound, drain thread started"
-    )
+    logger.info("StackTracer emitter bound, drain thread started")
+
+
+# sdk/emitter.py
+
+
+def unbind_engine() -> None:
+    """
+    Completely resets the emitter state.
+    Stops the background thread and clears the buffer.
+    """
+    global _engine, _drain_thread
+
+    if _drain_thread:
+        _drain_thread.stop()
+        # We don't necessarily need to .join() in tests unless
+        # we want to be 100% sure it's dead, but stopping the loop is key.
+        _drain_thread = None
+
+    _engine = None
+
+    # Clear the buffer so the next test doesn't see old events
+    with _buffer._lock:
+        _buffer._q.clear()
+        _buffer._dropped = 0
 
 
 def emit(event: NormalizedEvent) -> None:
@@ -143,25 +163,19 @@ def emit(event: NormalizedEvent) -> None:
     Emit one probe event.
     This is the ONLY function probes should call.
     """
-    # import pdb
-    # pdb.set_trace()
-
     if _engine is None:
-        return  # Silent drop if not initialised — probes must be safe to import early
-    _buffer.push(event)
+        return
 
-
-# in sdk/emitter.py
-def emit_direct(event: NormalizedEvent) -> None:
-    """Bypass buffer — process immediately. For lifecycle events."""
-    import stacktracer
-
-    engine = stacktracer.get_engine()
-    print(
-        f">>> emit_direct engine id={id(engine)} event={event.probe}"
-    )
-    if _engine is not None:
-        _engine.process(event)
+    try:
+        if _SYNC_MODE:
+            _engine.process(event)
+        else:
+            _buffer.push(event)
+    except Exception as exc:
+        # We catch everything. If the tracer fails, we log a warning
+        # (if debug is on) and let the host app continue living.
+        if _SYNC_MODE:  # Only log in sync mode to avoid spamming the buffer
+            logger.warning("StackTracer failed to process event: %s", exc)
 
 
 def flush() -> None:
@@ -172,9 +186,7 @@ def flush() -> None:
         try:
             _engine.process(event)
         except Exception as exc:
-            logger.debug(
-                "Engine.process error during flush: %s", exc
-            )
+            logger.debug("Engine.process error during flush: %s", exc)
 
 
 def stats() -> dict:

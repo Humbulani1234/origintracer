@@ -15,9 +15,10 @@ No probes, no threads, no network. Engine.process() is called directly.
 from __future__ import annotations
 
 import time
+
 import pytest
 
-from conftest import evt
+from .conftest import evt
 
 
 class TestEngineGraphBuilding:
@@ -33,9 +34,7 @@ class TestEngineGraphBuilding:
         )
         assert "django::handle_view" in engine.graph._nodes
 
-    def test_two_events_same_trace_creates_edge(
-        self, engine, trace_id
-    ):
+    def test_two_events_same_trace_creates_edge(self, engine, trace_id):
         """The core causal connection: consecutive events on same trace → edge."""
         engine.process(
             evt(
@@ -53,9 +52,7 @@ class TestEngineGraphBuilding:
                 trace_id=trace_id,
             )
         )
-        assert "django::view" in engine.graph.reachable_from(
-            "nginx::upstream"
-        )
+        assert "django::view" in engine.graph.reachable_from("nginx::upstream")
 
     def test_full_stack_topology(self, engine, trace_id):
         """
@@ -102,9 +99,7 @@ class TestEngineGraphBuilding:
         # view_a should have no neighbors (no second event on trace-A)
         assert engine.graph.neighbors("django::view_a") == []
 
-    def test_duration_accumulates_on_node(
-        self, engine, trace_id
-    ):
+    def test_duration_accumulates_on_node(self, engine, trace_id):
         for _ in range(3):
             engine.process(
                 evt(
@@ -120,9 +115,7 @@ class TestEngineGraphBuilding:
         assert node.call_count == 3
         assert node.avg_duration_ns == 1_000_000
 
-    def test_duration_ns_lands_on_event_field_not_metadata(
-        self, engine, trace_id
-    ):
+    def test_duration_ns_lands_on_event_field_not_metadata(self, engine, trace_id):
         """
         After the NormalizedEvent.now() fix, duration_ns must be on the
         dataclass field — not in event.metadata. The engine reads
@@ -143,9 +136,7 @@ class TestEngineGraphBuilding:
         node = engine.graph._nodes.get("django::view")
         assert node.avg_duration_ns == 8_000_000
 
-    def test_error_event_carries_duration(
-        self, engine, trace_id
-    ):
+    def test_error_event_carries_duration(self, engine, trace_id):
         """
         _error() in the Django probe should record how long the request ran
         before failing. Without duration on the error event, a 30s timeout
@@ -175,9 +166,7 @@ class TestEngineGraphBuilding:
         # The error event's duration must accumulate
         assert node.total_duration_ns > 0
 
-    def test_hotspots_returns_sorted_nodes(
-        self, engine, trace_id
-    ):
+    def test_hotspots_returns_sorted_nodes(self, engine, trace_id):
         for _ in range(5):
             engine.process(
                 evt(
@@ -195,24 +184,16 @@ class TestEngineGraphBuilding:
         )
         hotspots = engine.hotspots(top_n=5)
         names = [h["node"] for h in hotspots]
-        assert names.index("django::busy_view") < names.index(
-            "django::quiet_view"
-        )
+        assert names.index("django::busy_view") < names.index("django::quiet_view")
 
 
 class TestEngineTemporalIntegration:
     """Engine correctly captures temporal diffs and deployment markers."""
 
-    def test_snapshot_records_new_nodes_as_diff(
-        self, engine, trace_id
-    ):
-        engine.process(
-            evt(service="django", name="fn_a", trace_id=trace_id)
-        )
+    def test_snapshot_records_new_nodes_as_diff(self, engine, trace_id):
+        engine.process(evt(service="django", name="fn_a", trace_id=trace_id))
         engine.snapshot()
-        engine.process(
-            evt(service="django", name="fn_b", trace_id=trace_id)
-        )
+        engine.process(evt(service="django", name="fn_b", trace_id=trace_id))
         diff = engine.snapshot()
         assert "django::fn_b" in diff["added_nodes"]
         assert "django::fn_a" not in diff["added_nodes"]
@@ -223,14 +204,12 @@ class TestEngineTemporalIntegration:
         assert diff is not None
         assert diff.label == "v2.0.0"
 
-    def test_new_sync_call_rule_fires_after_deployment(
-        self, engine, trace_id
-    ):
+    def test_new_sync_call_rule_fires_after_deployment(self, engine, trace_id):
         """
         The new_sync_call_after_deployment rule fires when edges appear
         after a deployment marker. Simulate: mark deploy, then new edge arrives.
         """
-        engine.mark_deployment("canary-deploy")
+        engine.mark_deployment("deployment")
         time.sleep(0.01)
 
         # New call edge appears after deployment
@@ -271,24 +250,16 @@ class TestEngineTemporalIntegration:
         # new_sync_call rule may fire if edges appeared after a deployment marker
         # — but we never called mark_deployment so it won't
         for m in matches:
-            assert (
-                m.rule_name != "new_sync_call_after_deployment"
-            )
+            assert m.rule_name != "new_sync_call_after_deployment"
 
-    def test_status_contains_expected_keys(
-        self, engine, trace_id
-    ):
-        engine.process(
-            evt(service="django", name="view", trace_id=trace_id)
-        )
+    def test_status_contains_expected_keys(self, engine, trace_id):
+        engine.process(evt(service="django", name="view", trace_id=trace_id))
         s = engine.status()
         assert "graph_nodes" in s
         assert "temporal_diffs" in s
         assert s["graph_nodes"] >= 1
 
-    def test_critical_path_returns_ordered_stages(
-        self, engine, trace_id
-    ):
+    def test_critical_path_returns_ordered_stages(self, engine, trace_id):
         """Events on one trace must come back ordered by wall_time."""
         engine.process(
             evt(
@@ -329,9 +300,7 @@ class TestEngineTrackerIntegration:
     def test_tracker_attached_to_engine(self, engine):
         assert engine.tracker is not None
 
-    def test_tracker_records_events_via_engine(
-        self, engine, trace_id
-    ):
+    def test_tracker_records_events_via_engine(self, engine, trace_id):
         """
         Engine.process() should call tracker.event() for every event
         so the tracker maintains the probe_sequence of in-flight requests.
@@ -371,14 +340,13 @@ class TestEngineCompactorIntegration:
         and the graph must be within the cap.
         """
         import threading
+
         from stacktracer.core.engine import Engine
         from stacktracer.core.graph_compactor import (
             GraphCompactor,
         )
 
-        engine = Engine(
-            snapshot_interval_s=0.05
-        )  # 50ms — fires quickly in test
+        engine = Engine(snapshot_interval_s=0.05)  # 50ms — fires quickly in test
         compactor = GraphCompactor(
             max_nodes=5,
             evict_to_ratio=0.6,  # evict to 3 nodes when cap hit
@@ -394,13 +362,9 @@ class TestEngineCompactorIntegration:
 
         # Run the loop in a daemon thread and let it fire once
         engine._running = True
-        t = threading.Thread(
-            target=engine._snapshot_loop, daemon=True
-        )
+        t = threading.Thread(target=engine._snapshot_loop, daemon=True)
         t.start()
-        t.join(
-            timeout=2.0
-        )  # more than enough for a 50ms interval
+        t.join(timeout=2.0)  # more than enough for a 50ms interval
         engine._running = False
 
         assert compactor._compact_runs >= 1, (
@@ -430,11 +394,9 @@ class TestEngineCompactorIntegration:
         # with a timestamp already past the TTL threshold
         import time as _time
 
-        stale_ts = (
-            _time.monotonic() - 1.0
-        )  # 1 second ago — well past 50ms TTL
+        stale_ts = _time.monotonic() - 1.0  # 1 second ago — well past 50ms TTL
         for i in range(5):
-            from conftest import evt
+            from .conftest import evt
 
             engine._last_event_per_trace[f"old-trace-{i}"] = (
                 evt(trace_id=f"old-trace-{i}"),
@@ -455,7 +417,4 @@ class TestEngineCompactorIntegration:
             len(engine._last_event_per_trace) == 1
         ), "Expected only the live trace to survive eviction"
         assert "live-trace" in engine._last_event_per_trace
-        assert all(
-            k.startswith("old-trace") is False
-            for k in engine._last_event_per_trace
-        )
+        assert all(k.startswith("old-trace") is False for k in engine._last_event_per_trace)

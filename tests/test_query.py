@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import evt
+from .conftest import evt
 
 # ====================================================================== #
 # Parser
@@ -35,9 +35,7 @@ class TestQueryParser:
         assert q.filters["service"] == "django"
 
     def test_show_events_with_probe_and_limit(self):
-        q = self._parse(
-            'SHOW events WHERE probe = "db.query.start" LIMIT 50'
-        )
+        q = self._parse('SHOW events WHERE probe = "db.query.start" LIMIT 50')
         assert q.filters["probe"] == "db.query.start"
         assert q.limit == 50
 
@@ -55,9 +53,7 @@ class TestQueryParser:
     def test_hotspot_default_limit(self):
         q = self._parse("HOTSPOT")
         assert q.verb == "HOTSPOT"
-        assert (
-            q.limit is None or q.limit > 0
-        )  # must have a sensible default
+        assert q.limit is None or q.limit > 0  # must have a sensible default
 
     def test_trace_verb(self):
         q = self._parse("TRACE abc123def456")
@@ -110,15 +106,13 @@ class TestQueryParser:
 class TestQueryExecutor:
 
     def _run(self, query_str: str, engine):
-        from stacktracer.query.parser import parse, execute
+        from stacktracer.query.parser import execute, parse
 
         return execute(parse(query_str), engine)
 
     # ── SHOW LATENCY ──────────────────────────────────────────────────────
 
-    def test_show_latency_returns_matching_nodes(
-        self, engine, trace_id
-    ):
+    def test_show_latency_returns_matching_nodes(self, engine, trace_id):
         engine.process(
             evt(
                 service="django",
@@ -127,20 +121,12 @@ class TestQueryExecutor:
                 duration_ns=5_000_000,
             )
         )
-        result = self._run(
-            'SHOW latency WHERE service = "django"', engine
-        )
+        result = self._run('SHOW latency WHERE service = "django"', engine)
         assert "data" in result
-        assert any(
-            r["service"] == "django" for r in result["data"]
-        )
+        assert any(r["service"] == "django" for r in result["data"])
 
-    def test_show_latency_excludes_other_services(
-        self, engine, trace_id
-    ):
-        engine.process(
-            evt(service="django", name="view", trace_id=trace_id)
-        )
+    def test_show_latency_excludes_other_services(self, engine, trace_id):
+        engine.process(evt(service="django", name="view", trace_id=trace_id))
         engine.process(
             evt(
                 service="postgres",
@@ -148,15 +134,11 @@ class TestQueryExecutor:
                 trace_id=trace_id,
             )
         )
-        result = self._run(
-            'SHOW latency WHERE service = "django"', engine
-        )
+        result = self._run('SHOW latency WHERE service = "django"', engine)
         services = [r["service"] for r in result["data"]]
         assert "postgres" not in services
 
-    def test_show_latency_avg_ms_populated_after_duration_fix(
-        self, engine, trace_id
-    ):
+    def test_show_latency_avg_ms_populated_after_duration_fix(self, engine, trace_id):
         """
         duration_ns must land on event.duration_ns (not event.metadata) after
         the NormalizedEvent.now() fix. avg_ms must be non-None for nodes that
@@ -170,9 +152,7 @@ class TestQueryExecutor:
                 duration_ns=10_000_000,  # 10ms explicit
             )
         )
-        result = self._run(
-            'SHOW latency WHERE service = "django"', engine
-        )
+        result = self._run('SHOW latency WHERE service = "django"', engine)
         row = next(
             (r for r in result["data"] if "view" in r["node"]),
             None,
@@ -183,12 +163,8 @@ class TestQueryExecutor:
 
     # ── SHOW NODES ────────────────────────────────────────────────────────
 
-    def test_show_nodes_returns_all_fields(
-        self, engine, trace_id
-    ):
-        engine.process(
-            evt(service="django", name="view", trace_id=trace_id)
-        )
+    def test_show_nodes_returns_all_fields(self, engine, trace_id):
+        engine.process(evt(service="django", name="view", trace_id=trace_id))
         result = self._run("SHOW nodes", engine)
         assert "data" in result
         row = result["data"][0]
@@ -200,14 +176,10 @@ class TestQueryExecutor:
             "first_seen",
             "last_seen",
         ):
-            assert (
-                field in row
-            ), f"Missing field '{field}' in SHOW nodes row"
+            assert field in row, f"Missing field '{field}' in SHOW nodes row"
 
     def test_show_nodes_service_filter(self, engine, trace_id):
-        engine.process(
-            evt(service="django", name="view", trace_id=trace_id)
-        )
+        engine.process(evt(service="django", name="view", trace_id=trace_id))
         engine.process(
             evt(
                 service="postgres",
@@ -215,18 +187,12 @@ class TestQueryExecutor:
                 trace_id=trace_id,
             )
         )
-        result = self._run(
-            'SHOW nodes WHERE service = "django"', engine
-        )
-        assert all(
-            r["service"] == "django" for r in result["data"]
-        )
+        result = self._run('SHOW nodes WHERE service = "django"', engine)
+        assert all(r["service"] == "django" for r in result["data"])
 
     # ── SHOW EDGES ────────────────────────────────────────────────────────
 
-    def test_show_edges_returns_source_target_type(
-        self, engine, trace_id
-    ):
+    def test_show_edges_returns_source_target_type(self, engine, trace_id):
         engine.process(
             evt(
                 probe="request.entry",
@@ -253,12 +219,8 @@ class TestQueryExecutor:
 
     # ── SHOW STATUS ───────────────────────────────────────────────────────
 
-    def test_show_status_returns_graph_counts(
-        self, engine, trace_id
-    ):
-        engine.process(
-            evt(service="django", name="view", trace_id=trace_id)
-        )
+    def test_show_status_returns_graph_counts(self, engine, trace_id):
+        engine.process(evt(service="django", name="view", trace_id=trace_id))
         result = self._run("SHOW status", engine)
         data = result.get("data", result)
         assert "graph_nodes" in data
@@ -291,14 +253,12 @@ class TestQueryExecutor:
         assert "data" in result
         names = result["data"]
         assert "db_query_hotspot" in names
-        assert "n_plus_one" in names
+        assert "n_plus_one_queries" in names
         assert "worker_imbalance" in names
 
     # ── SHOW SEMANTIC ─────────────────────────────────────────────────────
 
-    def test_show_semantic_lists_labels_with_descriptions(
-        self, engine
-    ):
+    def test_show_semantic_lists_labels_with_descriptions(self, engine):
         result = self._run("SHOW semantic", engine)
         assert "data" in result
         labels = [item["label"] for item in result["data"]]
@@ -326,21 +286,15 @@ class TestQueryExecutor:
                 trace_id=trace_id,
             )
         )
-        result = self._run(
-            'SHOW graph WHERE system = "export"', engine
-        )
+        result = self._run('SHOW graph WHERE system = "export"', engine)
         assert "data" in result
         node_ids = [n["id"] for n in result["data"]["nodes"]]
         assert "django::handle_export" in node_ids
         assert "postgres::SELECT" not in node_ids
 
-    def test_show_nodes_unknown_system_returns_error_with_available(
-        self, engine
-    ):
+    def test_show_nodes_unknown_system_returns_error_with_available(self, engine):
         """system= must return error AND list available labels."""
-        result = self._run(
-            'SHOW nodes WHERE system = "xyz_unknown_zzz"', engine
-        )
+        result = self._run('SHOW nodes WHERE system = "xyz_unknown_zzz"', engine)
         assert "error" in result
         assert "available" in result
 
@@ -351,22 +305,14 @@ class TestQueryExecutor:
         WHERE service = "django" — "django" is a real service name.
         Even if semantic resolution returns nothing, literal fallback must work.
         """
-        engine.process(
-            evt(service="django", name="view", trace_id=trace_id)
-        )
-        result = self._run(
-            'SHOW latency WHERE service = "django"', engine
-        )
+        engine.process(evt(service="django", name="view", trace_id=trace_id))
+        result = self._run('SHOW latency WHERE service = "django"', engine)
         assert "data" in result
-        assert any(
-            r["service"] == "django" for r in result["data"]
-        )
+        assert any(r["service"] == "django" for r in result["data"])
 
     # ── HOTSPOT ───────────────────────────────────────────────────────────
 
-    def test_hotspot_returns_bounded_list(
-        self, engine, trace_id
-    ):
+    def test_hotspot_returns_bounded_list(self, engine, trace_id):
         for _ in range(10):
             engine.process(
                 evt(
@@ -379,9 +325,7 @@ class TestQueryExecutor:
         assert "data" in result
         assert len(result["data"]) <= 3
 
-    def test_hotspot_sorted_by_call_count(
-        self, engine, trace_id
-    ):
+    def test_hotspot_sorted_by_call_count(self, engine, trace_id):
         for _ in range(5):
             engine.process(
                 evt(
@@ -390,22 +334,14 @@ class TestQueryExecutor:
                     trace_id=trace_id,
                 )
             )
-        engine.process(
-            evt(service="django", name="cold", trace_id=trace_id)
-        )
+        engine.process(evt(service="django", name="cold", trace_id=trace_id))
         result = self._run("HOTSPOT TOP 10", engine)
         names = [r["node"] for r in result["data"]]
-        assert names.index("django::hot") < names.index(
-            "django::cold"
-        )
+        assert names.index("django::hot") < names.index("django::cold")
 
-    def test_hotspot_graceful_without_engine_method(
-        self, engine, trace_id
-    ):
+    def test_hotspot_graceful_without_engine_method(self, engine, trace_id):
         """Executor falls back to graph sort if engine.hotspots() doesn't exist."""
-        engine.process(
-            evt(service="django", name="view", trace_id=trace_id)
-        )
+        engine.process(evt(service="django", name="view", trace_id=trace_id))
         if hasattr(engine, "hotspots"):
             (
                 delattr(engine.__class__, "hotspots")
@@ -427,9 +363,7 @@ class TestQueryExecutor:
 
     # ── BLAME ─────────────────────────────────────────────────────────────
 
-    def test_blame_known_system_returns_data(
-        self, engine, trace_id
-    ):
+    def test_blame_known_system_returns_data(self, engine, trace_id):
         engine.process(
             evt(
                 service="django",
@@ -438,14 +372,10 @@ class TestQueryExecutor:
             )
         )
         result = self._run('BLAME WHERE system = "api"', engine)
-        assert (
-            "data" in result or "error" in result
-        )  # must not crash
+        assert "data" in result or "error" in result  # must not crash
 
     def test_blame_unknown_system_returns_error(self, engine):
-        result = self._run(
-            'BLAME WHERE system = "completely_unknown"', engine
-        )
+        result = self._run('BLAME WHERE system = "completely_unknown"', engine)
         assert "error" in result
 
     # ── TRACE ─────────────────────────────────────────────────────────────
@@ -486,20 +416,14 @@ class TestQueryExecutor:
     # ── DIFF ──────────────────────────────────────────────────────────────
 
     def test_diff_returns_dict(self, engine, trace_id):
-        engine.process(
-            evt(service="django", name="fn_a", trace_id=trace_id)
-        )
+        engine.process(evt(service="django", name="fn_a", trace_id=trace_id))
         engine.snapshot()
-        engine.process(
-            evt(service="django", name="fn_b", trace_id=trace_id)
-        )
+        engine.process(evt(service="django", name="fn_b", trace_id=trace_id))
         engine.snapshot()
         result = self._run("DIFF SINCE deployment", engine)
         assert isinstance(result, dict)
 
-    def test_diff_graceful_when_temporal_methods_missing(
-        self, engine
-    ):
+    def test_diff_graceful_when_temporal_methods_missing(self, engine):
         """Executor must not crash if temporal store is partially implemented."""
         result = self._run("DIFF", engine)
         assert isinstance(result, dict)

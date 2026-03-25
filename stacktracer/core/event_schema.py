@@ -14,7 +14,7 @@ from typing import Any, Dict, Literal, Optional
 
 
 class ProbeTypeRegistry:
-    """
+    r"""
     Open registry of probe type strings.
 
     The core registers its built-in types at import time.
@@ -34,9 +34,7 @@ class ProbeTypeRegistry:
     def __init__(self):
         self._types: dict[str, str] = {}  # name → description
 
-    def register(
-        self, probe_type: str, description: str = ""
-    ) -> str:
+    def register(self, probe_type: str, description: str = "") -> str:
         """
         Register a probe type string.
         Returns the string so it can be used as a constant:
@@ -150,9 +148,7 @@ class NormalizedEvent:
     wall_time: float = field(default_factory=time.time)
 
     duration_ns: Optional[int] = None
-    span_id: str = field(
-        default_factory=lambda: uuid.uuid4().hex[:16]
-    )
+    span_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     parent_span_id: Optional[str] = None
 
     pid: Optional[int] = None
@@ -167,12 +163,8 @@ class NormalizedEvent:
         service: str,
         name: str,
         parent_span_id: Optional[str] = None,
-        duration_ns: Optional[
-            int
-        ] = None,  # ← extract explicitly
-        pid: Optional[
-            int
-        ] = None,  # ← same for pid/tid if probes pass them
+        duration_ns: Optional[int] = None,  # ← extract explicitly
+        pid: Optional[int] = None,  # ← same for pid/tid if probes pass them
         tid: Optional[int] = None,
         **metadata: Any,
     ) -> "NormalizedEvent":
@@ -209,11 +201,7 @@ class NormalizedEvent:
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "NormalizedEvent":
-        meta = {
-            k: v
-            for k, v in d.items()
-            if k not in NormalizedEvent.__dataclass_fields__
-        }
+        meta = {k: v for k, v in d.items() if k not in NormalizedEvent.__dataclass_fields__}
         return NormalizedEvent(
             probe=d["probe"],
             service=d["service"],
@@ -230,9 +218,5 @@ class NormalizedEvent:
         )
 
     def __repr__(self) -> str:
-        dur = (
-            f" {self.duration_ns / 1_000:.1f}µs"
-            if self.duration_ns
-            else ""
-        )
+        dur = f" {self.duration_ns / 1_000:.1f}µs" if self.duration_ns else ""
         return f"<Event [{self.probe}] {self.service}::{self.name}{dur} trace={self.trace_id[:15]}>"

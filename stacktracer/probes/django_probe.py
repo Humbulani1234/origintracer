@@ -45,10 +45,10 @@ import time
 import uuid
 from typing import Any, Callable, Optional
 
+from ..context.vars import get_trace_id, reset_trace, set_trace
+from ..core.event_schema import NormalizedEvent
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
-from ..core.event_schema import NormalizedEvent
-from ..context.vars import get_trace_id, set_trace, reset_trace
 
 logger = logging.getLogger("stacktracer.probes.django")
 
@@ -69,11 +69,12 @@ class TracerMiddleware:
 
     def __init__(self, get_response: Callable) -> None:
         self.get_response = get_response
-        import asyncio, inspect
+        import asyncio
+        import inspect
 
-        self._is_async = asyncio.iscoroutinefunction(
+        self._is_async = asyncio.iscoroutinefunction(get_response) or inspect.iscoroutinefunction(
             get_response
-        ) or inspect.iscoroutinefunction(get_response)
+        )
 
     def __call__(self, request: Any) -> Any:
         if self._is_async:
@@ -105,16 +106,10 @@ class TracerMiddleware:
             reset_trace(token)
 
     def _begin(self, request: Any):
-        trace_id = (
-            request.META.get("HTTP_X_REQUEST_ID")
-            or get_trace_id()
-            or str(uuid.uuid4())
-        )
+        trace_id = request.META.get("HTTP_X_REQUEST_ID") or get_trace_id() or str(uuid.uuid4())
         token = set_trace(trace_id)
         request._st_t0 = time.perf_counter()
-        print(
-            f">>> request.enter trace={get_trace_id()} path={request.path}"
-        )
+        print(f">>> request.enter trace={get_trace_id()} path={request.path}")
         emit(
             NormalizedEvent.now(
                 probe="request.entry",
@@ -127,12 +122,8 @@ class TracerMiddleware:
         )
         return trace_id, token
 
-    def _end(
-        self, request: Any, response: Any, trace_id: str
-    ) -> None:
-        duration_ns = int(
-            (time.perf_counter() - request._st_t0) * 1e9
-        )
+    def _end(self, request: Any, response: Any, trace_id: str) -> None:
+        duration_ns = int((time.perf_counter() - request._st_t0) * 1e9)
         emit(
             NormalizedEvent.now(
                 probe="request.exit",
@@ -145,12 +136,8 @@ class TracerMiddleware:
             )
         )
 
-    def _error(
-        self, request: Any, exc: Exception, trace_id: str
-    ) -> None:
-        duration_ns = int(
-            (time.perf_counter() - request._st_t0) * 1e9
-        )
+    def _error(self, request: Any, exc: Exception, trace_id: str) -> None:
+        duration_ns = int((time.perf_counter() - request._st_t0) * 1e9)
         emit(
             NormalizedEvent.now(
                 probe="django.exception",
@@ -188,9 +175,7 @@ def _patch_view_dispatch() -> None:
     try:
         from django.views import View
     except ImportError:
-        logger.debug(
-            "django probe: Django not installed — skipping dispatch patch"
-        )
+        logger.debug("django probe: Django not installed — skipping dispatch patch")
         return
 
     original_dispatch = View.dispatch
@@ -212,9 +197,7 @@ def _patch_view_dispatch() -> None:
             )
 
         try:
-            return original_dispatch(
-                self_view, request, *args, **kwargs
-            )
+            return original_dispatch(self_view, request, *args, **kwargs)
         finally:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
@@ -229,9 +212,7 @@ def _patch_view_dispatch() -> None:
                 )
 
     View.dispatch = _traced_dispatch
-    logger.info(
-        "django probe: View.dispatch patched — all CBVs observed"
-    )
+    logger.info("django probe: View.dispatch patched — all CBVs observed")
 
 
 def _unpatch_view_dispatch() -> None:
@@ -286,9 +267,7 @@ def _make_db_wrapper():
                         duration_ns=duration_ns,
                         db_alias=context["connection"].alias,
                         success=True,
-                        row_count=getattr(
-                            result, "rowcount", None
-                        ),
+                        row_count=getattr(result, "rowcount", None),
                     )
                 )
             return result
@@ -314,15 +293,9 @@ def _install_db_wrapper() -> None:
             connection.alias,
         )
 
-    connection_created.connect(
-        _on_connection_created, weak=False
-    )
-    _originals["connection_created_handler"] = (
-        _on_connection_created
-    )
-    logger.info(
-        "django probe: database wrapper registered on connection_created signal"
-    )
+    connection_created.connect(_on_connection_created, weak=False)
+    _originals["connection_created_handler"] = _on_connection_created
+    logger.info("django probe: database wrapper registered on connection_created signal")
 
 
 def _uninstall_db_wrapper() -> None:
@@ -377,12 +350,8 @@ def _install_signals() -> None:
     try:
         from django.core.signals import got_request_exception
 
-        got_request_exception.connect(
-            _on_unhandled_exception, weak=False
-        )
-        logger.info(
-            "django probe: got_request_exception signal connected"
-        )
+        got_request_exception.connect(_on_unhandled_exception, weak=False)
+        logger.info("django probe: got_request_exception signal connected")
     except ImportError:
         pass
 
@@ -425,9 +394,7 @@ class DjangoProbe(BaseProbe):
         global _patched
 
         if _patched:
-            logger.warning(
-                "django probe: already installed — skipping"
-            )
+            logger.warning("django probe: already installed — skipping")
             return
 
         _patch_view_dispatch()

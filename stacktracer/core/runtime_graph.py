@@ -8,6 +8,7 @@ the minimum needed for causal reasoning.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -15,6 +16,8 @@ from threading import RLock
 from typing import Any, Dict, Iterator, List, Optional, Set
 
 from .event_schema import NormalizedEvent
+
+logger = logging.getLogger("core.runtime_graph")
 
 
 @dataclass
@@ -78,15 +81,9 @@ class RuntimeGraph:
 
     def __init__(self) -> None:
         self._nodes: Dict[str, GraphNode] = {}
-        self._adj: Dict[str, List[GraphEdge]] = defaultdict(
-            list
-        )  # forward
-        self._rev: Dict[str, List[GraphEdge]] = defaultdict(
-            list
-        )  # reverse
-        self._edge_index: Dict[str, GraphEdge] = (
-            {}
-        )  # dedup key → edge
+        self._adj: Dict[str, List[GraphEdge]] = defaultdict(list)  # forward
+        self._rev: Dict[str, List[GraphEdge]] = defaultdict(list)  # reverse
+        self._edge_index: Dict[str, GraphEdge] = {}  # dedup key → edge
         self._lock = RLock()
         self.last_updated: float = time.time()
 
@@ -157,45 +154,31 @@ class RuntimeGraph:
         If parent_event is provided, an edge is drawn from parent → this event.
         """
         # Normalise name before it enters the graph
-
-        # import pdb
-        # pdb.set_trace()
-
-        print(f">>> graph after add: {list(self._nodes.keys())}")
         name = event.name
-        if (
-            hasattr(self, "normalizer")
-            and self.normalizer is not None
-        ):
+        if hasattr(self, "normalizer") and self.normalizer is not None:
             name = self.normalizer.normalize(event.service, name)
 
         node_id = self._node_id(event.service, name)
-        node_type = (
-            event.service
-        )  # e.g. "asyncio", "django", "syscall"
-        is_entry = event.probe.endswith(
-            (".enter", ".receive", ".entry", ".start")
-        )
+        node_type = event.service  # e.g. "asyncio", "django", "syscall"
+        duration = event.duration_ns
+        # 2. Fallback (with a quiet "fix this" note for yourself)
+        if duration is None and event.metadata:
+            duration = event.metadata.get("duration_ns")
+            if duration is not None:
+                logger.debug("Probe %s sent duration in metadata; move to top-level.", event.probe)
         self.upsert_node(
             node_id=node_id,
             node_type=node_type,
             service=event.service,
-            duration_ns=None if is_entry else event.duration_ns,
+            duration_ns=duration,
             metadata={"probe": event.probe, **event.metadata},
         )
 
         if parent_event:
             parent_name = parent_event.name
-            if (
-                hasattr(self, "normalizer")
-                and self.normalizer is not None
-            ):
-                parent_name = self.normalizer.normalize(
-                    parent_event.service, parent_name
-                )
-            parent_id = self._node_id(
-                parent_event.service, parent_name
-            )
+            if hasattr(self, "normalizer") and self.normalizer is not None:
+                parent_name = self.normalizer.normalize(parent_event.service, parent_name)
+            parent_id = self._node_id(parent_event.service, parent_name)
             if parent_id != node_id:
                 self.upsert_edge(
                     source=parent_id,
@@ -207,9 +190,7 @@ class RuntimeGraph:
         # Probe-specific structural edges — topology, not request flow
         self._add_structural_edges(node_id, event)
 
-    def _add_structural_edges(
-        self, node_id: str, event: NormalizedEvent
-    ) -> None:
+    def _add_structural_edges(self, node_id: str, event: NormalizedEvent) -> None:
         probe = event.probe
         meta = event.metadata
 
@@ -219,16 +200,12 @@ class RuntimeGraph:
                 self.upsert_edge(master_id, node_id, "spawned")
 
         elif probe == "uvicorn.request.receive":
-            src = self._find_node(
-                "gunicorn", "worker_pid", meta.get("worker_pid")
-            )
+            src = self._find_node("gunicorn", "worker_pid", meta.get("worker_pid"))
             if src:
                 self.upsert_edge(src, node_id, "handled")
 
         elif probe == "celery.worker.fork":
-            src = self._find_node(
-                "celery", "worker_pid", meta.get("master_pid")
-            )
+            src = self._find_node("celery", "worker_pid", meta.get("master_pid"))
             if src:
                 self.upsert_edge(src, node_id, "spawned")
 
@@ -284,13 +261,8 @@ class RuntimeGraph:
             if node.metadata.get(metadata_key) != metadata_value:
                 continue
             if name_contains or name_equals:
-                node_name = (
-                    nid.split("::", 1)[1] if "::" in nid else nid
-                )
-                if (
-                    name_contains
-                    and name_contains not in node_name
-                ):
+                node_name = nid.split("::", 1)[1] if "::" in nid else nid
+                if name_contains and name_contains not in node_name:
                     continue
                 if name_equals and node_name != name_equals:
                     continue
@@ -311,9 +283,7 @@ class RuntimeGraph:
         with self._lock:
             return list(self._rev.get(node_id, []))
 
-    def reachable_from(
-        self, node_id: str, max_depth: int = 20
-    ) -> Set[str]:
+    def reachable_from(self, node_id: str, max_depth: int = 20) -> Set[str]:
         """BFS downstream — all nodes reachable from node_id."""
         visited: Set[str] = set()
         queue: deque = deque([(node_id, 0)])
@@ -327,9 +297,7 @@ class RuntimeGraph:
                     queue.append((edge.target, depth + 1))
         return visited - {node_id}
 
-    def reachable_to(
-        self, node_id: str, max_depth: int = 20
-    ) -> Set[str]:
+    def reachable_to(self, node_id: str, max_depth: int = 20) -> Set[str]:
         """BFS upstream — all nodes that can reach this node."""
         visited: Set[str] = set()
         queue: deque = deque([(node_id, 0)])
@@ -345,22 +313,14 @@ class RuntimeGraph:
 
     def nodes_by_service(self, service: str) -> List[GraphNode]:
         with self._lock:
-            return [
-                n
-                for n in self._nodes.values()
-                if n.service == service
-            ]
+            return [n for n in self._nodes.values() if n.service == service]
 
-    def hottest_nodes(
-        self, top_n: int = 10, by: str = "call_count"
-    ) -> List[GraphNode]:
+    def hottest_nodes(self, top_n: int = 10, by: str = "call_count") -> List[GraphNode]:
         """Return the N most-called (or slowest) nodes."""
         with self._lock:
             nodes = list(self._nodes.values())
         if by == "duration":
-            nodes.sort(
-                key=lambda n: n.total_duration_ns, reverse=True
-            )
+            nodes.sort(key=lambda n: n.total_duration_ns, reverse=True)
         else:
             nodes.sort(key=lambda n: n.call_count, reverse=True)
         return nodes[:top_n]

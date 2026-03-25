@@ -104,9 +104,7 @@ def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
                 "sqlite",
                 "mysql",
             )
-            is_slow = (
-                target.avg_duration_ns or 0
-            ) > 50_000_000  # 50ms
+            is_slow = (target.avg_duration_ns or 0) > 50_000_000  # 50ms
 
             if is_db and is_slow:
                 evidence.append(
@@ -149,9 +147,7 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
     TASK_RETRY = "celery.task.retry"
 
     start_counts: dict[str, int] = {}  # task_name → call_count
-    retry_counts: dict[str, int] = (
-        {}
-    )  # task_name → retry call_count
+    retry_counts: dict[str, int] = {}  # task_name → retry call_count
 
     for node in graph.all_nodes():
         if node.service != "celery":
@@ -162,14 +158,10 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
         if probe == TASK_START or node.name.endswith(".start"):
             # node.id is "celery::myworker.tasks.failing_task"
             task_name = node.name
-            start_counts[task_name] = start_counts.get(
-                task_name, 0
-            ) + (node.call_count or 0)
+            start_counts[task_name] = start_counts.get(task_name, 0) + (node.call_count or 0)
         elif probe == TASK_RETRY or node.name.endswith(".retry"):
             task_name = node.name
-            retry_counts[task_name] = retry_counts.get(
-                task_name, 0
-            ) + (node.call_count or 0)
+            retry_counts[task_name] = retry_counts.get(task_name, 0) + (node.call_count or 0)
 
     total_starts = sum(start_counts.values())
     total_retries = sum(retry_counts.values())
@@ -225,9 +217,7 @@ def _task_duration_spike(graph, temporal) -> tuple[bool, dict]:
     celery_nodes = [
         n
         for n in graph.all_nodes()
-        if n.service == "celery"
-        and (n.call_count or 0) >= 5
-        and n.avg_duration_ns
+        if n.service == "celery" and (n.call_count or 0) >= 5 and n.avg_duration_ns
     ]
 
     if len(celery_nodes) < 2:

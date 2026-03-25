@@ -24,16 +24,17 @@ from __future__ import annotations
 
 import os
 import tempfile
+
 import pytest
 
+from stacktracer.core.runtime_graph import RuntimeGraph
 from stacktracer.core.semantic import (
-    SemanticLayer,
     SemanticAlias,
+    SemanticLayer,
     load_from_dict,
     load_from_yaml,
     merge_yaml_configs,
 )
-from stacktracer.core.runtime_graph import RuntimeGraph
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -45,9 +46,7 @@ def _graph(*node_specs) -> RuntimeGraph:
     """
     g = RuntimeGraph()
     for node_id, service in node_specs:
-        g.upsert_node(
-            node_id, node_type=service, service=service
-        )
+        g.upsert_node(node_id, node_type=service, service=service)
     return g
 
 
@@ -248,10 +247,7 @@ class TestSemanticLayerRegistry:
                 services=[],
             )
         )
-        assert (
-            self.layer.describe("export")
-            == "The export pipeline"
-        )
+        assert self.layer.describe("export") == "The export pipeline"
 
     def test_describe_unknown_returns_none(self):
         assert self.layer.describe("nonexistent") is None
@@ -266,12 +262,8 @@ class TestSemanticLayerRegistry:
 
     def test_later_registration_overrides_earlier(self):
         """Same label registered twice — last one wins."""
-        self.layer.register(
-            SemanticAlias("api", "first", [], [])
-        )
-        self.layer.register(
-            SemanticAlias("api", "second", [], [])
-        )
+        self.layer.register(SemanticAlias("api", "first", [], []))
+        self.layer.register(SemanticAlias("api", "second", [], []))
         assert self.layer.describe("api") == "second"
 
     def test_resolve_services_returns_list(self):
@@ -365,9 +357,7 @@ class TestSemanticLayerResolveNodes:
 
     def test_resolve_database_by_orm_pattern(self):
         """'database' label matches via SELECT.* pattern on django nodes."""
-        nodes = self.layer.resolve_nodes(
-            "database", self._graph()
-        )
+        nodes = self.layer.resolve_nodes("database", self._graph())
         assert 'django::SELECT "book"."id" FROM "book"' in nodes
 
     def test_unrelated_node_excluded(self):
@@ -376,21 +366,15 @@ class TestSemanticLayerResolveNodes:
         assert "postgres::SELECT orders" not in nodes
 
     def test_unknown_label_returns_empty_set(self):
-        result = self.layer.resolve_nodes(
-            "nonexistent", self._graph()
-        )
+        result = self.layer.resolve_nodes("nonexistent", self._graph())
         assert result == set()
 
     def test_case_insensitive_lookup(self):
         g = self._graph()
-        assert self.layer.resolve_nodes(
-            "export", g
-        ) == self.layer.resolve_nodes("EXPORT", g)
+        assert self.layer.resolve_nodes("export", g) == self.layer.resolve_nodes("EXPORT", g)
 
     def test_empty_graph_returns_empty_set(self):
-        result = self.layer.resolve_nodes(
-            "export", RuntimeGraph()
-        )
+        result = self.layer.resolve_nodes("export", RuntimeGraph())
         assert result == set()
 
 
@@ -439,9 +423,7 @@ class TestLoadFromDict:
 
     def test_missing_optional_keys_do_not_raise(self):
         """node_patterns, services, tags are all optional."""
-        layer = load_from_dict(
-            [{"label": "minimal", "description": ""}]
-        )
+        layer = load_from_dict([{"label": "minimal", "description": ""}])
         assert "minimal" in layer
 
     def test_later_entry_overrides_earlier_same_label(self):
@@ -477,34 +459,32 @@ class TestLoadFromYaml:
 
     def _write_yaml(self, content: str) -> str:
         pytest.importorskip("yaml")
-        f = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        )
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
         f.write(content)
         f.close()
         return f.name
 
     def test_loads_semantic_section(self):
-        path = self._write_yaml("""
+        path = self._write_yaml(
+            """
 semantic:
   - label: payments
     description: Payment processing
     services:
       - stripe
     node_patterns: []
-""")
+"""
+        )
         try:
             layer = load_from_yaml(path)
             assert "payments" in layer
-            assert (
-                layer.describe("payments")
-                == "Payment processing"
-            )
+            assert layer.describe("payments") == "Payment processing"
         finally:
             os.unlink(path)
 
     def test_loads_multiple_labels(self):
-        path = self._write_yaml("""
+        path = self._write_yaml(
+            """
 semantic:
   - label: api
     description: API layer
@@ -514,7 +494,8 @@ semantic:
     description: Database
     services: [postgres]
     node_patterns: []
-""")
+"""
+        )
         try:
             layer = load_from_yaml(path)
             assert "api" in layer
@@ -539,7 +520,8 @@ semantic:
             os.unlink(path)
 
     def test_node_patterns_resolve_correctly(self):
-        path = self._write_yaml("""
+        path = self._write_yaml(
+            """
 semantic:
   - label: export
     description: Export pipeline
@@ -547,7 +529,8 @@ semantic:
     node_patterns:
       - "django::handle_export"
       - "django::flags_client.*"
-""")
+"""
+        )
         try:
             layer = load_from_yaml(path)
             g = _graph(
@@ -572,28 +555,30 @@ class TestMergeYamlConfigs:
 
     def _write_yaml(self, content: str) -> str:
         pytest.importorskip("yaml")
-        f = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        )
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
         f.write(content)
         f.close()
         return f.name
 
     def test_merges_semantic_from_two_files(self):
-        path1 = self._write_yaml("""
+        path1 = self._write_yaml(
+            """
 semantic:
   - label: api
     description: API
     services: [django]
     node_patterns: []
-""")
-        path2 = self._write_yaml("""
+"""
+        )
+        path2 = self._write_yaml(
+            """
 semantic:
   - label: payments
     description: Payments
     services: [stripe]
     node_patterns: []
-""")
+"""
+        )
         try:
             merged = merge_yaml_configs(path1, path2)
             labels = {e["label"] for e in merged["semantic"]}
@@ -605,20 +590,24 @@ semantic:
 
     def test_later_file_wins_on_same_label(self):
         """If both files define 'api', the second file's entry wins."""
-        path1 = self._write_yaml("""
+        path1 = self._write_yaml(
+            """
 semantic:
   - label: api
     description: first
     services: []
     node_patterns: []
-""")
-        path2 = self._write_yaml("""
+"""
+        )
+        path2 = self._write_yaml(
+            """
 semantic:
   - label: api
     description: second
     services: []
     node_patterns: []
-""")
+"""
+        )
         try:
             merged = merge_yaml_configs(path1, path2)
             # load_from_dict(merged["semantic"]) — later entry wins
@@ -638,18 +627,12 @@ semantic:
         assert merged["semantic"] == []
 
     def test_probes_deduplicated_by_name(self):
-        path1 = self._write_yaml(
-            "probes:\n  - django\n  - asyncio\n"
-        )
-        path2 = self._write_yaml(
-            "probes:\n  - django\n  - gunicorn\n"
-        )
+        path1 = self._write_yaml("probes:\n  - django\n  - asyncio\n")
+        path2 = self._write_yaml("probes:\n  - django\n  - gunicorn\n")
         try:
             merged = merge_yaml_configs(path1, path2)
             probe_keys = merged["probes"]
-            assert (
-                probe_keys.count("django") == 1
-            )  # deduplicated
+            assert probe_keys.count("django") == 1  # deduplicated
             assert "asyncio" in probe_keys
             assert "gunicorn" in probe_keys
         finally:
@@ -742,9 +725,7 @@ class TestDefaultYamlLabels:
 
     def test_database_label_matches_orm_query_nodes(self):
         nodes = self.layer.resolve_nodes("database", self.graph)
-        assert (
-            'django::SELECT "order"."id" FROM "order"' in nodes
-        )
+        assert 'django::SELECT "order"."id" FROM "order"' in nodes
         assert 'django::INSERT INTO "order"' in nodes
         assert "django::OrderView.get" not in nodes
 

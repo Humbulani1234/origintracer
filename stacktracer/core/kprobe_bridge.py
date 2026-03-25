@@ -179,9 +179,7 @@ class KprobeBridge:
         (no bcc, no root, unsupported kernel).
         """
         if os.name != "posix":
-            logger.info(
-                "kprobe bridge: not on Linux — kernel probes unavailable"
-            )
+            logger.info("kprobe bridge: not on Linux — kernel probes unavailable")
             return False
 
         try:
@@ -201,11 +199,14 @@ class KprobeBridge:
             return False
 
         # The bridge program defines the shared map but attaches no probes
-        bridge_program = BRIDGE_BPF_HEADER + """
+        bridge_program = (
+            BRIDGE_BPF_HEADER
+            + """
 // Dummy kprobe so bcc compiles and loads the program
 // We need the map to be live; this probe does nothing useful
 int _bridge_noop(struct pt_regs *ctx) { return 0; }
 """
+        )
         try:
             self._bpf = BPF(text=bridge_program)
             self._map = self._bpf["trace_context"]
@@ -216,19 +217,13 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
                 self._map.pin(pin_path)
             except Exception:
                 # If already pinned, just load it
-                self._map = BPF.get_table(
-                    "trace_context", path=pin_path
-                )
+                self._map = BPF.get_table("trace_context", path=pin_path)
 
             self._available = True
-            logger.info(
-                "kprobe bridge loaded — trace_context map ready and pinned"
-            )
+            logger.info("kprobe bridge loaded — trace_context map ready and pinned")
             return True
         except Exception as exc:
-            logger.warning(
-                "kprobe bridge failed to load: %s", exc
-            )
+            logger.warning("kprobe bridge failed to load: %s", exc)
             return False
 
     def stop(self) -> None:
@@ -294,9 +289,7 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
             self._map[key] = entry
 
         except Exception as exc:
-            logger.debug(
-                "kprobe bridge register_trace error: %s", exc
-            )
+            logger.debug("kprobe bridge register_trace error: %s", exc)
 
     def unregister_trace(self) -> None:
         """

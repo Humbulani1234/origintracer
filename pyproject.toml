@@ -74,8 +74,28 @@ ignore = [
 
 # ── pytest config ─────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
-testpaths = ["stacktracer/tests"]
+testpaths = ["tests/"]
 asyncio_mode = "auto"
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-q --tb=short"
+markers = [
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["stacktracer"]
+omit = [
+    "tests/*",
+    "setup.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

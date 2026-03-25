@@ -11,10 +11,10 @@ import os
 import time
 from typing import Any
 
+from stacktracer.context.vars import reset_trace, set_trace
+from stacktracer.core.event_schema import NormalizedEvent
 from stacktracer.sdk.base_probe import BaseProbe
 from stacktracer.sdk.emitter import emit
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.context.vars import set_trace, reset_trace
 
 TASK_START = "celery.task.start"
 TASK_END = "celery.task.end"
@@ -47,9 +47,7 @@ def _drain_pre_fork_events() -> None:
             engine.process(event)
             drained += 1
         except Exception as exc:
-            logger.warning(
-                "celery probe: pre-fork drain failed: %s", exc
-            )
+            logger.warning("celery probe: pre-fork drain failed: %s", exc)
     _pre_fork_events.clear()
     logger.info(
         "celery probe: drained %d pre-fork event(s) into worker engine",
@@ -75,46 +73,38 @@ class CeleryProbe(BaseProbe):
     def start(self, **kwargs) -> None:
         try:
             from celery.signals import (
-                task_prerun,
-                task_postrun,
-                task_retry,
+                celeryd_after_setup,
                 task_failure,
+                task_postrun,
+                task_prerun,
+                task_retry,
                 worker_process_init,
                 worker_process_shutdown,
-                celeryd_after_setup,
             )
         except ImportError:
-            logger.warning(
-                "celery not installed — celery probe inactive."
-            )
+            logger.warning("celery not installed — celery probe inactive.")
             return
 
-        celeryd_after_setup.connect(
-            self._on_main_ready, weak=False
-        )
+        celeryd_after_setup.connect(self._on_main_ready, weak=False)
         task_prerun.connect(self._on_task_start, weak=False)
         task_postrun.connect(self._on_task_end, weak=False)
         task_retry.connect(self._on_task_retry, weak=False)
         task_failure.connect(self._on_task_failure, weak=False)
-        worker_process_init.connect(
-            self._on_worker_fork, weak=False
-        )
-        worker_process_shutdown.connect(
-            self._on_worker_exit, weak=False
-        )
+        worker_process_init.connect(self._on_worker_fork, weak=False)
+        worker_process_shutdown.connect(self._on_worker_exit, weak=False)
 
         logger.info("celery probe: signals connected")
 
     def stop(self, **kwargs) -> None:
         try:
             from celery.signals import (
-                task_prerun,
-                task_postrun,
-                task_retry,
+                celeryd_after_setup,
                 task_failure,
+                task_postrun,
+                task_prerun,
+                task_retry,
                 worker_process_init,
                 worker_process_shutdown,
-                celeryd_after_setup,
             )
         except ImportError:
             return
@@ -141,9 +131,7 @@ class CeleryProbe(BaseProbe):
         worker and _on_worker_fork drains it after re-init.
         """
         pid = os.getpid()
-        logger.warning(
-            "celery probe: _on_main_ready fired pid=%d", pid
-        )
+        logger.warning("celery probe: _on_main_ready fired pid=%d", pid)
         _pre_fork_events.append(
             NormalizedEvent.now(
                 probe="celery.main.start",
@@ -163,9 +151,7 @@ class CeleryProbe(BaseProbe):
 
         worker_pid = os.getpid()
         master_pid = os.getppid()
-        config_path = os.environ.get(
-            "STACKTRACER_CONFIG", "stacktracer.yaml"
-        )
+        config_path = os.environ.get("STACKTRACER_CONFIG", "stacktracer.yaml")
 
         try:
             stacktracer.init(config=config_path)
@@ -198,9 +184,7 @@ class CeleryProbe(BaseProbe):
         )
 
     def _on_worker_exit(self, **_) -> None:
-        logger.info(
-            "celery probe: worker exiting (pid=%d)", os.getpid()
-        )
+        logger.info("celery probe: worker exiting (pid=%d)", os.getpid())
 
     # ------------------------------------------------------------------ #
     # Task handlers
@@ -252,15 +236,9 @@ class CeleryProbe(BaseProbe):
         task_postrun always fires after task_failure so this is safe.
         """
         state_data = _task_state.pop(task_id, {})
-        trace_id = (
-            state_data.get("trace_id")
-            or kwargs.get("_trace_id")
-            or task_id
-        )
+        trace_id = state_data.get("trace_id") or kwargs.get("_trace_id") or task_id
         t0 = state_data.get("t0")
-        duration_ns = (
-            int((time.perf_counter() - t0) * 1e9) if t0 else None
-        )
+        duration_ns = int((time.perf_counter() - t0) * 1e9) if t0 else None
 
         emit(
             NormalizedEvent.now(
@@ -283,9 +261,7 @@ class CeleryProbe(BaseProbe):
             except RuntimeError:
                 pass
 
-    def _on_task_retry(
-        self, request: Any, reason: Any, einfo: Any, **_
-    ) -> None:
+    def _on_task_retry(self, request: Any, reason: Any, einfo: Any, **_) -> None:
         emit(
             NormalizedEvent.now(
                 probe=TASK_RETRY,
@@ -314,11 +290,7 @@ class CeleryProbe(BaseProbe):
         _on_task_end always fires after this and owns cleanup.
         """
         state_data = _task_state.get(task_id, {})
-        trace_id = (
-            state_data.get("trace_id")
-            or kwargs.get("_trace_id")
-            or task_id
-        )
+        trace_id = state_data.get("trace_id") or kwargs.get("_trace_id") or task_id
         task_name = state_data.get("name", task_id)
 
         emit(

@@ -16,9 +16,10 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from .active_requests import ActiveRequestTracker
 from .causal import (
-    PatternRegistry,
     CausalMatch,
+    PatternRegistry,
     build_default_registry,
 )
 from .event_schema import NormalizedEvent
@@ -55,9 +56,8 @@ class Engine:
         max_temporal_diffs: int = 500,
     ) -> None:
         self.graph = RuntimeGraph()
-        self.temporal = TemporalStore(
-            max_diffs=max_temporal_diffs
-        )
+        self.temporal = TemporalStore(max_diffs=max_temporal_diffs)
+        self.tracker = ActiveRequestTracker()
         self.causal = causal_registry or build_default_registry()
         self.semantic = semantic_layer or SemanticLayer()
 
@@ -70,9 +70,7 @@ class Engine:
         # A trace_id not updated in _trace_ttl_s seconds is considered complete or
         # abandoned and is removed by _evict_stale_traces() in the snapshot loop.
         self._trace_ttl_s: float = 60.0
-        self._last_event_per_trace: Dict[str, tuple] = (
-            {}
-        )  # trace_id → (NormalizedEvent, float)
+        self._last_event_per_trace: Dict[str, tuple] = {}  # trace_id → (NormalizedEvent, float)
         self._last_event_lock = threading.Lock()
 
         # In-order event log (bounded ring buffer for replay / timeline)
@@ -92,16 +90,6 @@ class Engine:
         Called by sdk.emitter for every emitted probe event.
         Must be fast — this runs on the hot path.
         """
-        # 1. Persist (async fire-and-forget; repository handles its own buffering)
-
-        # add temporarily at the top of process()
-        print(
-            f">>> process() engine id={id(self)} graph id={id(self.graph)} event={event.probe}"
-        )
-
-        # import pdb
-        # pdb.set_trace()
-
         if self.repository:
             try:
                 self.repository.insert_event(event)
@@ -110,16 +98,12 @@ class Engine:
 
         # 2. Update runtime graph — build edges between consecutive events in same trace
         with self._last_event_lock:
-            entry = self._last_event_per_trace.get(
-                event.trace_id
-            )
+            entry = self._last_event_per_trace.get(event.trace_id)
             parent = entry[0] if entry else None
             if event.probe == "request.exit":
                 # Close the trace. Also clear parent so request.exit never
                 # draws a generic edge — it closes a span, calls nothing.
-                self._last_event_per_trace.pop(
-                    event.trace_id, None
-                )
+                self._last_event_per_trace.pop(event.trace_id, None)
                 parent = None
             else:
                 self._last_event_per_trace[event.trace_id] = (
@@ -132,17 +116,17 @@ class Engine:
         with self._event_log_lock:
             self._event_log.append(event)
             if len(self._event_log) > self._event_log_max:
-                self._event_log = self._event_log[
-                    -self._event_log_max :
-                ]
+                self._event_log = self._event_log[-self._event_log_max :]
+
+        # 4. Update Active Request Tracker (ADD THIS)
+        if self.tracker:
+            self.tracker.event(trace_id=event.trace_id, probe=event.probe)
 
     # ------------------------------------------------------------------ #
     # Snapshot (called periodically or on deployment events)
     # ------------------------------------------------------------------ #
 
-    def snapshot(
-        self, label: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def snapshot(self, label: Optional[str] = None) -> Dict[str, Any]:
         """Capture and store a graph diff. Returns the diff summary."""
         snap = self.graph.snapshot()
         diff = self.temporal.capture(snap, label=label)
@@ -160,17 +144,13 @@ class Engine:
     # Causal evaluation
     # ------------------------------------------------------------------ #
 
-    def evaluate(
-        self, tags: Optional[List[str]] = None
-    ) -> List[CausalMatch]:
+    def evaluate(self, tags: Optional[List[str]] = None) -> List[CausalMatch]:
         """Run all registered causal rules against the current graph."""
 
         # import pdb
         # pdb.set_trace()
 
-        return self.causal.evaluate(
-            self.graph, self.temporal, tags=tags
-        )
+        return self.causal.evaluate(self.graph, self.temporal, self.tracker, tags=tags)
 
     # ------------------------------------------------------------------ #
     # Query surface
@@ -181,31 +161,23 @@ class Engine:
         Entry point for the DSL query layer.
         Delegates to query/executor.py.
         """
-        from ..query.parser import parse
         from ..query.executor import execute
+        from ..query.parser import parse
 
         parsed = parse(query_str)
         return execute(parsed, self)
 
-    def critical_path(
-        self, trace_id: str
-    ) -> List[Dict[str, Any]]:
+    def critical_path(self, trace_id: str) -> List[Dict[str, Any]]:
         """
         Derive the critical path for a single trace_id from the event log.
         Returns all registered probe events in chronological order,
         annotated with inter-stage durations.
         Uses ProbeTypes registry — no manual probe list to maintain.
         """
-        # import pdb
-        # pdb.set_trace()
         from .event_schema import ProbeTypes
 
         with self._event_log_lock:
-            events = [
-                e
-                for e in self._event_log
-                if e.trace_id == trace_id
-            ]
+            events = [e for e in self._event_log if e.trace_id == trace_id]
 
         events.sort(key=lambda e: e.timestamp)
 
@@ -218,11 +190,7 @@ class Engine:
         path = []
         last_ts = None
         for e in filtered:
-            duration_ms = (
-                (e.timestamp - last_ts) * 1000
-                if last_ts
-                else None
-            )
+            duration_ms = (e.timestamp - last_ts) * 1000 if last_ts else None
             path.append(
                 {
                     "probe": e.probe,
@@ -230,29 +198,20 @@ class Engine:
                     "name": e.name,
                     "timestamp": e.timestamp,
                     "wall_time": e.wall_time,
-                    "duration_ms": (
-                        round(duration_ms, 3)
-                        if duration_ms
-                        else None
-                    ),
+                    "duration_ms": (round(duration_ms, 3) if duration_ms else None),
                     "metadata": e.metadata,
                 }
             )
             last_ts = e.timestamp
         return path
 
-    def traces_for_service(
-        self, service: str, limit: int = 50
-    ) -> List[str]:
+    def traces_for_service(self, service: str, limit: int = 50) -> List[str]:
         """Return distinct trace_ids that touched a given service."""
         with self._event_log_lock:
             seen = []
             seen_set: set = set()
             for e in reversed(self._event_log):
-                if (
-                    e.service == service
-                    and e.trace_id not in seen_set
-                ):
+                if e.service == service and e.trace_id not in seen_set:
                     seen.append(e.trace_id)
                     seen_set.add(e.trace_id)
                 if len(seen) >= limit:
@@ -268,9 +227,7 @@ class Engine:
                 "type": n.node_type,
                 "call_count": n.call_count,
                 "avg_duration_ms": (
-                    round(n.avg_duration_ns / 1e6, 3)
-                    if n.avg_duration_ns
-                    else None
+                    round(n.avg_duration_ns / 1e6, 3) if n.avg_duration_ns else None
                 ),
             }
             for n in self.graph.hottest_nodes(top_n=top_n)
@@ -306,15 +263,10 @@ class Engine:
             try:
                 self.snapshot()
                 self._evict_stale_traces()
-                if (
-                    hasattr(self, "compactor")
-                    and self.compactor is not None
-                ):
+                if hasattr(self, "compactor") and self.compactor is not None:
                     self.compactor.compact(self.graph)
             except Exception as exc:
-                logger.warning(
-                    "Snapshot/compact failed: %s", exc
-                )
+                logger.warning("Snapshot/compact failed: %s", exc)
 
     def _evict_stale_traces(self) -> None:
         """

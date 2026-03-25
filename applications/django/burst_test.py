@@ -19,10 +19,10 @@ Usage:
 
 import argparse
 import random
-import time
 import threading
-from urllib.request import urlopen, Request
+import time
 from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_WAVES = 4
@@ -57,9 +57,7 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
                 url, method, _ = queue.pop(0)
             t0 = time.perf_counter()
             try:
-                with urlopen(
-                    Request(url, method=method), timeout=15
-                ) as r:
+                with urlopen(Request(url, method=method), timeout=15) as r:
                     status = r.status
                     r.read()
             except HTTPError as exc:
@@ -74,10 +72,7 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
                     }
                 )
 
-    threads = [
-        threading.Thread(target=_worker, daemon=True)
-        for _ in range(min(workers, count))
-    ]
+    threads = [threading.Thread(target=_worker, daemon=True) for _ in range(min(workers, count))]
     t0 = time.perf_counter()
     for t in threads:
         t.start()
@@ -102,22 +97,14 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_BASE_URL)
-    parser.add_argument(
-        "--waves", type=int, default=DEFAULT_WAVES
-    )
-    parser.add_argument(
-        "--burst", type=int, default=DEFAULT_BURST_SIZE
-    )
-    parser.add_argument(
-        "--workers", type=int, default=DEFAULT_WORKERS
-    )
-    parser.add_argument(
-        "--quiet", type=float, default=DEFAULT_QUIET_S
-    )
+    parser.add_argument("--waves", type=int, default=DEFAULT_WAVES)
+    parser.add_argument("--burst", type=int, default=DEFAULT_BURST_SIZE)
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--quiet", type=float, default=DEFAULT_QUIET_S)
     args = parser.parse_args()
 
     print()
-    print(f"  django_tracer burst test")
+    print("  django_tracer burst test")
     print(
         f"  {args.waves} waves  ·  {args.burst} req/burst  "
         f"·  {args.workers} workers  ·  {args.quiet}s quiet"
@@ -127,8 +114,7 @@ def main():
 
     for wave in range(1, args.waves + 1):
         print(
-            f"  ── Wave {wave}/{args.waves} "
-            f"── firing {args.burst} requests ...",
+            f"  ── Wave {wave}/{args.waves} " f"── firing {args.burst} requests ...",
             end="",
             flush=True,
         )
@@ -141,8 +127,7 @@ def main():
 
         if wave < args.waves:
             print(
-                f"         quiet {args.quiet}s "
-                f"— run SHOW nodes in REPL now ...",
+                f"         quiet {args.quiet}s " f"— run SHOW nodes in REPL now ...",
                 end="",
                 flush=True,
             )

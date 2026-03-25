@@ -33,7 +33,7 @@ Usage:
 
 Extending (user-facing):
     Users add their own rules via:
-        normalizer.add_pattern(service="django", pattern=r"/api/items/(\d+)/", replacement="/api/items/{id}/")
+        normalizer.add_pattern(service="django", pattern=r"/api/items/(\\d+)/", replacement="/api/items/{id}/")
         normalizer.add_rule(service="celery", fn=my_normalizer_fn)
 
     Or in stacktracer.yaml:
@@ -45,8 +45,8 @@ Extending (user-facing):
 
 from __future__ import annotations
 
-import re
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -67,10 +67,10 @@ _BUILTIN_PATTERNS: List[Tuple[str, str]] = [
         "{uuid}",
     ),
     # Numeric IDs in URL segments  e.g. /api/users/1234/profile
-    (r"/(\d{2,})/", "/{id}/"),
-    (r"/(\d{2,})$", "/{id}"),
+    (r"/(\d+)/", "/{id}/"),
+    (r"/(\d+)$", "/{id}"),
     # Numeric ID at path end without trailing slash
-    (r"=(\d{2,})", "={id}"),
+    (r"=(\d+)", "={id}"),
     # Hex object IDs (MongoDB style)  e.g. /api/docs/507f1f77bcf86cd799439011
     (r"/([0-9a-f]{24})/", "/{oid}/"),
     (r"/([0-9a-f]{24})$", "/{oid}"),
@@ -92,8 +92,7 @@ _BUILTIN_PATTERNS: List[Tuple[str, str]] = [
 
 # Compile once at import time
 _BUILTIN_COMPILED: List[Tuple[re.Pattern, str]] = [
-    (re.compile(pattern), replacement)
-    for pattern, replacement in _BUILTIN_PATTERNS
+    (re.compile(pattern), replacement) for pattern, replacement in _BUILTIN_PATTERNS
 ]
 
 
@@ -122,9 +121,7 @@ class NormalizationRule:
     fn: Optional[Callable[[str], str]] = None
 
     # Internal compiled pattern
-    _compiled: Optional[re.Pattern] = field(
-        default=None, repr=False, compare=False
-    )
+    _compiled: Optional[re.Pattern] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if self.pattern:
@@ -198,7 +195,7 @@ class GraphNormalizer:
         replacement: str,
         description: str = "",
     ) -> None:
-        """
+        r"""
         Add a regex normalization rule for a specific service.
 
         service = "*" applies to all services.
@@ -284,9 +281,7 @@ class GraphNormalizer:
         self._cache[cache_key] = result
         return result
 
-    def _normalize_uncached(
-        self, service: str, name: str
-    ) -> str:
+    def _normalize_uncached(self, service: str, name: str) -> str:
         result = name
 
         # Step 1 — built-in patterns (applied to all services)
@@ -329,9 +324,7 @@ class GraphNormalizer:
         if not config:
             return cls()
 
-        max_unique = config.get(
-            "max_unique_names_per_service", 500
-        )
+        max_unique = config.get("max_unique_names_per_service", 500)
         normalizer = cls(max_unique_names_per_service=max_unique)
 
         for rule_cfg in config.get("rules", []):
@@ -345,8 +338,5 @@ class GraphNormalizer:
         return normalizer
 
     def stats(self) -> dict:
-        """Return cardinality stats per service — useful in REPL \status."""
-        return {
-            service: len(names)
-            for service, names in self._seen_names.items()
-        }
+        r"""Return cardinality stats per service — useful in REPL \status."""
+        return {service: len(names) for service, names in self._seen_names.items()}

@@ -70,13 +70,13 @@ import os
 import sys
 import threading
 import time
-from typing import Any, Callable, Optional, List
+from typing import Any, Callable, List, Optional
 
+from ..context.vars import get_span_id, get_trace_id
+from ..core.event_schema import NormalizedEvent, ProbeTypes
+from ..core.kprobe_bridge import get_bridge
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
-from ..core.event_schema import NormalizedEvent, ProbeTypes
-from ..context.vars import get_trace_id, get_span_id
-from ..core.kprobe_bridge import get_bridge
 
 logger = logging.getLogger("stacktracer.probes.asyncio")
 
@@ -248,14 +248,10 @@ class _EpollKprobe:
                 "via tracepoints syscalls:sys_enter/exit_epoll_wait"
             )
         except Exception as exc:
-            logger.warning(
-                "asyncio epoll BPF compile failed: %s", exc
-            )
+            logger.warning("asyncio epoll BPF compile failed: %s", exc)
             return False
 
-        self._bpf["epoll_events"].open_perf_buffer(
-            self._handle_epoll_event
-        )
+        self._bpf["epoll_events"].open_perf_buffer(self._handle_epoll_event)
         self._running = True
         self._thread = threading.Thread(
             target=self._poll_loop,
@@ -278,9 +274,7 @@ class _EpollKprobe:
             except Exception as exc:
                 logger.debug("epoll kprobe poll error: %s", exc)
 
-    def _handle_epoll_event(
-        self, cpu: int, data: Any, size: int
-    ) -> None:
+    def _handle_epoll_event(self, cpu: int, data: Any, size: int) -> None:
         if self._bpf is None:
             return
         try:
@@ -289,12 +283,8 @@ class _EpollKprobe:
             if ev.pid != self._our_pid:
                 return  # filter to our process
 
-            trace_id = ev.trace_id.decode(
-                "ascii", errors="replace"
-            ).rstrip("\x00")
-            service = ev.service.decode(
-                "ascii", errors="replace"
-            ).rstrip("\x00")
+            trace_id = ev.trace_id.decode("ascii", errors="replace").rstrip("\x00")
+            service = ev.service.decode("ascii", errors="replace").rstrip("\x00")
 
             if not trace_id:
                 return
@@ -344,8 +334,9 @@ def _is_coroutine_code(code) -> bool:
 
 # ── Replace _setup_monitoring_312 and _teardown_monitoring_312 with these ──
 def _setup_monitoring_312() -> bool:
-    from ..core.monitoring_coordinator import get_coordinator
     import inspect
+
+    from ..core.monitoring_coordinator import get_coordinator
 
     _active_coros: set = set()
     CO_OPTIMIZED = 0x1
@@ -357,9 +348,7 @@ def _setup_monitoring_312() -> bool:
         if not (code.co_flags & CO_OPTIMIZED):
             return sys.monitoring.DISABLE
         if not (code.co_flags & CO_COROUTINE):
-            return (
-                sys.monitoring.DISABLE
-            )  # not a coroutine — ignore
+            return sys.monitoring.DISABLE  # not a coroutine — ignore
 
         trace_id = get_trace_id()
         if not trace_id:
@@ -407,12 +396,8 @@ def _setup_monitoring_312() -> bool:
             )
         )
 
-    get_coordinator().register(
-        "asyncio", on_call=on_call, on_return=on_return
-    )
-    logger.info(
-        "asyncio probe: registered sys.monitoring handlers via coordinator"
-    )
+    get_coordinator().register("asyncio", on_call=on_call, on_return=on_return)
+    logger.info("asyncio probe: registered sys.monitoring handlers via coordinator")
     return True
 
 
@@ -443,11 +428,7 @@ def _setup_setprofile_311() -> bool:
         if not trace_id:
             return
 
-        probe_type = (
-            "asyncio.loop.coro_call"
-            if event == "call"
-            else "asyncio.loop.coro_return"
-        )
+        probe_type = "asyncio.loop.coro_call" if event == "call" else "asyncio.loop.coro_return"
         emit(
             NormalizedEvent.now(
                 probe=probe_type,
@@ -464,9 +445,7 @@ def _setup_setprofile_311() -> bool:
             original_profile(frame, event, arg)
 
     sys.setprofile(_profile_callback)
-    logger.info(
-        "asyncio probe: sys.setprofile installed (Python 3.11)"
-    )
+    logger.info("asyncio probe: sys.setprofile installed (Python 3.11)")
     return True
 
 
@@ -489,9 +468,7 @@ def _make_create_task_wrapper(original: Callable) -> Callable:
     ):
         trace_id = get_trace_id()
         if trace_id:
-            coro_name = getattr(
-                coro, "__qualname__", type(coro).__name__
-            )
+            coro_name = getattr(coro, "__qualname__", type(coro).__name__)
             emit(
                 NormalizedEvent.now(
                     probe="asyncio.task.create",
@@ -551,11 +528,6 @@ class AsyncioProbe(BaseProbe):
         self._epoll_kprobe: Optional[_EpollKprobe] = None
 
     def start(self, observe_modules: List[str] = None) -> None:
-
-        import pdb
-
-        pdb.set_trace()
-
         global _originals, _patched
 
         major, minor = sys.version_info[:2]
@@ -568,9 +540,7 @@ class AsyncioProbe(BaseProbe):
             return
 
         if _patched:
-            logger.warning(
-                "asyncio probe already installed — skipping"
-            )
+            logger.warning("asyncio probe already installed — skipping")
             return
 
         # ── Layer 1: epoll kprobe ──────────────────────────────────────
@@ -597,9 +567,7 @@ class AsyncioProbe(BaseProbe):
 
         # ── Layer 3: create_task ───────────────────────────────────────
         _originals["create_task"] = asyncio.create_task
-        asyncio.create_task = _make_create_task_wrapper(
-            asyncio.create_task
-        )
+        asyncio.create_task = _make_create_task_wrapper(asyncio.create_task)
 
         _patched = True
 

@@ -32,7 +32,7 @@ repos:
         language: system
         pass_filenames: false
         args:
-          - stacktracer/tests/
+          - tests/
           - -x               # stop on first failure
           - -q               # quiet output
           - --tb=short       # short tracebacks

@@ -203,8 +203,7 @@ gunicorn:
 #
 # Uncomment and fill in your app name:
 # stacktracer.yaml
+# stacktracer/config/defaults.yaml
 observe:
-  modules:
-    - django_tracer.views      # IndexView, AsyncView, SlowView, DbView + any FBVs
-    - django_tracer.tasks      # if you have a tasks.py, else remove this line
-  functions: []                # leave empty unless you want to add specific helpers later
+  modules: []  # Change from ['django_tracer.views', ...] to []
+  functions: []

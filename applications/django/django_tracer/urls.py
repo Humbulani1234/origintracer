@@ -1,6 +1,7 @@
 """django_tracer/urls.py"""
 
 from django.urls import path
+
 from . import views
 
 urlpatterns = [

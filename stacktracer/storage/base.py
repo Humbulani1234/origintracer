@@ -35,9 +35,10 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 
-from ..core.event_schema import NormalizedEvent
+from stacktracer.core.event_schema import NormalizedEvent
 
 logger = logging.getLogger("stacktracer.storage")
 
@@ -97,41 +98,18 @@ class BaseRepository(ABC):
         ...
 
     @abstractmethod
-    def insert_marker(
-        self,
-        customer_id: str,
-        label: str,
-    ) -> None:
-        """Store a deployment marker with current timestamp."""
-        ...
-
-    @abstractmethod
     def close(self) -> None:
         """Release any open connections."""
         ...
 
     @abstractmethod
-    def insert_deployment_marker(
-        self, customer_id: str, label: str
-    ) -> None:
+    def insert_deployment_marker(self, customer_id: str, label: str) -> None:
         """Store a deployment marker with the current timestamp."""
         ...
 
     @abstractmethod
-    def insert_graph_diff(
-        self, customer_id: str, diff: Dict
-    ) -> None:
+    def insert_graph_diff(self, customer_id: str, diff: Dict) -> None:
         """Store one graph diff snapshot from the agent."""
-        ...
-
-    @abstractmethod
-    def get_diffs_since_deployment(
-        self, customer_id: str, label: str = "deployment"
-    ) -> List[Dict]:
-        """
-        Return all diffs captured after the most recent marker with
-        this label.
-        """
         ...
 
 
@@ -235,9 +213,7 @@ class PGEventRepository(BaseRepository):
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
-                        event.metadata.get(
-                            "customer_id", "default"
-                        ),
+                        event.metadata.get("customer_id", "default"),
                         event.trace_id,
                         event.span_id,
                         event.parent_span_id,
@@ -281,11 +257,7 @@ class PGEventRepository(BaseRepository):
             conditions.append("wall_time >= %s")
             params.append(since)
 
-        where = (
-            ("WHERE " + " AND ".join(conditions))
-            if conditions
-            else ""
-        )
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params.append(limit)
 
         sql = f"""
@@ -371,23 +343,17 @@ class PGEventRepository(BaseRepository):
             if row is None:
                 return None
             return {
-                "data": bytes(
-                    row[0]
-                ),  # psycopg2 returns memoryview
+                "data": bytes(row[0]),  # psycopg2 returns memoryview
                 "content_type": row[1],
                 "received_at": row[2],
             }
         except Exception as exc:
-            logger.error(
-                "PG get_latest_snapshot failed: %s", exc
-            )
+            logger.error("PG get_latest_snapshot failed: %s", exc)
             return None
 
     # --------------------- Graph diffs-------------------------------
 
-    def insert_graph_diff(
-        self, customer_id: str, diff: Dict
-    ) -> None:
+    def insert_graph_diff(self, customer_id: str, diff: Dict) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO graph_diffs
@@ -395,18 +361,10 @@ class PGEventRepository(BaseRepository):
                 VALUES (%s, %s, %s, %s, %s, %s)""",
                 (
                     customer_id,
-                    json.dumps(
-                        list(diff.get("added_nodes", []))
-                    ),
-                    json.dumps(
-                        list(diff.get("removed_nodes", []))
-                    ),
-                    json.dumps(
-                        list(diff.get("added_edges", []))
-                    ),
-                    json.dumps(
-                        list(diff.get("removed_edges", []))
-                    ),
+                    json.dumps(list(diff.get("added_nodes", []))),
+                    json.dumps(list(diff.get("removed_nodes", []))),
+                    json.dumps(list(diff.get("added_edges", []))),
+                    json.dumps(list(diff.get("removed_edges", []))),
                     diff.get("label"),
                 ),
             )
@@ -414,9 +372,7 @@ class PGEventRepository(BaseRepository):
 
     # ── Markers ──────────────────────────────────────────────────────────
 
-    def insert_marker(
-        self, customer_id: str, label: str
-    ) -> None:
+    def insert_marker(self, customer_id: str, label: str) -> None:
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -541,9 +497,7 @@ class ClickHouseRepository(BaseRepository):
         try:
             from clickhouse_driver import Client
 
-            self._client = Client(
-                host=host, port=port, database=database
-            )
+            self._client = Client(host=host, port=port, database=database)
             self._ensure_schema()
             logger.info(
                 "ClickHouse connected: %s:%d/%s",
@@ -552,13 +506,9 @@ class ClickHouseRepository(BaseRepository):
                 database,
             )
         except ImportError:
-            raise RuntimeError(
-                "clickhouse-driver not installed: pip install clickhouse-driver"
-            )
+            raise RuntimeError("clickhouse-driver not installed: pip install clickhouse-driver")
         except Exception as exc:
-            raise RuntimeError(
-                f"ClickHouse connection failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"ClickHouse connection failed: {exc}") from exc
 
     def _ensure_schema(self) -> None:
         for ddl in (
@@ -571,9 +521,7 @@ class ClickHouseRepository(BaseRepository):
             try:
                 self._client.execute(ddl)
             except Exception as exc:
-                logger.debug(
-                    "ClickHouse DDL skip (may exist): %s", exc
-                )
+                logger.debug("ClickHouse DDL skip (may exist): %s", exc)
 
     # ── Events ──────────────────────────────────────────────────────────
 
@@ -591,18 +539,14 @@ class ClickHouseRepository(BaseRepository):
                 """,
                 [
                     (
-                        event.metadata.get(
-                            "customer_id", "default"
-                        ),
+                        event.metadata.get("customer_id", "default"),
                         event.trace_id,
                         event.span_id or "",
                         event.parent_span_id or "",
                         event.probe,
                         event.service,
                         event.name,
-                        datetime.utcfromtimestamp(
-                            event.wall_time
-                        ),
+                        datetime.utcfromtimestamp(event.wall_time),
                         event.duration_ns,
                         event.pid,
                         event.tid,
@@ -611,9 +555,7 @@ class ClickHouseRepository(BaseRepository):
                 ],
             )
         except Exception as exc:
-            logger.warning(
-                "ClickHouse insert_event failed: %s", exc
-            )
+            logger.warning("ClickHouse insert_event failed: %s", exc)
 
     def query_events(
         self,
@@ -666,9 +608,7 @@ class ClickHouseRepository(BaseRepository):
             ]
             return [dict(zip(cols, r)) for r in rows]
         except Exception as exc:
-            logger.error(
-                "ClickHouse query_events failed: %s", exc
-            )
+            logger.error("ClickHouse query_events failed: %s", exc)
             return []
 
     # ── Snapshots ────────────────────────────────────────────────────────
@@ -701,9 +641,7 @@ class ClickHouseRepository(BaseRepository):
                 ],
             )
         except Exception as exc:
-            logger.warning(
-                "ClickHouse insert_snapshot failed: %s", exc
-            )
+            logger.warning("ClickHouse insert_snapshot failed: %s", exc)
 
     def get_latest_snapshot(
         self,
@@ -729,24 +667,18 @@ class ClickHouseRepository(BaseRepository):
                 "received_at": float(row[2]),
             }
         except Exception as exc:
-            logger.error(
-                "ClickHouse get_latest_snapshot failed: %s", exc
-            )
+            logger.error("ClickHouse get_latest_snapshot failed: %s", exc)
             return None
 
     # ── Markers ──────────────────────────────────────────────────────────
 
-    def insert_deployment_marker(
-        self, customer_id: str, label: str
-    ) -> None:
+    def insert_deployment_marker(self, customer_id: str, label: str) -> None:
         self._client.execute(
             "INSERT INTO deployment_markers (customer_id, label) VALUES",
             [{"customer_id": customer_id, "label": label}],
         )
 
-    def insert_graph_diff(
-        self, customer_id: str, diff: Dict
-    ) -> None:
+    def insert_graph_diff(self, customer_id: str, diff: Dict) -> None:
         import json
 
         self._client.execute(
@@ -757,18 +689,10 @@ class ClickHouseRepository(BaseRepository):
             [
                 {
                     "customer_id": customer_id,
-                    "added_nodes": json.dumps(
-                        list(diff.get("added_nodes", []))
-                    ),
-                    "removed_nodes": json.dumps(
-                        list(diff.get("removed_nodes", []))
-                    ),
-                    "added_edges": json.dumps(
-                        list(diff.get("added_edges", []))
-                    ),
-                    "removed_edges": json.dumps(
-                        list(diff.get("removed_edges", []))
-                    ),
+                    "added_nodes": json.dumps(list(diff.get("added_nodes", []))),
+                    "removed_nodes": json.dumps(list(diff.get("removed_nodes", []))),
+                    "added_edges": json.dumps(list(diff.get("added_edges", []))),
+                    "removed_edges": json.dumps(list(diff.get("removed_edges", []))),
                     "label": diff.get("label"),
                 }
             ],
@@ -785,23 +709,29 @@ class ClickHouseRepository(BaseRepository):
 
 class InMemoryRepository(BaseRepository):
     """
-    No-dependency in-memory store.
-    Data is lost on process restart — correct for dev and tests.
-    All three backends implement the same interface so the rest of
-    the codebase never needs to know which backend is active.
+    Refactored In-Memory store using collections for performance.
+    - Uses deque(maxlen=X) to automatically rotate old data out.
+    - Uses defaultdict to eliminate boilerplate key-initialization.
     """
 
-    def __init__(self, max_events: int = 100_000) -> None:
-        from collections import deque
-
+    def __init__(self, max_events: int = 100_000, max_diffs: int = 500) -> None:
+        # Events: Global rolling buffer
         self._events: deque = deque(maxlen=max_events)
+
+        # Snapshots: Usually one-per-customer, so a dict is fine
         self._snapshots: Dict[str, Dict] = {}
-        self._markers = {}
-        self._diffs = {}
+
+        # Markers: Using defaultdict(list) means we never need .setdefault()
+        self._markers: Dict[str, List[Dict]] = defaultdict(list)
+
+        # Diffs: Using defaultdict with a lambda to create deques automatically
+        # This keeps exactly the last 500 diffs per customer with zero manual work.
+        self._diffs: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_diffs))
 
     # ── Events ──────────────────────────────────────────────────────────
 
     def insert_event(self, event: NormalizedEvent) -> None:
+        # deque handles the maxlen=100_000 internally
         self._events.append(event.to_dict())
 
     def query_events(
@@ -814,6 +744,7 @@ class InMemoryRepository(BaseRepository):
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         results = []
+        # reversed() on a deque is O(1) for the iterator setup
         for e in reversed(self._events):
             if trace_id and e.get("trace_id") != trace_id:
                 continue
@@ -846,35 +777,39 @@ class InMemoryRepository(BaseRepository):
             "edge_count": edge_count,
         }
 
+    # ── Snapshots (Continued) ──────────────────────────────────────────
+
     def get_latest_snapshot(
         self,
         customer_id: str,
     ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves the most recent full graph snapshot for a customer.
+        Returns None if no snapshot exists.
+        """
+        # .get() is perfect here—it handles the "None" case automatically
         entry = self._snapshots.get(customer_id)
+
         if entry is None:
             return None
+
         return {
             "data": entry["data"],
             "content_type": entry["content_type"],
             "received_at": entry["received_at"],
+            "node_count": entry.get("node_count", 0),
+            "edge_count": entry.get("edge_count", 0),
         }
 
-    # ── Markers ──────────────────────────────────────────────────────────
+    # ── Markers & Diffs ──────────────────────────────────────────────────
 
-    def insert_deployment_marker(
-        self, customer_id: str, label: str
-    ) -> None:
-        self._markers.setdefault(customer_id, []).append(
-            {"label": label, "created_at": time.time()}
-        )
+    def insert_deployment_marker(self, customer_id: str, label: str) -> None:
+        # No more .setdefault()! defaultdict handles the creation of the list.
+        self._markers[customer_id].append({"label": label, "created_at": time.time()})
 
-    def insert_graph_diff(
-        self, customer_id: str, diff: Dict
-    ) -> None:
-        self._diffs.setdefault(customer_id, []).append(diff)
-        self._diffs[customer_id] = self._diffs[customer_id][
-            -500:
-        ]
+    def insert_graph_diff(self, customer_id: str, diff: Dict) -> None:
+        # deque(maxlen=500) handles the truncation automatically.
+        self._diffs[customer_id].append(diff)
 
     def close(self) -> None:
         pass

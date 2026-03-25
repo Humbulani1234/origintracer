@@ -27,6 +27,8 @@ from collections import deque
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 logger = logging.getLogger("stacktracer.uploader")
 
 
@@ -60,45 +62,6 @@ class _UploaderEventBuffer:
 
     def __len__(self) -> int:
         return len(self._q)
-
-
-class _SnapshotSlot:
-    """
-    Single-slot buffer for the latest graph snapshot bytes.
-    Only the most recent snapshot matters — superseded ones are discarded.
-    Thread-safe. Used to decouple snapshot serialisation (done in the
-    drain thread when engine.graph is read) from the HTTP send.
-    """
-
-    def __init__(self) -> None:
-        self._data: Optional[bytes] = None
-        self._content_type: str = "application/msgpack"
-        self._pending: bool = False
-        self._lock = Lock()
-
-    def put(
-        self,
-        data: bytes,
-        content_type: str = "application/msgpack",
-    ) -> None:
-        with self._lock:
-            self._data = data
-            self._content_type = content_type
-            self._pending = True
-
-    def take(self) -> Optional[tuple]:
-        """Return (data, content_type) and clear pending flag. None if nothing waiting."""
-        with self._lock:
-            if not self._pending or self._data is None:
-                return None
-            result = (self._data, self._content_type)
-            self._pending = False
-            return result
-
-    @property
-    def pending(self) -> bool:
-        with self._lock:
-            return self._pending
 
 
 # ====================================================================== #
@@ -170,11 +133,8 @@ class Uploader:
         self._max_batch = max_batch_size
 
         self._event_buffer = _UploaderEventBuffer()
-        self._snapshot_slot = _SnapshotSlot()
 
-        self._engine: Optional[Any] = (
-            None  # set by bind_engine()
-        )
+        self._engine: Optional[Any] = None  # set by bind_engine()
 
         self._thread: Optional[threading.Thread] = None
         self._running: bool = False
@@ -231,7 +191,6 @@ class Uploader:
             name="stacktracer-uploader",
         )
         self._thread.start()
-        print(">>>>>uploader")
         logger.info(
             "Uploader started → %s  events=%ds  snapshots=%ds",
             self._endpoint,
@@ -271,17 +230,11 @@ class Uploader:
 
             now = time.time()
 
-            if (
-                now - self._last_event_flush_s
-                >= self._flush_interval
-            ):
+            if now - self._last_event_flush_s >= self._flush_interval:
                 self._flush_events()
                 self._last_event_flush_s = now
 
-            if (
-                now - self._last_snapshot_flush_s
-                >= self._snapshot_interval
-            ):
+            if now - self._last_snapshot_flush_s >= self._snapshot_interval:
                 self._flush_snapshot()
                 self._last_snapshot_flush_s = now
 
@@ -331,14 +284,9 @@ class Uploader:
                 )
 
         except ImportError:
-            logger.debug(
-                "httpx not installed — uploader inactive  "
-                "(pip install httpx)"
-            )
-        except httpx.TimeoutException:
-            logger.debug(
-                "Timeout — backend not responding: %s", e
-            )
+            logger.debug("httpx not installed — uploader inactive  " "(pip install httpx)")
+        except httpx.TimeoutException as e:
+            logger.debug("Timeout — backend not responding: %s", e)
         except httpx.ConnectError as e:
             logger.debug("Connection error: %s", e)
         except Exception as exc:
@@ -378,16 +326,12 @@ class Uploader:
         - POST /api/v1/graph/diff     → incremental update
         """
         if self._engine is None:
-            logger.debug(
-                "Snapshot skipped: engine not initialized"
-            )
+            logger.debug("Snapshot skipped: engine not initialized")
             return
 
         # --- Serialize graph ---
         try:
-            data, content_type = _serialize_graph(
-                self._engine.graph
-            )
+            data, content_type = _serialize_graph(self._engine.graph)
         except Exception as exc:
             logger.debug("Graph serialization failed: %s", exc)
             return
@@ -446,9 +390,7 @@ class Uploader:
             diff_resp = httpx.post(
                 f"{self._endpoint}/api/v1/graph/diff",
                 json=latest_diff,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}"
-                },
+                headers={"Authorization": f"Bearer {self._api_key}"},
                 timeout=5.0,
             )
 
@@ -483,21 +425,15 @@ class Uploader:
             httpx.post(
                 f"{self._endpoint}/api/v1/deployment",
                 json={"label": label},
-                headers={
-                    "Authorization": f"Bearer {self._api_key}"
-                },
+                headers={"Authorization": f"Bearer {self._api_key}"},
                 timeout=5.0,
             )
-        except httpx.TimeoutException:
-            logger.debug(
-                "Timeout — backend not responding: %s", e
-            )
+        except httpx.TimeoutException as e:
+            logger.debug("Timeout — backend not responding: %s", e)
         except httpx.ConnectError as e:
             logger.debug("Connection error: %s", e)
         except Exception as exc:
-            logger.warning(
-                "Failed to send deployment marker: %s", exc
-            )
+            logger.warning("Failed to send deployment marker: %s", exc)
 
     # ------------------------------------------------------------------ #
     # Stats
@@ -510,7 +446,6 @@ class Uploader:
             "failed_event_sends": self._failed_event_sends,
             "failed_snap_sends": self._failed_snap_sends,
             "event_buffer_size": len(self._event_buffer),
-            "snapshot_pending": self._snapshot_slot.pending,
             "engine_bound": self._engine is not None,
             "running": self._running,
         }

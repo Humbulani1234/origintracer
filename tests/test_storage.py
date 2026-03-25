@@ -14,7 +14,7 @@ or STACKTRACER_TEST_CH_HOST are set respectively.
 Tests focus on:
     - insert_event / query_events (events table)
     - insert_snapshot / get_latest_snapshot (snapshots table)
-    - insert_marker (markers table)
+    - insert_deployment_marker (markers table)
     - BaseRepository interface completeness
 """
 
@@ -22,13 +22,15 @@ from __future__ import annotations
 
 import os
 import time
+
 import pytest
 
-from conftest import evt
-from stacktracer.storage.repository import (
-    InMemoryRepository,
+from stacktracer.storage.base import (
     BaseRepository,
+    InMemoryRepository,
 )
+
+from .conftest import evt
 
 # ── Shared contract tests — run against any backend ───────────────────────
 
@@ -67,7 +69,7 @@ def run_snapshot_contract(repo: BaseRepository):
 
 
 def run_marker_contract(repo: BaseRepository):
-    repo.insert_marker("acme", "deploy:v1.0.0")
+    repo.insert_deployment_marker("acme", "deploy:v1.0.0")
     # No query API for markers — just verify it doesn't raise
 
 
@@ -87,29 +89,19 @@ class TestInMemoryRepository:
         run_event_contract(self.repo)
 
     def test_filter_by_probe(self):
-        self.repo.insert_event(
-            evt(probe="request.entry", trace_id="t1")
-        )
-        self.repo.insert_event(
-            evt(probe="db.query.start", trace_id="t1")
-        )
+        self.repo.insert_event(evt(probe="request.entry", trace_id="t1"))
+        self.repo.insert_event(evt(probe="db.query.start", trace_id="t1"))
         results = self.repo.query_events(probe="request.entry")
-        assert all(
-            r["probe"] == "request.entry" for r in results
-        )
+        assert all(r["probe"] == "request.entry" for r in results)
 
     def test_filter_by_service(self):
-        self.repo.insert_event(
-            evt(service="django", name="view", trace_id="t1")
-        )
-        self.repo.insert_event(
-            evt(service="postgres", name="SELECT", trace_id="t1")
-        )
+        self.repo.insert_event(evt(service="django", name="view", trace_id="t1"))
+        self.repo.insert_event(evt(service="postgres", name="SELECT", trace_id="t1"))
         results = self.repo.query_events(service="postgres")
         assert all(r["service"] == "postgres" for r in results)
 
     def test_filter_by_since(self):
-        before = time.time()
+        time.time()
         self.repo.insert_event(evt(trace_id="t1"))
         after = time.time()
         results = self.repo.query_events(since=after + 1)
@@ -150,30 +142,16 @@ class TestInMemoryRepository:
 
     def test_snapshot_overwrites_per_customer(self):
         """Only the most recent snapshot per customer is retained."""
-        self.repo.insert_snapshot(
-            "acme", b"first", "application/msgpack"
-        )
-        self.repo.insert_snapshot(
-            "acme", b"second", "application/msgpack"
-        )
+        self.repo.insert_snapshot("acme", b"first", "application/msgpack")
+        self.repo.insert_snapshot("acme", b"second", "application/msgpack")
         row = self.repo.get_latest_snapshot("acme")
         assert row["data"] == b"second"
 
     def test_snapshots_isolated_per_customer(self):
-        self.repo.insert_snapshot(
-            "acme", b"acme-data", "application/msgpack"
-        )
-        self.repo.insert_snapshot(
-            "other", b"other-data", "application/msgpack"
-        )
-        assert (
-            self.repo.get_latest_snapshot("acme")["data"]
-            == b"acme-data"
-        )
-        assert (
-            self.repo.get_latest_snapshot("other")["data"]
-            == b"other-data"
-        )
+        self.repo.insert_snapshot("acme", b"acme-data", "application/msgpack")
+        self.repo.insert_snapshot("other", b"other-data", "application/msgpack")
+        assert self.repo.get_latest_snapshot("acme")["data"] == b"acme-data"
+        assert self.repo.get_latest_snapshot("other")["data"] == b"other-data"
 
     # ── Markers ───────────────────────────────────────────────────────────
 
@@ -181,9 +159,11 @@ class TestInMemoryRepository:
         run_marker_contract(self.repo)
 
     def test_multiple_markers_stored(self):
-        self.repo.insert_marker("acme", "deploy:v1")
-        self.repo.insert_marker("acme", "deploy:v2")
-        assert len(self.repo._markers) == 2
+        self.repo.insert_deployment_marker("acme", "deploy:v1")
+        self.repo.insert_deployment_marker("acme", "deploy:v2")
+
+        # Check the number of markers for the 'acme' customer specifically
+        assert len(self.repo._markers["acme"]) == 2
 
 
 # ====================================================================== #
@@ -203,9 +183,7 @@ class TestBaseRepositoryInterface:
 
         abstract_methods = {
             name
-            for name, val in inspect.getmembers(
-                BaseRepository, predicate=inspect.isfunction
-            )
+            for name, val in inspect.getmembers(BaseRepository, predicate=inspect.isfunction)
             if getattr(val, "__isabstractmethod__", False)
         }
         repo = InMemoryRepository()
@@ -230,26 +208,19 @@ class TestEventRepositoryPostgres:
     @pytest.fixture
     def pg_repo(self):
         import psycopg2
-        from stacktracer.storage.repository import (
+
+        from stacktracer.storage.base import (
             EventRepository,
         )
 
-        conn = psycopg2.connect(
-            os.environ["STACKTRACER_TEST_DB_DSN"]
-        )
+        conn = psycopg2.connect(os.environ["STACKTRACER_TEST_DB_DSN"])
         repo = EventRepository(conn)
         yield repo
         # Cleanup test data
         with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM st_events    WHERE customer_id = 'test'"
-            )
-            cur.execute(
-                "DELETE FROM st_snapshots WHERE customer_id = 'test'"
-            )
-            cur.execute(
-                "DELETE FROM st_markers   WHERE customer_id = 'test'"
-            )
+            cur.execute("DELETE FROM st_events    WHERE customer_id = 'test'")
+            cur.execute("DELETE FROM st_snapshots WHERE customer_id = 'test'")
+            cur.execute("DELETE FROM st_markers   WHERE customer_id = 'test'")
         conn.commit()
         conn.close()
 
@@ -259,15 +230,9 @@ class TestEventRepositoryPostgres:
     def test_snapshot_contract_postgres(self, pg_repo):
         run_snapshot_contract(pg_repo)
 
-    def test_latest_snapshot_survives_multiple_inserts(
-        self, pg_repo
-    ):
-        pg_repo.insert_snapshot(
-            "test", b"v1", "application/msgpack", node_count=10
-        )
-        pg_repo.insert_snapshot(
-            "test", b"v2", "application/msgpack", node_count=20
-        )
+    def test_latest_snapshot_survives_multiple_inserts(self, pg_repo):
+        pg_repo.insert_snapshot("test", b"v1", "application/msgpack", node_count=10)
+        pg_repo.insert_snapshot("test", b"v2", "application/msgpack", node_count=20)
         row = pg_repo.get_latest_snapshot("test")
         # PostgreSQL returns most recent by received_at DESC
         assert row["data"] in (

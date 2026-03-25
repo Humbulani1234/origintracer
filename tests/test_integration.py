@@ -28,15 +28,17 @@ from __future__ import annotations
 
 import time
 import uuid
+
 import pytest
 
-from conftest import evt
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.core.engine import Engine
-from stacktracer.core.causal import build_default_registry
+from stacktracer.__init__ import ResolvedConfig
 from stacktracer.core.active_requests import ActiveRequestTracker
-from stacktracer.core.semantic import SemanticLayer
-from stacktracer.sdk.emitter import bind_engine, emit
+from stacktracer.core.causal import build_default_registry
+from stacktracer.core.engine import Engine
+from stacktracer.core.event_schema import NormalizedEvent
+from stacktracer.sdk.emitter import bind_engine, emit, enable_sync_mode
+
+from .conftest import evt
 
 # ====================================================================== #
 # Full stack HTTP request trace
@@ -54,11 +56,10 @@ class TestNginxDjangoPostgresTrace:
     """
 
     def setup_method(self):
+        enable_sync_mode()
         tracker = ActiveRequestTracker()
         self.engine = Engine(
-            causal_registry=build_default_registry(
-                tracker=tracker
-            ),
+            causal_registry=build_default_registry(tracker=tracker),
             snapshot_interval_s=9999,
         )
         self.engine.tracker = tracker
@@ -68,11 +69,7 @@ class TestNginxDjangoPostgresTrace:
         tid = str(uuid.uuid4())
 
         # nginx accepts the connection
-        emit(
-            NormalizedEvent.now(
-                "request.entry", tid, "nginx", "upstream"
-            )
-        )
+        emit(NormalizedEvent.now("request.entry", tid, "nginx", "upstream"))
         # django middleware enters
         emit(
             NormalizedEvent.now(
@@ -119,12 +116,7 @@ class TestNginxDjangoPostgresTrace:
             )
         )
         # nginx sends response
-        emit(
-            NormalizedEvent.now(
-                "request.exit", tid, "nginx", "upstream"
-            )
-        )
-
+        emit(NormalizedEvent.now("request.exit", tid, "nginx", "upstream"))
         g = self.engine.graph
 
         # All services present
@@ -134,17 +126,10 @@ class TestNginxDjangoPostgresTrace:
         assert "postgres" in services
 
         # Topology: nginx → django → postgres
-        reachable_from_nginx = g.reachable_from(
-            "nginx::upstream"
-        )
+        reachable_from_nginx = g.reachable_from("nginx::upstream")
         assert "django::TracerMiddleware" in reachable_from_nginx
-        assert (
-            "django::UserOrderView.get" in reachable_from_nginx
-        )
-        assert (
-            "postgres::SELECT orders WHERE user_id=?"
-            in reachable_from_nginx
-        )
+        assert "django::UserOrderView.get" in reachable_from_nginx
+        assert "postgres::SELECT orders WHERE user_id=?" in reachable_from_nginx
 
     def test_critical_path_returns_ordered_stages(self):
         tid = str(uuid.uuid4())
@@ -164,26 +149,18 @@ class TestNginxDjangoPostgresTrace:
 
     def test_dsl_hotspot_returns_most_called_node(self):
         """After many requests, the most-called node tops the hotspot list."""
-        from stacktracer.query.parser import parse, execute
+        from stacktracer.query.parser import execute, parse
 
         for i in range(10):
             tid = str(uuid.uuid4())
-            emit(
-                NormalizedEvent.now(
-                    "function.call", tid, "django", "busy_view"
-                )
-            )
+            emit(NormalizedEvent.now("function.call", tid, "django", "busy_view"))
 
         for i in range(2):
             tid = str(uuid.uuid4())
-            emit(
-                NormalizedEvent.now(
-                    "function.call", tid, "django", "quiet_view"
-                )
-            )
-
+            emit(NormalizedEvent.now("function.call", tid, "django", "quiet_view"))
         result = execute(parse("HOTSPOT TOP 5"), self.engine)
-        top_node = result["data"][0]["node"]
+        data = result.get("data")
+        top_node = data[0]["node"]
         assert top_node == "django::busy_view"
 
     def test_tracker_records_probe_sequence(self):
@@ -192,20 +169,10 @@ class TestNginxDjangoPostgresTrace:
         Simulate that lifecycle and verify the probe_sequence accumulates.
         """
         tid = str(uuid.uuid4())
-        self.engine.tracker.start(
-            tid, service="django", pattern="/api/orders/"
-        )
+        self.engine.tracker.start(tid, service="django", pattern="/api/orders/")
 
-        emit(
-            NormalizedEvent.now(
-                "db.query.start", tid, "postgres", "SELECT"
-            )
-        )
-        emit(
-            NormalizedEvent.now(
-                "db.query.end", tid, "postgres", "SELECT"
-            )
-        )
+        emit(NormalizedEvent.now("db.query.start", tid, "postgres", "SELECT"))
+        emit(NormalizedEvent.now("db.query.end", tid, "postgres", "SELECT"))
 
         self.engine.tracker.complete(tid)
 
@@ -226,11 +193,10 @@ class TestDeploymentCorrelation:
     """
 
     def setup_method(self):
+        enable_sync_mode()
         tracker = ActiveRequestTracker()
         self.engine = Engine(
-            causal_registry=build_default_registry(
-                tracker=tracker
-            ),
+            causal_registry=build_default_registry(tracker=tracker),
             snapshot_interval_s=9999,
         )
         self.engine.tracker = tracker
@@ -249,18 +215,13 @@ class TestDeploymentCorrelation:
                 )
             )
         self.engine.snapshot()
-
         # Deployment happens
-        self.engine.mark_deployment("v3.0.0-canary")
+        self.engine.mark_deployment("deployment")
         time.sleep(0.01)
 
         # NEW synchronous call appears post-deploy
         tid = str(uuid.uuid4())
-        emit(
-            NormalizedEvent.now(
-                "request.entry", tid, "django", "existing_view"
-            )
-        )
+        emit(NormalizedEvent.now("request.entry", tid, "django", "existing_view"))
         emit(
             NormalizedEvent.now(
                 "function.call",
@@ -314,17 +275,10 @@ class TestHighCardinalityNormalization:
                 f"/api/users/{uid}/orders/",
             )
             g.add_from_event(e)
-
         # All 100 should collapse to one normalized node
-        django_nodes = [
-            nid for nid in g._nodes if nid.startswith("django::")
-        ]
+        django_nodes = [nid for nid in g._nodes if nid.startswith("django::")]
         assert len(django_nodes) == 1
-        assert (
-            "{id}" in django_nodes[0]
-            or "{uuid}" in django_nodes[0]
-            or "id" in django_nodes[0]
-        )
+        assert "{id}" in django_nodes[0] or "{uuid}" in django_nodes[0] or "id" in django_nodes[0]
 
 
 # ====================================================================== #
@@ -342,19 +296,17 @@ class TestSnapshotRoundTrip:
 
     def test_msgpack_round_trip_preserves_topology(self):
         pytest.importorskip("msgpack")
-        from stacktracer.core.runtime_graph import RuntimeGraph
         from stacktracer.core.graph_serializer import (
             MsgpackSerializer,
         )
+        from stacktracer.core.runtime_graph import RuntimeGraph
 
         # Build source graph
         g = RuntimeGraph()
         for _ in range(5):
             g.upsert_node("django::view", "fn", "django")
         g.upsert_node("postgres::SELECT", "db", "postgres")
-        g.upsert_edge(
-            "django::view", "postgres::SELECT", "calls"
-        )
+        g.upsert_edge("django::view", "postgres::SELECT", "calls")
 
         # Serialise
         data = MsgpackSerializer().serialize(g)
@@ -366,23 +318,18 @@ class TestSnapshotRoundTrip:
         assert "django::view" in g2._nodes
         assert "postgres::SELECT" in g2._nodes
         assert len(g2.neighbors("django::view")) == 1
-        assert (
-            g2.neighbors("django::view")[0].target
-            == "postgres::SELECT"
-        )
+        assert g2.neighbors("django::view")[0].target == "postgres::SELECT"
 
     def test_msgpack_round_trip_preserves_call_counts(self):
         pytest.importorskip("msgpack")
-        from stacktracer.core.runtime_graph import RuntimeGraph
         from stacktracer.core.graph_serializer import (
             MsgpackSerializer,
         )
+        from stacktracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for _ in range(7):
-            g.upsert_node(
-                "svc::fn", "fn", "svc", duration_ns=1_000_000
-            )
+            g.upsert_node("svc::fn", "fn", "svc", duration_ns=1_000_000)
 
         data = MsgpackSerializer().serialize(g)
         g2 = MsgpackSerializer().deserialize(data)
@@ -399,20 +346,18 @@ class TestSnapshotRoundTrip:
             3. Backend mounts the graph on an Engine and serves a DSL query
         """
         pytest.importorskip("msgpack")
-        from stacktracer.core.runtime_graph import RuntimeGraph
         from stacktracer.core.graph_serializer import (
             MsgpackSerializer,
         )
-        from stacktracer.query.parser import parse, execute
+        from stacktracer.core.runtime_graph import RuntimeGraph
+        from stacktracer.query.parser import execute, parse
 
         # Agent side
         g = RuntimeGraph()
         for _ in range(3):
             g.upsert_node("django::api_view", "fn", "django")
         g.upsert_node("postgres::SELECT users", "db", "postgres")
-        g.upsert_edge(
-            "django::api_view", "postgres::SELECT users", "calls"
-        )
+        g.upsert_edge("django::api_view", "postgres::SELECT users", "calls")
         data = MsgpackSerializer().serialize(g)
 
         # Backend side — deserialise and mount on an engine
@@ -426,9 +371,7 @@ class TestSnapshotRoundTrip:
 
         assert "data" in result
         top = result["data"][0]["node"]
-        assert (
-            top == "django::api_view"
-        )  # called 3 times vs postgres 1
+        assert top == "django::api_view"  # called 3 times vs postgres 1
 
 
 # ====================================================================== #
@@ -453,117 +396,96 @@ class TestNPlusOneEndToEnd:
     """
 
     def setup_method(self):
+        enable_sync_mode()
         tracker = ActiveRequestTracker()
         self.engine = Engine(
-            causal_registry=build_default_registry(
-                tracker=tracker
-            ),
+            causal_registry=build_default_registry(tracker=tracker),
             snapshot_interval_s=9999,
         )
         self.engine.tracker = tracker
         bind_engine(self.engine)
 
-    def _emit_nplusone_request(
-        self, n_authors: int = 1, books_per_author: int = 10
-    ):
-        """
-        Emit a single request that matches the N+1 pattern.
-        Probe metadata mirrors what the Django probe emits:
-          - view events use probe="django.view.enter"
-          - db query events use probe="django.db.query"
-        """
+    def _emit_nplusone_request(self, n_authors: int = 1, books_per_author: int = 10):
         tid = str(uuid.uuid4())
 
-        emit(
-            NormalizedEvent.now(
-                "django.view.enter",
-                tid,
-                "django",
-                "NPlusOneView",
-            )
-        )
+        # 1. Create the View event first
+        view_enter = NormalizedEvent.now("django.view.enter", tid, "django", "NPlusOneView")
 
+        # 2. Tell the engine this is the ROOT of the trace
+        self.engine.process(view_enter)
+
+        # 3. For the queries, we want them to all point to 'view_enter'
+        # If your Engine/Tracker doesn't handle this automatically,
+        # you MUST pass the parent_event to the graph
         for _ in range(n_authors):
-            emit(
-                NormalizedEvent.now(
-                    "django.db.query",
-                    tid,
-                    "django",
-                    'SELECT "django_tracer_author"."id" FROM "django_tracer_author"',
-                    duration_ns=8_000_000,
-                )
+            author_q = NormalizedEvent.now(
+                "django.db.query", tid, "django", "SELECT ... author", duration_ns=8_000_000
             )
+            self.engine.graph.add_from_event(author_q, parent_event=view_enter)
 
         for _ in range(n_authors * books_per_author):
-            emit(
-                NormalizedEvent.now(
-                    "django.db.query",
-                    tid,
-                    "django",
-                    'SELECT "django_tracer_book"."id" FROM "django_tracer_book" WHERE "django_tracer_book"."author_id" = %s',
-                    duration_ns=2_500_000,
-                )
+            book_q = NormalizedEvent.now(
+                "django.db.query", tid, "django", "SELECT ... book ...", duration_ns=2_500_000
             )
+            # CRITICAL: Point back to the view_enter, NOT the author query
+            self.engine.graph.add_from_event(book_q, parent_event=view_enter)
 
-        emit(
-            NormalizedEvent.now(
-                "django.view.exit",
-                tid,
-                "django",
-                "NPlusOneView",
-                duration_ns=50_000_000,
-            )
+        # 4. Finalize the view
+        view_exit = NormalizedEvent.now(
+            "django.view.exit", tid, "django", "NPlusOneView", duration_ns=50_000_000
         )
+        self.engine.process(view_exit)
 
     def test_n_plus_one_rule_fires_via_causal(self):
-        self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
-        )
-
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
         matches = self.engine.evaluate()
         rule_names = [m.rule_name for m in matches]
-        assert "n_plus_one" in rule_names, (
-            f"Expected n_plus_one in causal matches. Got: {rule_names}. "
+        assert "n_plus_one_queries" in rule_names, (
+            f"Expected n_plus_one_queries in causal matches. Got: {rule_names}. "
             f"Graph nodes: {[n.id for n in self.engine.graph.all_nodes()]}"
         )
 
     def test_n_plus_one_confidence_above_threshold(self):
-        self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
-        )
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
 
         matches = self.engine.evaluate()
         m = next(
-            (m for m in matches if m.rule_name == "n_plus_one"),
+            (m for m in matches if m.rule_name == "n_plus_one_queries"),
             None,
         )
         assert m is not None
         assert m.confidence >= 0.85
 
     def test_n_plus_one_evidence_names_query_and_ratio(self):
-        self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
-        )
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
 
         matches = self.engine.evaluate()
-        m = next(
-            m for m in matches if m.rule_name == "n_plus_one"
-        )
-        assert m.evidence.get("ratio", 0) >= 5
-        assert "query" in m.evidence or "db_node" in m.evidence
+        m = next(m for m in matches if m.rule_name == "n_plus_one_queries")
+        # 1. Grab the list of patterns
+        patterns = m.evidence.get("n_plus_one_patterns", [])
+        assert len(patterns) > 0, "Expected at least one N+1 pattern in evidence"
+
+        # 2. Assert on the FIRST pattern found
+        first_hit = patterns[0]
+        assert "query" in first_hit or "db_node" in first_hit
+        assert first_hit.get("ratio", 0) >= 5
+        # 1. Access the first pattern in the list
+        first_pattern = m.evidence["n_plus_one_patterns"][0]
+
+        # 2. Assert on that pattern's content
+        assert "query" in first_pattern
+        assert first_pattern["ratio"] >= 5
 
     def test_n_plus_one_dsl_causal_query_returns_it(self):
         """End-to-end through the DSL layer, same as the REPL CAUSAL command."""
-        from stacktracer.query.parser import parse, execute
+        from stacktracer.query.parser import execute, parse
 
-        self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
-        )
+        self._emit_nplusone_request(n_authors=1, books_per_author=10)
 
         result = execute(parse("CAUSAL"), self.engine)
         assert "data" in result
         rule_names = [m["rule"] for m in result["data"]]
-        assert "n_plus_one" in rule_names
+        assert "n_plus_one_queries" in rule_names
 
     def test_n_plus_one_silent_with_prefetch(self):
         """
@@ -572,11 +494,7 @@ class TestNPlusOneEndToEnd:
         """
         tid = str(uuid.uuid4())
 
-        emit(
-            NormalizedEvent.now(
-                "django.view.enter", tid, "django", "FixedView"
-            )
-        )
+        emit(NormalizedEvent.now("django.view.enter", tid, "django", "FixedView"))
         emit(
             NormalizedEvent.now(
                 "django.db.query",
@@ -594,19 +512,13 @@ class TestNPlusOneEndToEnd:
                 'SELECT "django_tracer_book"."id" FROM "django_tracer_book" WHERE author_id IN (%s)',
             )
         )
-        emit(
-            NormalizedEvent.now(
-                "django.view.exit", tid, "django", "FixedView"
-            )
-        )
+        emit(NormalizedEvent.now("django.view.exit", tid, "django", "FixedView"))
 
         matches = self.engine.evaluate()
-        n1_matches = [
-            m for m in matches if m.rule_name == "n_plus_one"
-        ]
+        n1_matches = [m for m in matches if m.rule_name == "n_plus_one_queries"]
         assert (
             n1_matches == []
-        ), "n_plus_one fired after prefetch fix — ratio should be 1:1, below threshold"
+        ), "n_plus_one_queries fired after prefetch fix — ratio should be 1:1, below threshold"
 
 
 # ====================================================================== #
@@ -625,6 +537,7 @@ class TestGunicornTopologyEndToEnd:
     """
 
     def setup_method(self):
+        enable_sync_mode()
         self.engine = Engine(
             causal_registry=build_default_registry(),
             snapshot_interval_s=9999,
@@ -651,18 +564,13 @@ class TestGunicornTopologyEndToEnd:
         )
 
         g = self.engine.graph
-        assert "gunicorn::master" in [
-            n.id for n in g.all_nodes()
-        ]
-        assert "gunicorn::UvicornWorker" in [
-            n.id for n in g.all_nodes()
-        ]
+        assert "gunicorn::master" in [n.id for n in g.all_nodes()]
+        assert "gunicorn::UvicornWorker" in [n.id for n in g.all_nodes()]
 
         spawned = [
             e
             for e in g.neighbors("gunicorn::master")
-            if e.edge_type == "spawned"
-            and e.target == "gunicorn::UvicornWorker"
+            if e.edge_type == "spawned" and e.target == "gunicorn::UvicornWorker"
         ]
         assert spawned, (
             "No 'spawned' edge from gunicorn::master → gunicorn::UvicornWorker. "
@@ -700,11 +608,7 @@ class TestGunicornTopologyEndToEnd:
         )
 
         g = self.engine.graph
-        handled = [
-            e
-            for e in g.neighbors("gunicorn::UvicornWorker")
-            if e.edge_type == "handled"
-        ]
+        handled = [e for e in g.neighbors("gunicorn::UvicornWorker") if e.edge_type == "handled"]
         assert handled, (
             "No 'handled' edge from gunicorn::UvicornWorker → uvicorn::/n1/. "
             "Check _add_structural_edges for uvicorn.request.receive events."
@@ -770,13 +674,11 @@ class TestConfigMergePipeline:
     stacktracer.init() (which starts threads and needs a live app).
     """
 
-    def _merge(
-        self, user_yaml: dict, **kwargs
-    ) -> "ResolvedConfig":
+    def _merge(self, user_yaml: dict, **kwargs) -> "ResolvedConfig":
         from stacktracer.__init__ import (
-            _load_package_defaults,
-            _deep_merge,
             _build_resolved_config,
+            _deep_merge,
+            _load_package_defaults,
         )
 
         defaults = _load_package_defaults()
@@ -784,24 +686,18 @@ class TestConfigMergePipeline:
         return _build_resolved_config(
             merged_yaml=merged_yaml,
             api_key=kwargs.pop("api_key", ""),
-            endpoint=kwargs.pop(
-                "endpoint", "https://api.stacktracer.io"
-            ),
+            endpoint=kwargs.pop("endpoint", "https://api.stacktracer.io"),
             sample_rate=kwargs.pop("sample_rate", None),
             probes=kwargs.pop("probes", None),
             semantic=kwargs.pop("semantic", None),
-            snapshot_interval=kwargs.pop(
-                "snapshot_interval", None
-            ),
+            snapshot_interval=kwargs.pop("snapshot_interval", None),
             flush_interval=kwargs.pop("flush_interval", None),
             debug=kwargs.pop("debug", False),
             config_path=None,
             normalize=kwargs.pop("normalize", None),
             compactor=kwargs.pop("compactor", None),
             active_requests=kwargs.pop("active_requests", None),
-            observe=kwargs.pop(
-                "observe", None
-            ),  # required — added with django probe revision
+            observe=kwargs.pop("observe", None),  # required — added with django probe revision
         )
 
     def test_defaults_applied_when_no_user_config(self):
@@ -814,9 +710,7 @@ class TestConfigMergePipeline:
         assert cfg.sample_rate == 0.10
 
     def test_init_kwarg_overrides_user_yaml(self):
-        cfg = self._merge(
-            {"sample_rate": 0.10}, sample_rate=0.50
-        )
+        cfg = self._merge({"sample_rate": 0.10}, sample_rate=0.50)
         assert cfg.sample_rate == 0.50
 
     def test_probes_list_replaced_not_merged(self):
@@ -828,9 +722,7 @@ class TestConfigMergePipeline:
         """User overriding one compactor key should keep all other defaults."""
         cfg = self._merge({"compactor": {"max_nodes": 9999}})
         assert cfg.compactor["max_nodes"] == 9999
-        assert (
-            "evict_to_ratio" in cfg.compactor
-        )  # default preserved
+        assert "evict_to_ratio" in cfg.compactor  # default preserved
 
     def test_semantic_merged_by_label(self):
         """
@@ -881,9 +773,7 @@ class TestConfigMergePipeline:
                 }
             ],
         )
-        api_entries = [
-            s for s in cfg.semantic if s["label"] == "api"
-        ]
+        api_entries = [s for s in cfg.semantic if s["label"] == "api"]
         assert len(api_entries) == 1
         assert api_entries[0]["description"] == "from kwarg"
 
@@ -900,15 +790,9 @@ class TestConfigMergePipeline:
         }
         cfg = self._merge({}, normalize=[my_rule])
         # User rule present
-        assert any(
-            r.get("replacement") == "/debug/{path}"
-            for r in cfg.normalize
-        )
+        assert any(r.get("replacement") == "/debug/{path}" for r in cfg.normalize)
         # Built-in defaults.yaml rules preserved (DRF version pattern)
-        assert any(
-            "/api/{version}/" in r.get("replacement", "")
-            for r in cfg.normalize
-        )
+        assert any("/api/{version}/" in r.get("replacement", "") for r in cfg.normalize)
 
     def test_normalize_yaml_cleared_then_kwarg_appended(self):
         """
@@ -933,9 +817,7 @@ class TestConfigMergePipeline:
         assert cfg.observe.get("modules", []) == []
 
     def test_observe_modules_from_yaml(self):
-        cfg = self._merge(
-            {"observe": {"modules": ["myapp", "myapp.api"]}}
-        )
+        cfg = self._merge({"observe": {"modules": ["myapp", "myapp.api"]}})
         assert cfg.observe["modules"] == ["myapp", "myapp.api"]
 
     def test_observe_dict_merged_key_by_key(self):

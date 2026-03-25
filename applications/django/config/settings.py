@@ -4,14 +4,12 @@ config/settings.py
 Minimal Django settings for StackTracer demonstration.
 """
 
-from pathlib import Path
 import os
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY", "demo-secret-key-change-in-production"
-)
+SECRET_KEY = os.environ.get("SECRET_KEY", "demo-secret-key-change-in-production")
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 

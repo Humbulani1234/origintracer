@@ -26,18 +26,22 @@ URLs:
 """
 
 import json
+
 from django.http import JsonResponse
 from django.views import View
+from probes.redis_probe import TracedRedis
 
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.sdk.emitter import emit
 from stacktracer.context.vars import get_trace_id
+from stacktracer.core.event_schema import NormalizedEvent
+from stacktracer.probes.celery_probe import dispatch
+from stacktracer.sdk.emitter import emit
 
 from .tasks import (
-    process_report,
-    send_notification,
     export_data,
+    generate_report,
+    process_report,
     risky_job,
+    send_notification,
 )
 
 
@@ -84,9 +88,7 @@ class ReportView(View):
     def get(self, request, report_id: int):
         trace_id = get_trace_id()
         _dispatch(process_report, trace_id, report_id=report_id)
-        return JsonResponse(
-            {"queued": "process_report", "report_id": report_id}
-        )
+        return JsonResponse({"queued": "process_report", "report_id": report_id})
 
 
 class BulkNotifyView(View):
@@ -150,9 +152,7 @@ class ExportView(View):
     def get(self, request, export_id: int):
         trace_id = get_trace_id()
         _dispatch(export_data, trace_id, export_id=export_id)
-        return JsonResponse(
-            {"queued": "export_data", "export_id": export_id}
-        )
+        return JsonResponse({"queued": "export_data", "export_id": export_id})
 
 
 class FailingJobView(View):
@@ -173,9 +173,7 @@ class FailingJobView(View):
         trace_id = get_trace_id()
         should_fail = request.GET.get("fail", "1") != "0"
         _dispatch(risky_job, trace_id, should_fail=should_fail)
-        return JsonResponse(
-            {"queued": "risky_job", "should_fail": should_fail}
-        )
+        return JsonResponse({"queued": "risky_job", "should_fail": should_fail})
 
 
 class StatusView(View):
@@ -215,16 +213,6 @@ class StatusView(View):
         )
 
 
-import json
-from django.http import JsonResponse
-from django.views import View
-
-# from stacktracer.probes.celery_probe import dispatch
-from probes.redis_probe import TracedRedis
-from stacktracer.context.vars import get_trace_id
-
-from .tasks import generate_report
-
 # One shared TracedRedis instance — same as you'd do with redis.Redis
 r = TracedRedis(host="localhost", port=6379, db=0)
 
@@ -262,9 +250,7 @@ class RedisCacheView(View):
 
         # Cache miss — dispatch task, store pending marker
         # Redis SET — traced, creates redis::SET node in graph
-        r.set(
-            cache_key, json.dumps({"status": "pending"}), ex=60
-        )
+        r.set(cache_key, json.dumps({"status": "pending"}), ex=60)
 
         # dispatch() emits celery.task.dispatch then calls .delay()
         # creates the django::ReportView → celery::generate_report edge

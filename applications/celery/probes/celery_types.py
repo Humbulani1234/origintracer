@@ -21,9 +21,7 @@ TASK_START = ProbeTypes.register(
     "celery.task.start",
     "Celery task execution started in a worker",
 )
-TASK_END = ProbeTypes.register(
-    "celery.task.end", "Celery task completed successfully"
-)
+TASK_END = ProbeTypes.register("celery.task.end", "Celery task completed successfully")
 TASK_RETRY = ProbeTypes.register(
     "celery.task.retry",
     "Celery task scheduled for retry after failure",

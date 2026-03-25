@@ -15,6 +15,7 @@ The mapping is built from:
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import (
@@ -32,9 +33,7 @@ from typing import (
 class SemanticAlias:
     label: str
     description: str
-    node_patterns: List[
-        str
-    ]  # Exact node IDs  OR  regex patterns
+    node_patterns: List[str]  # Exact node IDs  OR  regex patterns
     services: List[str]  # Service names to include wholesale
     tags: List[str] = field(default_factory=list)
 
@@ -43,7 +42,8 @@ class SemanticAlias:
             if pattern == node_id:
                 return True
             try:
-                if re.search(pattern, node_id):
+                # Change re.search to re.fullmatch
+                if re.fullmatch(pattern, node_id):
                     return True
             except re.error:
                 pass
@@ -87,9 +87,7 @@ class SemanticLayer:
 
         matched: Set[str] = set()
         for node in graph.all_nodes():
-            if alias.matches_node(
-                node.id
-            ) or alias.matches_service(node.service):
+            if alias.matches_node(node.id) or alias.matches_service(node.service):
                 matched.add(node.id)
         return matched
 

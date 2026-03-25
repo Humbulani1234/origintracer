@@ -19,14 +19,22 @@ Layer C — access log tail: zero-privilege fallback.
 """
 
 from __future__ import annotations
-import json, logging, os, socket, socketserver, struct, sys
-import threading, time
+
+import json
+import logging
+import os
+import socket
+import socketserver
+import struct
+import sys
+import threading
+import time
 from typing import Dict, List, Optional, Tuple
 
-from ..sdk.base_probe import BaseProbe
-from ..sdk.emitter import emit
 from ..core.event_schema import NormalizedEvent, ProbeTypes
 from ..core.kprobe_bridge import get_bridge
+from ..sdk.base_probe import BaseProbe
+from ..sdk.emitter import emit
 
 logger = logging.getLogger("stacktracer.probes.nginx")
 
@@ -93,9 +101,7 @@ def _find_nginx_pids() -> List[int]:
     return pids
 
 
-def _find_nginx_master_and_workers() -> (
-    Tuple[Optional[int], List[int]]
-):
+def _find_nginx_master_and_workers() -> Tuple[Optional[int], List[int]]:
     """
     Returns (master_pid_or_None, [worker_pids]).
     Separates master from workers so structural edges can be drawn:
@@ -135,9 +141,7 @@ def _children_of(ppid: int) -> List[int]:
 
 
 def _ip_str(ip_be: int) -> str:
-    return socket.inet_ntoa(
-        struct.pack("!I", socket.ntohl(ip_be))
-    )
+    return socket.inet_ntoa(struct.pack("!I", socket.ntohl(ip_be)))
 
 
 # ── BPF program ───────────────────────────────────────────────────────
@@ -310,12 +314,8 @@ class _NginxCorrelator:
                 bytes_sent=lua.get("bytes_sent", 0),
                 upstream_addr=lua.get("upstream_addr", ""),
                 duration_ns=int(dur_ms * 1e6),
-                upstream_duration_ns=(
-                    int(up_ms * 1e6) if up_ms > 0 else None
-                ),
-                nginx_own_duration_ns=(
-                    int(own_ms * 1e6) if own_ms > 0 else None
-                ),
+                upstream_duration_ns=(int(up_ms * 1e6) if up_ms > 0 else None),
+                nginx_own_duration_ns=(int(own_ms * 1e6) if own_ms > 0 else None),
                 accept_duration_ns=conn["accept_dur_ns"],
                 client_ip=conn["client_ip"],
                 client_port=conn["client_port"],
@@ -326,10 +326,7 @@ class _NginxCorrelator:
         )
 
     def _emit_lua_only(self, lua):
-        trace_id = (
-            lua.get("trace_id")
-            or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
-        )
+        trace_id = lua.get("trace_id") or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
         dur_ms = lua.get("duration_ms", 0)
         up_ms = lua.get("upstream_ms", -1)
         from stacktracer.sdk.emitter import emit_direct
@@ -343,9 +340,7 @@ class _NginxCorrelator:
                 method=lua.get("method", ""),
                 status_code=lua.get("status", 0),
                 duration_ns=int(dur_ms * 1e6),
-                upstream_duration_ns=(
-                    int(up_ms * 1e6) if up_ms > 0 else None
-                ),
+                upstream_duration_ns=(int(up_ms * 1e6) if up_ms > 0 else None),
                 client_ip=lua.get("remote_addr", ""),
                 source="lua",
             )
@@ -356,11 +351,7 @@ class _NginxCorrelator:
             time.sleep(30)
             cutoff = time.monotonic() - self._TTL
             with self._lock:
-                stale = [
-                    k
-                    for k, v in self._table.items()
-                    if v["_at"] < cutoff
-                ]
+                stale = [k for k, v in self._table.items() if v["_at"] < cutoff]
                 for k in stale:
                     del self._table[k]
 
@@ -394,9 +385,7 @@ class _NginxKprobeMode:
         pm = self._bpf["nginx_pids"]
         for p in pids:
             pm[pm.Key(p)] = pm.Leaf(1)
-        self._bpf["nginx_events"].open_perf_buffer(
-            self._on_event
-        )
+        self._bpf["nginx_events"].open_perf_buffer(self._on_event)
         self._running = True
         self._thread = threading.Thread(
             target=self._poll,
@@ -427,20 +416,12 @@ class _NginxKprobeMode:
 
         try:
             ev = self._bpf["nginx_events"].event(data)
-            etype = ev.etype.decode(
-                "ascii", errors="replace"
-            ).rstrip("\x00")
+            etype = ev.etype.decode("ascii", errors="replace").rstrip("\x00")
             ckey = f"{_NGINX_TRACE_PREFIX}{ev.pid}-{ev.tid}"
 
             if etype == "accept":
-                cip = (
-                    _ip_str(ev.client_ip) if ev.client_ip else ""
-                )
-                cport = (
-                    socket.ntohs(ev.client_port)
-                    if ev.client_port
-                    else 0
-                )
+                cip = _ip_str(ev.client_ip) if ev.client_ip else ""
+                cport = socket.ntohs(ev.client_port) if ev.client_port else 0
                 self._corr.register_connection(
                     conn_key=ckey,
                     client_ip=cip,
@@ -512,9 +493,7 @@ class _NginxKprobeMode:
 class _LuaHandler(socketserver.BaseRequestHandler):
     def handle(self):
         try:
-            d = json.loads(
-                self.request[0].decode("utf-8", errors="replace")
-            )
+            d = json.loads(self.request[0].decode("utf-8", errors="replace"))
             self.server.corr.on_lua_event(d)
         except Exception:
             pass
@@ -529,9 +508,7 @@ class _LuaServer(socketserver.UDPServer):
 
 
 class _NginxLuaMode:
-    def __init__(
-        self, corr: _NginxCorrelator, host="127.0.0.1", port=9119
-    ):
+    def __init__(self, corr: _NginxCorrelator, host="127.0.0.1", port=9119):
         self._corr = corr
         self._host = host
         self._port = port
@@ -539,9 +516,7 @@ class _NginxLuaMode:
 
     def start(self) -> bool:
         try:
-            self._srv = _LuaServer(
-                self._corr, self._host, self._port
-            )
+            self._srv = _LuaServer(self._corr, self._host, self._port)
         except OSError as e:
             logger.warning(
                 "nginx Lua UDP bind %s:%d failed: %s",
@@ -580,13 +555,9 @@ class _NginxLogMode:
     def start(self) -> bool:
         if not os.path.exists(self._path):
             try:
-                os.makedirs(
-                    os.path.dirname(self._path), exist_ok=True
-                )
+                os.makedirs(os.path.dirname(self._path), exist_ok=True)
                 open(self._path, "a").close()
-                logger.info(
-                    "nginx log probe: created %s", self._path
-                )
+                logger.info("nginx log probe: created %s", self._path)
             except OSError:
                 logger.warning(
                     "nginx log probe: cannot create %s",
@@ -627,9 +598,7 @@ class _NginxLogMode:
                 parts = line.split('"')
                 req = parts[1]
                 sp = parts[2].strip().split()
-                m, u = (
-                    req.split()[:2] if " " in req else ("", req)
-                )
+                m, u = req.split()[:2] if " " in req else ("", req)
                 r = {
                     "uri": u,
                     "method": m,
@@ -639,9 +608,7 @@ class _NginxLogMode:
                 return
 
         trace_id = (
-            r.get("request_id")
-            or r.get("x_request_id")
-            or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
+            r.get("request_id") or r.get("x_request_id") or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
         )
         rt = float(r.get("request_time", 0))
         ut = r.get("upstream_response_time", "-")
@@ -656,9 +623,7 @@ class _NginxLogMode:
                 status_code=int(r.get("status", 0)),
                 duration_ns=int(rt * 1e9),
                 upstream_duration_ns=(
-                    int(float(ut) * 1e9)
-                    if ut not in ("-", "", "None")
-                    else None
+                    int(float(ut) * 1e9) if ut not in ("-", "", "None") else None
                 ),
                 client_ip=r.get("remote_addr", ""),
                 source="log",
@@ -716,9 +681,7 @@ class NginxProbe(BaseProbe):
         # ── 1. Discover nginx topology and park pre-fork events ───────────
         # Must happen before any fork() so the events are in _pre_fork_events
         # when the post-init callback drains them into the worker's engine.
-        master_pid, worker_pids = (
-            _find_nginx_master_and_workers()
-        )
+        master_pid, worker_pids = _find_nginx_master_and_workers()
         struct_trace_id = f"{_NGINX_TRACE_PREFIX}struct-{master_pid or os.getpid()}"
 
         if master_pid:
@@ -749,9 +712,7 @@ class NginxProbe(BaseProbe):
                 len(_pre_fork_events),
             )
         else:
-            logger.info(
-                "nginx probe: nginx not running — topology events skipped"
-            )
+            logger.info("nginx probe: nginx not running — topology events skipped")
 
         # Register drain callback — fires after init() completes in worker
         from stacktracer import _register_post_init_callback
@@ -770,9 +731,7 @@ class NginxProbe(BaseProbe):
             if not kp_ok:
                 self._kp = None
         if wl:
-            self._lua = _NginxLuaMode(
-                self._corr, self._lua_host, self._lua_port
-            )
+            self._lua = _NginxLuaMode(self._corr, self._lua_host, self._lua_port)
             lu_ok = self._lua.start()
             if not lu_ok:
                 self._lua = None

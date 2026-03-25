@@ -54,12 +54,13 @@ import logging
 import time
 from typing import Any, Optional
 
-from stacktracer.sdk.emitter import emit
+from stacktracer.context.vars import get_span_id, get_trace_id
 from stacktracer.core.event_schema import (
     NormalizedEvent,
     ProbeTypes,
 )
-from stacktracer.context.vars import get_trace_id, get_span_id
+from stacktracer.sdk.base_probe import BaseProbe
+from stacktracer.sdk.emitter import emit
 
 logger = logging.getLogger("stacktracer.probes.redis")
 
@@ -77,9 +78,7 @@ def _get_redis():
 
         return redis
     except ImportError:
-        raise ImportError(
-            "redis not installed. pip install redis"
-        )
+        raise ImportError("redis not installed. pip install redis")
 
 
 # ====================================================================== #
@@ -140,9 +139,7 @@ class TracedRedis(redis.Redis):
             return result
 
     def pipeline(self, transaction=True, shard_hint=None):
-        raw_pipe = super().pipeline(
-            transaction=transaction, shard_hint=shard_hint
-        )
+        raw_pipe = super().pipeline(transaction=transaction, shard_hint=shard_hint)
         return TracedPipeline(raw_pipe)
 
 
@@ -169,9 +166,7 @@ class TracedPipeline:
 
         t0 = time.perf_counter()
         try:
-            result = self._pipeline.execute(
-                raise_on_error=raise_on_error
-            )
+            result = self._pipeline.execute(raise_on_error=raise_on_error)
         except Exception as exc:
             duration_ns = int((time.perf_counter() - t0) * 1e9)
             if trace_id:
@@ -219,8 +214,6 @@ class TracedPipeline:
 # Connection pool helper
 # ====================================================================== #
 
-from stacktracer.sdk.base_probe import BaseProbe
-
 
 def make_traced_pool(**kwargs) -> Any:
     """
@@ -238,9 +231,7 @@ class RedisProbe(BaseProbe):
     name = "redis"
 
     def start(self, **kwargs) -> None:
-        logger.info(
-            "redis probe: TracedRedis ready — use TracedRedis() in your views"
-        )
+        logger.info("redis probe: TracedRedis ready — use TracedRedis() in your views")
 
     def stop(self, **kwargs) -> None:
         pass
