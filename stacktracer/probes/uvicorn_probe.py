@@ -175,6 +175,16 @@ class StackTracerASGIMiddleware:
         )  # (host, port) tuple or None
         http_v = scope.get("http_version", "1.1")
 
+        import stacktracer
+
+        engine = stacktracer.get_engine()
+        pattern = engine.tracker._normalize_path(path)
+        if engine:
+            engine.tracker.start(
+                trace_id=trace_id,
+                service="uvicorn",
+                pattern=pattern,
+            )
         emit(
             NormalizedEvent.now(
                 probe="uvicorn.request.receive",
@@ -253,7 +263,8 @@ class StackTracerASGIMiddleware:
                     worker_pid=os.getpid(),
                 )
             )
-
+            if engine:
+                engine.tracker.complete(trace_id)
             reset_trace(token)
 
 

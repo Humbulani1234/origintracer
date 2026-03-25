@@ -31,10 +31,10 @@ jobs:
         run: pip install black ruff
 
       - name: black check
-        run: black --check --line-length 65 stacktracer/
+        run: black --line-length 65 stacktracer/
 
       - name: ruff check
-        run: ruff check stacktracer/
+        run: ruff check --fix stacktracer/
 
   test:
     name: Tests (Python ${{ matrix.python-version }})

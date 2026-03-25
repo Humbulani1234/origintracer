@@ -297,6 +297,12 @@ class ActiveRequestTracker:
             }
         return result
 
+    def _normalize_path(self, path: str) -> str:
+        # normalize /api/users/123/ → /api/users/{id}/
+        import re
+
+        return re.sub(r"/\d+", "/{id}", path)
+
     # ------------------------------------------------------------------ #
     # Background eviction
     # ------------------------------------------------------------------ #
