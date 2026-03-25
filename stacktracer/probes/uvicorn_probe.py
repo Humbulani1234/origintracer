@@ -135,7 +135,9 @@ class StackTracerASGIMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
-    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+    async def __call__(
+        self, scope: dict, receive: Callable, send: Callable
+    ) -> None:
         if scope["type"] != "http":
             # WebSocket and lifespan scopes pass through unmodified
             await self.app(scope, receive, send)
@@ -153,16 +155,24 @@ class StackTracerASGIMiddleware:
         headers = dict(scope.get("headers", []))
 
         # Prefer X-Request-ID from nginx if present
-        request_id = headers.get(b"x-request-id", b"").decode("ascii", errors="replace").strip()
+        request_id = (
+            headers.get(b"x-request-id", b"")
+            .decode("ascii", errors="replace")
+            .strip()
+        )
 
         # Fall back to whatever Django middleware already set in the ContextVar
         # This ensures uvicorn and django events share the same trace_id
-        trace_id = request_id or get_trace_id() or str(uuid.uuid4())
+        trace_id = (
+            request_id or get_trace_id() or str(uuid.uuid4())
+        )
         token = set_trace(trace_id)
 
         method = scope.get("method", "")
         path = scope.get("path", "/")
-        client = scope.get("client")  # (host, port) tuple or None
+        client = scope.get(
+            "client"
+        )  # (host, port) tuple or None
         http_v = scope.get("http_version", "1.1")
 
         emit(
@@ -173,7 +183,11 @@ class StackTracerASGIMiddleware:
                 name=path,
                 method=method,
                 http_version=http_v,
-                client=(f"{client[0]}:{client[1]}" if client else None),
+                client=(
+                    f"{client[0]}:{client[1]}"
+                    if client
+                    else None
+                ),
                 worker_pid=os.getpid(),
             )
         )
@@ -286,7 +300,9 @@ class UvicornProbe(BaseProbe):
         try:
             import uvicorn  # noqa: F401
         except ImportError:
-            logger.info("uvicorn not installed — uvicorn probe inactive")
+            logger.info(
+                "uvicorn not installed — uvicorn probe inactive"
+            )
             return
 
         logger.info(

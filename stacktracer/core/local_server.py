@@ -59,7 +59,9 @@ _MAX_MSG_BYTES = 65_536  # 64 KB — max query size
 
 
 def _socket_path(pid: int) -> str:
-    return os.path.join(_SOCKET_DIR, f"{_SOCKET_PREFIX}{pid}{_SOCKET_SUFFIX}")
+    return os.path.join(
+        _SOCKET_DIR, f"{_SOCKET_PREFIX}{pid}{_SOCKET_SUFFIX}"
+    )
 
 
 def discover_sockets() -> list[str]:
@@ -71,7 +73,8 @@ def discover_sockets() -> list[str]:
         return [
             os.path.join(_SOCKET_DIR, f)
             for f in os.listdir(_SOCKET_DIR)
-            if f.startswith(_SOCKET_PREFIX) and f.endswith(_SOCKET_SUFFIX)
+            if f.startswith(_SOCKET_PREFIX)
+            and f.endswith(_SOCKET_SUFFIX)
         ]
     except OSError:
         return []
@@ -103,10 +106,14 @@ class LocalQueryServer:
 
         atexit.register(self._cleanup_socket)
 
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock = socket.socket(
+            socket.AF_UNIX, socket.SOCK_STREAM
+        )
         self._sock.bind(self._path)
         self._sock.listen(5)
-        self._sock.settimeout(1.0)  # allow periodic check of self._running
+        self._sock.settimeout(
+            1.0
+        )  # allow periodic check of self._running
 
         self._running = True
         self._thread = threading.Thread(
@@ -115,7 +122,9 @@ class LocalQueryServer:
             name=f"stacktracer-local-server-{self._pid}",
         )
         self._thread.start()
-        logger.info("Local query server started at %s", self._path)
+        logger.info(
+            "Local query server started at %s", self._path
+        )
 
     def stop(self) -> None:
         self._running = False
@@ -218,7 +227,9 @@ class LocalQueryServer:
         try:
             result = self._evaluate(query_str)
         except Exception as exc:
-            logger.exception("_evaluate crashed on query %r", query_str)
+            logger.exception(
+                "_evaluate crashed on query %r", query_str
+            )
             result = {
                 "ok": False,
                 "error": f"Internal server error: {exc}",

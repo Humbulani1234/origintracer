@@ -89,14 +89,24 @@ class TestInMemoryRepository:
         run_event_contract(self.repo)
 
     def test_filter_by_probe(self):
-        self.repo.insert_event(evt(probe="request.entry", trace_id="t1"))
-        self.repo.insert_event(evt(probe="db.query.start", trace_id="t1"))
+        self.repo.insert_event(
+            evt(probe="request.entry", trace_id="t1")
+        )
+        self.repo.insert_event(
+            evt(probe="db.query.start", trace_id="t1")
+        )
         results = self.repo.query_events(probe="request.entry")
-        assert all(r["probe"] == "request.entry" for r in results)
+        assert all(
+            r["probe"] == "request.entry" for r in results
+        )
 
     def test_filter_by_service(self):
-        self.repo.insert_event(evt(service="django", name="view", trace_id="t1"))
-        self.repo.insert_event(evt(service="postgres", name="SELECT", trace_id="t1"))
+        self.repo.insert_event(
+            evt(service="django", name="view", trace_id="t1")
+        )
+        self.repo.insert_event(
+            evt(service="postgres", name="SELECT", trace_id="t1")
+        )
         results = self.repo.query_events(service="postgres")
         assert all(r["service"] == "postgres" for r in results)
 
@@ -142,16 +152,30 @@ class TestInMemoryRepository:
 
     def test_snapshot_overwrites_per_customer(self):
         """Only the most recent snapshot per customer is retained."""
-        self.repo.insert_snapshot("acme", b"first", "application/msgpack")
-        self.repo.insert_snapshot("acme", b"second", "application/msgpack")
+        self.repo.insert_snapshot(
+            "acme", b"first", "application/msgpack"
+        )
+        self.repo.insert_snapshot(
+            "acme", b"second", "application/msgpack"
+        )
         row = self.repo.get_latest_snapshot("acme")
         assert row["data"] == b"second"
 
     def test_snapshots_isolated_per_customer(self):
-        self.repo.insert_snapshot("acme", b"acme-data", "application/msgpack")
-        self.repo.insert_snapshot("other", b"other-data", "application/msgpack")
-        assert self.repo.get_latest_snapshot("acme")["data"] == b"acme-data"
-        assert self.repo.get_latest_snapshot("other")["data"] == b"other-data"
+        self.repo.insert_snapshot(
+            "acme", b"acme-data", "application/msgpack"
+        )
+        self.repo.insert_snapshot(
+            "other", b"other-data", "application/msgpack"
+        )
+        assert (
+            self.repo.get_latest_snapshot("acme")["data"]
+            == b"acme-data"
+        )
+        assert (
+            self.repo.get_latest_snapshot("other")["data"]
+            == b"other-data"
+        )
 
     # ── Markers ───────────────────────────────────────────────────────────
 
@@ -183,7 +207,9 @@ class TestBaseRepositoryInterface:
 
         abstract_methods = {
             name
-            for name, val in inspect.getmembers(BaseRepository, predicate=inspect.isfunction)
+            for name, val in inspect.getmembers(
+                BaseRepository, predicate=inspect.isfunction
+            )
             if getattr(val, "__isabstractmethod__", False)
         }
         repo = InMemoryRepository()
@@ -213,14 +239,22 @@ class TestEventRepositoryPostgres:
             EventRepository,
         )
 
-        conn = psycopg2.connect(os.environ["STACKTRACER_TEST_DB_DSN"])
+        conn = psycopg2.connect(
+            os.environ["STACKTRACER_TEST_DB_DSN"]
+        )
         repo = EventRepository(conn)
         yield repo
         # Cleanup test data
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM st_events    WHERE customer_id = 'test'")
-            cur.execute("DELETE FROM st_snapshots WHERE customer_id = 'test'")
-            cur.execute("DELETE FROM st_markers   WHERE customer_id = 'test'")
+            cur.execute(
+                "DELETE FROM st_events    WHERE customer_id = 'test'"
+            )
+            cur.execute(
+                "DELETE FROM st_snapshots WHERE customer_id = 'test'"
+            )
+            cur.execute(
+                "DELETE FROM st_markers   WHERE customer_id = 'test'"
+            )
         conn.commit()
         conn.close()
 
@@ -230,9 +264,15 @@ class TestEventRepositoryPostgres:
     def test_snapshot_contract_postgres(self, pg_repo):
         run_snapshot_contract(pg_repo)
 
-    def test_latest_snapshot_survives_multiple_inserts(self, pg_repo):
-        pg_repo.insert_snapshot("test", b"v1", "application/msgpack", node_count=10)
-        pg_repo.insert_snapshot("test", b"v2", "application/msgpack", node_count=20)
+    def test_latest_snapshot_survives_multiple_inserts(
+        self, pg_repo
+    ):
+        pg_repo.insert_snapshot(
+            "test", b"v1", "application/msgpack", node_count=10
+        )
+        pg_repo.insert_snapshot(
+            "test", b"v2", "application/msgpack", node_count=20
+        )
         row = pg_repo.get_latest_snapshot("test")
         # PostgreSQL returns most recent by received_at DESC
         assert row["data"] in (

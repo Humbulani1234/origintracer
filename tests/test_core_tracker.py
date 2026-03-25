@@ -68,7 +68,9 @@ class TestActiveRequestTracker:
         assert self.t.complete("nonexistent") is None
 
     def test_event_appends_probe_to_sequence(self):
-        self.t.start(trace_id="abc", service="django", pattern="/api/")
+        self.t.start(
+            trace_id="abc", service="django", pattern="/api/"
+        )
         self.t.event(trace_id="abc", probe="db.query.start")
         self.t.event(trace_id="abc", probe="db.query.end")
         span = self.t._active["abc"]
@@ -79,7 +81,9 @@ class TestActiveRequestTracker:
 
     def test_event_ignores_unknown_trace(self):
         """event() on unknown trace_id must not raise."""
-        self.t.event(trace_id="nonexistent", probe="db.query.start")
+        self.t.event(
+            trace_id="nonexistent", probe="db.query.start"
+        )
 
     def test_active_count(self):
         self.t.start("a", "django", "/api/a/")
@@ -96,7 +100,9 @@ class TestActiveRequestTracker:
         self.t.start("fast", "django", "/api/")
         self.t.start("slow", "django", "/api/")
         # Backdate slow entry to simulate 500ms in-flight
-        self.t._active["slow"].start_time = time.monotonic() - 0.5
+        self.t._active["slow"].start_time = (
+            time.monotonic() - 0.5
+        )
         slow = self.t.slow_in_flight(threshold_ms=200)
         ids = [s.trace_id for s in slow]
         assert "slow" in ids
@@ -105,7 +111,9 @@ class TestActiveRequestTracker:
     def test_all_patterns_summary_after_completions(self):
         for i in range(15):
             self.t.start(f"t{i}", "django", "/api/orders/")
-            self.t._active[f"t{i}"].start_time = time.monotonic() - 0.1
+            self.t._active[f"t{i}"].start_time = (
+                time.monotonic() - 0.1
+            )
             self.t.complete(f"t{i}")
         summary = self.t.all_patterns_summary()
         assert "/api/orders/" in summary
@@ -115,7 +123,9 @@ class TestActiveRequestTracker:
         tracker = ActiveRequestTracker(ttl_s=0.05, max_size=100)
         tracker.start("stale", "django", "/api/")
         # Backdate to trigger TTL
-        tracker._active["stale"].last_event = time.monotonic() - 1.0
+        tracker._active["stale"].last_event = (
+            time.monotonic() - 1.0
+        )
         tracker._evict()
         assert "stale" not in tracker._active
 
@@ -130,7 +140,9 @@ class TestActiveRequestTracker:
         import threading
 
         errors = []
-        tracker = ActiveRequestTracker(ttl_s=30.0, max_size=10_000)
+        tracker = ActiveRequestTracker(
+            ttl_s=30.0, max_size=10_000
+        )
 
         def worker(thread_id):
             try:
@@ -142,7 +154,10 @@ class TestActiveRequestTracker:
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+        threads = [
+            threading.Thread(target=worker, args=(i,))
+            for i in range(5)
+        ]
         for th in threads:
             th.start()
         for th in threads:
@@ -183,9 +198,13 @@ class TestSemanticLayer:
     def _make_graph(self):
         g = RuntimeGraph()
         g.upsert_node("django::handle_export", "fn", "django")
-        g.upsert_node("django::flags_client.call", "fn", "django")
+        g.upsert_node(
+            "django::flags_client.call", "fn", "django"
+        )
         g.upsert_node("exporter::publish", "fn", "exporter")
-        g.upsert_node("postgres::SELECT orders", "db", "postgres")
+        g.upsert_node(
+            "postgres::SELECT orders", "db", "postgres"
+        )
         g.upsert_node("django::unrelated_view", "fn", "django")
         return g
 
@@ -216,7 +235,9 @@ class TestSemanticLayer:
 
     def test_unknown_label_returns_empty_set(self):
         g = self._make_graph()
-        assert self.layer.resolve_nodes("nonexistent", g) == set()
+        assert (
+            self.layer.resolve_nodes("nonexistent", g) == set()
+        )
 
     def test_case_insensitive_label_lookup(self):
         g = self._make_graph()

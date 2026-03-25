@@ -44,11 +44,15 @@ class AsyncView(View):
 
     async def get(self, request):
         async def fetch_a():
-            await asyncio.sleep(0.01)  # yields to event loop — healthy await
+            await asyncio.sleep(
+                0.01
+            )  # yields to event loop — healthy await
             return "result_a"
 
         async def fetch_b():
-            await asyncio.sleep(0.02)  # yields to event loop — healthy await
+            await asyncio.sleep(
+                0.02
+            )  # yields to event loop — healthy await
             return "result_b"
 
         result_a, result_b = await asyncio.gather(
@@ -85,7 +89,9 @@ class SlowView(View):
     async def get(self, request):
         # This blocks the event loop for 200ms.
         # Compare with /async/ which uses await asyncio.sleep() instead.
-        time.sleep(20)  # ← intentional blocking call for demonstration
+        time.sleep(
+            20
+        )  # ← intentional blocking call for demonstration
 
         return JsonResponse(
             {
@@ -205,4 +211,6 @@ class NPlusOneView(View):
         # authors = Author.objects.prefetch_related("book_set").all()
         # then the loop does zero extra queries
 
-        return JsonResponse({"authors": results, "query_count": len(authors) + 1})
+        return JsonResponse(
+            {"authors": results, "query_count": len(authors) + 1}
+        )

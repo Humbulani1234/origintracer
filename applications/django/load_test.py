@@ -73,7 +73,9 @@ def worker(
             status = 0
         ms = (time.perf_counter() - t0) * 1000
         with lock:
-            results.append({"url": url, "status": status, "ms": ms})
+            results.append(
+                {"url": url, "status": status, "ms": ms}
+            )
         if delay:
             time.sleep(delay)
 
@@ -120,12 +122,16 @@ def summarise(results, elapsed):
         print(f"    {code}  {count:>5}")
     print()
     print("  Latency (ms)  overall:")
-    print(f"    mean {mean:>8.1f}  p50 {p50:>8.1f}  p95 {p95:>8.1f}  p99 {p99:>8.1f}")
+    print(
+        f"    mean {mean:>8.1f}  p50 {p50:>8.1f}  p95 {p95:>8.1f}  p99 {p99:>8.1f}"
+    )
     print()
     print("  Per-URL mean latency (ms):")
     for path, times in sorted(by_url.items()):
         avg = sum(times) / len(times)
-        print(f"    {path:<20}  {avg:>8.1f}  ({len(times)} requests)")
+        print(
+            f"    {path:<20}  {avg:>8.1f}  ({len(times)} requests)"
+        )
     print("─" * 62)
     print()
     print("  Explore the graph in the REPL:")
@@ -138,9 +144,15 @@ def summarise(results, elapsed):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--requests", type=int, default=DEFAULT_REQUESTS)
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    parser.add_argument("--delay", type=float, default=DEFAULT_DELAY)
+    parser.add_argument(
+        "--requests", type=int, default=DEFAULT_REQUESTS
+    )
+    parser.add_argument(
+        "--workers", type=int, default=DEFAULT_WORKERS
+    )
+    parser.add_argument(
+        "--delay", type=float, default=DEFAULT_DELAY
+    )
     args = parser.parse_args()
 
     queue = build_queue(args.url, args.requests)
@@ -150,7 +162,9 @@ def main():
 
     print()
     print("  django_tracer load test")
-    print(f"  {args.requests} requests  ·  {args.workers} workers  ·  delay={args.delay}s")
+    print(
+        f"  {args.requests} requests  ·  {args.workers} workers  ·  delay={args.delay}s"
+    )
     print(f"  Target: {args.url}")
     print()
 

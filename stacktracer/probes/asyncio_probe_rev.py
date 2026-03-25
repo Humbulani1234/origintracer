@@ -248,10 +248,14 @@ class _EpollKprobe:
                 "via tracepoints syscalls:sys_enter/exit_epoll_wait"
             )
         except Exception as exc:
-            logger.warning("asyncio epoll BPF compile failed: %s", exc)
+            logger.warning(
+                "asyncio epoll BPF compile failed: %s", exc
+            )
             return False
 
-        self._bpf["epoll_events"].open_perf_buffer(self._handle_epoll_event)
+        self._bpf["epoll_events"].open_perf_buffer(
+            self._handle_epoll_event
+        )
         self._running = True
         self._thread = threading.Thread(
             target=self._poll_loop,
@@ -274,7 +278,9 @@ class _EpollKprobe:
             except Exception as exc:
                 logger.debug("epoll kprobe poll error: %s", exc)
 
-    def _handle_epoll_event(self, cpu: int, data: Any, size: int) -> None:
+    def _handle_epoll_event(
+        self, cpu: int, data: Any, size: int
+    ) -> None:
         if self._bpf is None:
             return
         try:
@@ -283,8 +289,12 @@ class _EpollKprobe:
             if ev.pid != self._our_pid:
                 return  # filter to our process
 
-            trace_id = ev.trace_id.decode("ascii", errors="replace").rstrip("\x00")
-            service = ev.service.decode("ascii", errors="replace").rstrip("\x00")
+            trace_id = ev.trace_id.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
+            service = ev.service.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
 
             if not trace_id:
                 return
@@ -350,10 +360,13 @@ def _setup_monitoring_312() -> bool:
     try:
         sys.monitoring.set_events(
             TOOL_ID,
-            sys.monitoring.events.CALL | sys.monitoring.events.PY_RETURN,
+            sys.monitoring.events.CALL
+            | sys.monitoring.events.PY_RETURN,
         )
     except Exception as exc:
-        logger.warning("sys.monitoring set_events failed: %s", exc)
+        logger.warning(
+            "sys.monitoring set_events failed: %s", exc
+        )
         return False
 
     def on_call(code, offset: int, callable_: Any, arg0: Any):
@@ -398,12 +411,20 @@ def _setup_monitoring_312() -> bool:
         )
 
     try:
-        sys.monitoring.register_callback(TOOL_ID, sys.monitoring.events.CALL, on_call)
-        sys.monitoring.register_callback(TOOL_ID, sys.monitoring.events.PY_RETURN, on_return)
-        logger.info("asyncio probe: sys.monitoring installed (Python 3.12+ CALL/PY_RETURN)")
+        sys.monitoring.register_callback(
+            TOOL_ID, sys.monitoring.events.CALL, on_call
+        )
+        sys.monitoring.register_callback(
+            TOOL_ID, sys.monitoring.events.PY_RETURN, on_return
+        )
+        logger.info(
+            "asyncio probe: sys.monitoring installed (Python 3.12+ CALL/PY_RETURN)"
+        )
         return True
     except Exception as exc:
-        logger.warning("sys.monitoring register_callback failed: %s", exc)
+        logger.warning(
+            "sys.monitoring register_callback failed: %s", exc
+        )
         return False
 
 
@@ -414,8 +435,12 @@ def _teardown_monitoring_312() -> None:
     if not hasattr(sys, "monitoring"):
         return
     try:
-        sys.monitoring.set_events(_MONITORING_TOOL_ID, sys.monitoring.events.NO_EVENTS)
-        sys.monitoring.register_callback(_MONITORING_TOOL_ID, sys.monitoring.events.CALL, None)
+        sys.monitoring.set_events(
+            _MONITORING_TOOL_ID, sys.monitoring.events.NO_EVENTS
+        )
+        sys.monitoring.register_callback(
+            _MONITORING_TOOL_ID, sys.monitoring.events.CALL, None
+        )
         sys.monitoring.register_callback(
             _MONITORING_TOOL_ID,
             sys.monitoring.events.PY_RETURN,
@@ -447,7 +472,11 @@ def _setup_setprofile_311() -> bool:
         if not trace_id:
             return
 
-        probe_type = "asyncio.loop.coro_call" if event == "call" else "asyncio.loop.coro_return"
+        probe_type = (
+            "asyncio.loop.coro_call"
+            if event == "call"
+            else "asyncio.loop.coro_return"
+        )
         emit(
             NormalizedEvent.now(
                 probe=probe_type,
@@ -464,7 +493,9 @@ def _setup_setprofile_311() -> bool:
             original_profile(frame, event, arg)
 
     sys.setprofile(_profile_callback)
-    logger.info("asyncio probe: sys.setprofile installed (Python 3.11)")
+    logger.info(
+        "asyncio probe: sys.setprofile installed (Python 3.11)"
+    )
     return True
 
 
@@ -487,7 +518,9 @@ def _make_create_task_wrapper(original: Callable) -> Callable:
     ):
         trace_id = get_trace_id()
         if trace_id:
-            coro_name = getattr(coro, "__qualname__", type(coro).__name__)
+            coro_name = getattr(
+                coro, "__qualname__", type(coro).__name__
+            )
             emit(
                 NormalizedEvent.now(
                     probe="asyncio.task.create",
@@ -559,7 +592,9 @@ class AsyncioProbe(BaseProbe):
             return
 
         if _patched:
-            logger.warning("asyncio probe already installed — skipping")
+            logger.warning(
+                "asyncio probe already installed — skipping"
+            )
             return
 
         # ── Layer 1: epoll kprobe ──────────────────────────────────────
@@ -586,7 +621,9 @@ class AsyncioProbe(BaseProbe):
 
         # ── Layer 3: create_task ───────────────────────────────────────
         _originals["create_task"] = asyncio.create_task
-        asyncio.create_task = _make_create_task_wrapper(asyncio.create_task)
+        asyncio.create_task = _make_create_task_wrapper(
+            asyncio.create_task
+        )
 
         _patched = True
 

@@ -33,7 +33,9 @@ from typing import (
 class SemanticAlias:
     label: str
     description: str
-    node_patterns: List[str]  # Exact node IDs  OR  regex patterns
+    node_patterns: List[
+        str
+    ]  # Exact node IDs  OR  regex patterns
     services: List[str]  # Service names to include wholesale
     tags: List[str] = field(default_factory=list)
 
@@ -87,7 +89,9 @@ class SemanticLayer:
 
         matched: Set[str] = set()
         for node in graph.all_nodes():
-            if alias.matches_node(node.id) or alias.matches_service(node.service):
+            if alias.matches_node(
+                node.id
+            ) or alias.matches_service(node.service):
                 matched.add(node.id)
         return matched
 

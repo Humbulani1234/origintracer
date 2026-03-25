@@ -89,7 +89,9 @@ def graph_to_dict(graph: Any) -> Dict:
                 "last_seen": n.last_seen,
                 "call_count": n.call_count,
                 "total_duration_ns": n.total_duration_ns,
-                "metadata": {k: str(v) for k, v in n.metadata.items()},
+                "metadata": {
+                    k: str(v) for k, v in n.metadata.items()
+                },
             }
             for n in graph._nodes.values()
         ]
@@ -103,7 +105,9 @@ def graph_to_dict(graph: Any) -> Dict:
                 "total_duration_ns": e.total_duration_ns,
                 "first_seen": e.first_seen,
                 "last_seen": e.last_seen,
-                "metadata": {k: str(v) for k, v in e.metadata.items()},
+                "metadata": {
+                    k: str(v) for k, v in e.metadata.items()
+                },
             }
             for e in graph._edge_index.values()
         ]
@@ -162,7 +166,9 @@ def dict_to_graph(data: Dict) -> Any:
             graph._adj[edge.source].append(edge)
             graph._rev[edge.target].append(edge)
 
-        graph.last_updated = data.get("graph_last_updated", time.time())
+        graph.last_updated = data.get(
+            "graph_last_updated", time.time()
+        )
 
     logger.info(
         "Graph deserialized: %d nodes, %d edges (schema_version=%s)",
@@ -192,7 +198,9 @@ class GraphSerializer(ABC):
         payload = self.serialize(graph)
         with open(path, "wb") as f:
             f.write(payload)
-        logger.info("Graph saved to %s (%d bytes)", path, len(payload))
+        logger.info(
+            "Graph saved to %s (%d bytes)", path, len(payload)
+        )
         return len(payload)
 
     def load(self, path: str) -> Any:
@@ -230,7 +238,9 @@ class MsgpackSerializer(GraphSerializer):
         try:
             import msgpack
         except ImportError:
-            raise ImportError("msgpack not installed. pip install msgpack")
+            raise ImportError(
+                "msgpack not installed. pip install msgpack"
+            )
 
         payload = graph_to_dict(graph)
         return msgpack.packb(payload, use_bin_type=True)
@@ -239,7 +249,9 @@ class MsgpackSerializer(GraphSerializer):
         try:
             import msgpack
         except ImportError:
-            raise ImportError("msgpack not installed. pip install msgpack")
+            raise ImportError(
+                "msgpack not installed. pip install msgpack"
+            )
 
         payload = msgpack.unpackb(data, raw=False)
         return dict_to_graph(payload)
@@ -281,7 +293,9 @@ class ProtobufSerializer(GraphSerializer):
 
         snapshot = pb2.SerializedGraph()
         snapshot.serialized_at = payload["serialized_at"]
-        snapshot.graph_last_updated = payload["graph_last_updated"]
+        snapshot.graph_last_updated = payload[
+            "graph_last_updated"
+        ]
         snapshot.schema_version = payload["schema_version"]
 
         for n in payload["nodes"]:
@@ -382,7 +396,9 @@ class JSONSerializer(GraphSerializer):
 
     def serialize(self, graph: Any) -> bytes:
         payload = graph_to_dict(graph)
-        return json.dumps(payload, indent=self._indent).encode("utf-8")
+        return json.dumps(payload, indent=self._indent).encode(
+            "utf-8"
+        )
 
     def deserialize(self, data: bytes) -> Any:
         payload = json.loads(data.decode("utf-8"))

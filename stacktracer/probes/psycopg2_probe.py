@@ -76,7 +76,9 @@ def _get_psycopg2():
 
         return psycopg2
     except ImportError:
-        raise ImportError("psycopg2 not installed. pip install psycopg2-binary")
+        raise ImportError(
+            "psycopg2 not installed. pip install psycopg2-binary"
+        )
 
 
 # ====================================================================== #
@@ -101,7 +103,9 @@ class TracedCursor:
         self._dsn = dsn  # for service identification
 
     def execute(self, query: str, params=None) -> Any:
-        return self._traced_execute("psycopg2.query.execute", query, params)
+        return self._traced_execute(
+            "psycopg2.query.execute", query, params
+        )
 
     def executemany(self, query: str, seq) -> Any:
         trace_id = get_trace_id()
@@ -158,7 +162,9 @@ class TracedCursor:
 
         try:
             if is_proc:
-                result = self._cursor.callproc(query, params or [])
+                result = self._cursor.callproc(
+                    query, params or []
+                )
             elif params is not None:
                 result = self._cursor.execute(query, params)
             else:
@@ -284,7 +290,9 @@ def traced_connect(*args, **kwargs) -> TracedConnection:
                 service="postgres",
                 name="connect",
                 duration_ns=duration_ns,
-                dsn=str(kwargs.get("dsn", args[0] if args else ""))[:100],
+                dsn=str(
+                    kwargs.get("dsn", args[0] if args else "")
+                )[:100],
             )
         )
 

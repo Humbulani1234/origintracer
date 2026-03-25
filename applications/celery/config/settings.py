@@ -36,7 +36,9 @@ ASGI_APPLICATION = "config.asgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.path.join(os.path.dirname(__file__), "..", "demo.db"),
+        "NAME": os.path.join(
+            os.path.dirname(__file__), "..", "demo.db"
+        ),
     }
 }
 
@@ -54,5 +56,7 @@ CELERY_RESULT_EXPIRES = 3600
 # gunicorn.conf.py. Expose here so both entry points can read it.
 STACKTRACER_CONFIG = os.environ.get(
     "STACKTRACER_CONFIG",
-    os.path.join(os.path.dirname(__file__), "..", "stacktracer.yaml"),
+    os.path.join(
+        os.path.dirname(__file__), "..", "stacktracer.yaml"
+    ),
 )

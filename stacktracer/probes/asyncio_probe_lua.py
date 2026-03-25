@@ -163,7 +163,9 @@ class _EpollKprobe:
         except Exception as e:
             logger.warning("asyncio epoll BPF: %s", e)
             return False
-        self._bpf["epoll_events"].open_perf_buffer(self._on_event)
+        self._bpf["epoll_events"].open_perf_buffer(
+            self._on_event
+        )
         self._running = True
         self._thread = threading.Thread(
             target=self._poll,
@@ -171,7 +173,9 @@ class _EpollKprobe:
             name="stacktracer-asyncio-epoll",
         )
         self._thread.start()
-        logger.info("asyncio epoll kprobe active (with fd socket-type enrichment)")
+        logger.info(
+            "asyncio epoll kprobe active (with fd socket-type enrichment)"
+        )
         return True
 
     def stop(self):
@@ -194,10 +198,14 @@ class _EpollKprobe:
             ev = self._bpf["epoll_events"].event(data)
             if ev.pid != self._pid:
                 return
-            trace_id = ev.trace_id.decode("ascii", "replace").rstrip("\x00")
+            trace_id = ev.trace_id.decode(
+                "ascii", "replace"
+            ).rstrip("\x00")
             if not trace_id:
                 return
-            service = ev.service.decode("ascii", "replace").rstrip("\x00")
+            service = ev.service.decode(
+                "ascii", "replace"
+            ).rstrip("\x00")
 
             ready = []
             for i in range(min(ev.fd_count, 8)):
@@ -252,7 +260,8 @@ def _setup_monitoring_312() -> bool:
     try:
         sys.monitoring.set_events(
             tid,
-            sys.monitoring.events.CALL | sys.monitoring.events.PY_RETURN,
+            sys.monitoring.events.CALL
+            | sys.monitoring.events.PY_RETURN,
         )
     except Exception as e:
         logger.warning("sys.monitoring set_events: %s", e)
@@ -291,8 +300,12 @@ def _setup_monitoring_312() -> bool:
             )
 
     try:
-        sys.monitoring.register_callback(tid, sys.monitoring.events.CALL, on_call)
-        sys.monitoring.register_callback(tid, sys.monitoring.events.PY_RETURN, on_ret)
+        sys.monitoring.register_callback(
+            tid, sys.monitoring.events.CALL, on_call
+        )
+        sys.monitoring.register_callback(
+            tid, sys.monitoring.events.PY_RETURN, on_ret
+        )
         logger.info("asyncio: sys.monitoring installed")
         return True
     except Exception as e:
@@ -304,9 +317,15 @@ def _teardown_monitoring_312():
     global _MONITORING_ID
     if _MONITORING_ID is None or not hasattr(sys, "monitoring"):
         return
-    sys.monitoring.set_events(_MONITORING_ID, sys.monitoring.events.NO_EVENTS)
-    sys.monitoring.register_callback(_MONITORING_ID, sys.monitoring.events.CALL, None)
-    sys.monitoring.register_callback(_MONITORING_ID, sys.monitoring.events.PY_RETURN, None)
+    sys.monitoring.set_events(
+        _MONITORING_ID, sys.monitoring.events.NO_EVENTS
+    )
+    sys.monitoring.register_callback(
+        _MONITORING_ID, sys.monitoring.events.CALL, None
+    )
+    sys.monitoring.register_callback(
+        _MONITORING_ID, sys.monitoring.events.PY_RETURN, None
+    )
     _MONITORING_ID = None
 
 
@@ -315,10 +334,16 @@ def _setup_setprofile_311() -> bool:
     _originals["sys_profile"] = orig
 
     def _cb(frame, event, arg):
-        if event in ("call", "return") and _is_coro(frame.f_code):
+        if event in ("call", "return") and _is_coro(
+            frame.f_code
+        ):
             tid = get_trace_id()
             if tid:
-                p = "asyncio.loop.coro_call" if event == "call" else "asyncio.loop.coro_return"
+                p = (
+                    "asyncio.loop.coro_call"
+                    if event == "call"
+                    else "asyncio.loop.coro_return"
+                )
                 emit(
                     NormalizedEvent.now(
                         probe=p,
@@ -349,12 +374,18 @@ def _create_task_wrapper(orig: Callable) -> Callable:
                     probe="asyncio.task.create",
                     trace_id=tid,
                     service="asyncio",
-                    name=getattr(coro, "__qualname__", type(coro).__name__),
+                    name=getattr(
+                        coro, "__qualname__", type(coro).__name__
+                    ),
                     parent_span_id=get_span_id(),
                     task_name=name,
                 )
             )
-        return orig(coro, name=name) if context is None else orig(coro, name=name, context=context)
+        return (
+            orig(coro, name=name)
+            if context is None
+            else orig(coro, name=name, context=context)
+        )
 
     return _wrapped
 
@@ -411,7 +442,9 @@ class AsyncioProbe(BaseProbe):
             _setup_setprofile_311()
 
         _originals["create_task"] = asyncio.create_task
-        asyncio.create_task = _create_task_wrapper(asyncio.create_task)
+        asyncio.create_task = _create_task_wrapper(
+            asyncio.create_task
+        )
         _patched = True
 
     def stop(self):

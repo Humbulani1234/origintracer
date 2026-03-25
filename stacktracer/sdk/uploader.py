@@ -134,7 +134,9 @@ class Uploader:
 
         self._event_buffer = _UploaderEventBuffer()
 
-        self._engine: Optional[Any] = None  # set by bind_engine()
+        self._engine: Optional[Any] = (
+            None  # set by bind_engine()
+        )
 
         self._thread: Optional[threading.Thread] = None
         self._running: bool = False
@@ -230,11 +232,17 @@ class Uploader:
 
             now = time.time()
 
-            if now - self._last_event_flush_s >= self._flush_interval:
+            if (
+                now - self._last_event_flush_s
+                >= self._flush_interval
+            ):
                 self._flush_events()
                 self._last_event_flush_s = now
 
-            if now - self._last_snapshot_flush_s >= self._snapshot_interval:
+            if (
+                now - self._last_snapshot_flush_s
+                >= self._snapshot_interval
+            ):
                 self._flush_snapshot()
                 self._last_snapshot_flush_s = now
 
@@ -284,9 +292,14 @@ class Uploader:
                 )
 
         except ImportError:
-            logger.debug("httpx not installed — uploader inactive  " "(pip install httpx)")
+            logger.debug(
+                "httpx not installed — uploader inactive  "
+                "(pip install httpx)"
+            )
         except httpx.TimeoutException as e:
-            logger.debug("Timeout — backend not responding: %s", e)
+            logger.debug(
+                "Timeout — backend not responding: %s", e
+            )
         except httpx.ConnectError as e:
             logger.debug("Connection error: %s", e)
         except Exception as exc:
@@ -326,12 +339,16 @@ class Uploader:
         - POST /api/v1/graph/diff     → incremental update
         """
         if self._engine is None:
-            logger.debug("Snapshot skipped: engine not initialized")
+            logger.debug(
+                "Snapshot skipped: engine not initialized"
+            )
             return
 
         # --- Serialize graph ---
         try:
-            data, content_type = _serialize_graph(self._engine.graph)
+            data, content_type = _serialize_graph(
+                self._engine.graph
+            )
         except Exception as exc:
             logger.debug("Graph serialization failed: %s", exc)
             return
@@ -390,7 +407,9 @@ class Uploader:
             diff_resp = httpx.post(
                 f"{self._endpoint}/api/v1/graph/diff",
                 json=latest_diff,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers={
+                    "Authorization": f"Bearer {self._api_key}"
+                },
                 timeout=5.0,
             )
 
@@ -425,15 +444,21 @@ class Uploader:
             httpx.post(
                 f"{self._endpoint}/api/v1/deployment",
                 json={"label": label},
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers={
+                    "Authorization": f"Bearer {self._api_key}"
+                },
                 timeout=5.0,
             )
         except httpx.TimeoutException as e:
-            logger.debug("Timeout — backend not responding: %s", e)
+            logger.debug(
+                "Timeout — backend not responding: %s", e
+            )
         except httpx.ConnectError as e:
             logger.debug("Connection error: %s", e)
         except Exception as exc:
-            logger.warning("Failed to send deployment marker: %s", exc)
+            logger.warning(
+                "Failed to send deployment marker: %s", exc
+            )
 
     # ------------------------------------------------------------------ #
     # Stats

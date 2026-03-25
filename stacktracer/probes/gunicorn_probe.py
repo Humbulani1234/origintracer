@@ -104,7 +104,11 @@ def st_on_starting(server: Any) -> None:
     master_pid = os.getpid()
     bind = getattr(server, "address", [])
     cfg = getattr(server, "cfg", None)
-    worker_class = getattr(cfg, "worker_class_str", "unknown") if cfg else "unknown"
+    worker_class = (
+        getattr(cfg, "worker_class_str", "unknown")
+        if cfg
+        else "unknown"
+    )
     num_workers = getattr(cfg, "workers", 0) if cfg else 0
 
     # Do NOT call init() or emit() here — no engine exists yet and
@@ -152,14 +156,20 @@ def st_post_fork(server: Any, worker: Any) -> None:
 
     engine = stacktracer.get_engine()
     if engine is not None:
-        _emit_worker_fork(trace_id, worker_class, worker_pid, master_pid)
+        _emit_worker_fork(
+            trace_id, worker_class, worker_pid, master_pid
+        )
         _drain_pre_fork_events(engine)
     else:
         stacktracer._register_post_init_callback(
-            lambda: _emit_worker_fork(trace_id, worker_class, worker_pid, master_pid)
+            lambda: _emit_worker_fork(
+                trace_id, worker_class, worker_pid, master_pid
+            )
         )
         stacktracer._register_post_init_callback(
-            lambda: _drain_pre_fork_events(stacktracer.get_engine())
+            lambda: _drain_pre_fork_events(
+                stacktracer.get_engine()
+            )
         )
 
 
@@ -193,10 +203,14 @@ def _drain_pre_fork_events(engine) -> None:
             )
 
     _pre_fork_events.clear()
-    logger.info("gunicorn probe: drained pre-fork events into worker engine")
+    logger.info(
+        "gunicorn probe: drained pre-fork events into worker engine"
+    )
 
 
-def _emit_worker_fork(trace_id, worker_class, worker_pid, master_pid):
+def _emit_worker_fork(
+    trace_id, worker_class, worker_pid, master_pid
+):
     emit(
         NormalizedEvent.now(
             probe="gunicorn.worker.fork",
@@ -340,7 +354,9 @@ def install_hooks() -> None:
     logger.info("gunicorn StackTracer hooks installed")
 
 
-def _chain(module_globals: dict, hook_name: str, st_fn: Callable) -> None:
+def _chain(
+    module_globals: dict, hook_name: str, st_fn: Callable
+) -> None:
     """
     Chain our hook with an existing hook of the same name in the config module.
     If no existing hook exists, just set ours.
@@ -405,7 +421,9 @@ class GunicornProbe(BaseProbe):
         try:
             import gunicorn  # noqa: F401
         except ImportError:
-            logger.info("gunicorn not installed — gunicorn probe inactive")
+            logger.info(
+                "gunicorn not installed — gunicorn probe inactive"
+            )
             return
 
         logger.info(

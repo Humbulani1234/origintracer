@@ -118,7 +118,10 @@ class GraphCompactor:
                     key=lambda t: t[0],
                 )
 
-                cap_evictions = [node_id for _, node_id in cold_nodes[:over_by]]
+                cap_evictions = [
+                    node_id
+                    for _, node_id in cold_nodes[:over_by]
+                ]
                 evicted_nodes.update(cap_evictions)
                 reasons.append(f"cap({len(cap_evictions)})")
 
@@ -132,12 +135,15 @@ class GraphCompactor:
                 }
 
             # ---- Remove nodes and all incident edges ----
-            evicted_edge_count = self._remove_nodes(graph, evicted_nodes)
+            evicted_edge_count = self._remove_nodes(
+                graph, evicted_nodes
+            )
 
         self._total_evictions += len(evicted_nodes)
 
         logger.info(
-            "GraphCompactor: evicted %d nodes, %d edges. reason=%s. " "graph now has %d nodes.",
+            "GraphCompactor: evicted %d nodes, %d edges. reason=%s. "
+            "graph now has %d nodes.",
             len(evicted_nodes),
             evicted_edge_count,
             "+".join(reasons),
@@ -153,7 +159,9 @@ class GraphCompactor:
             "total_evictions": self._total_evictions,
         }
 
-    def _remove_nodes(self, graph: Any, node_ids: Set[str]) -> int:
+    def _remove_nodes(
+        self, graph: Any, node_ids: Set[str]
+    ) -> int:
         """
         Remove `node_ids` from the graph and all incident edges.
         Caller must hold graph._lock.
@@ -197,7 +205,9 @@ class GraphCompactor:
 
         return edges_removed
 
-    def estimate_memory_bytes(self, graph: Any) -> Dict[str, int]:
+    def estimate_memory_bytes(
+        self, graph: Any
+    ) -> Dict[str, int]:
         r"""
         Rough memory estimate for the current graph.
         Useful for \status in the REPL.
@@ -214,7 +224,9 @@ class GraphCompactor:
         #   Dict overhead per entry: ~50-80 bytes
         node_bytes = node_count * 280
         edge_bytes = edge_count * 220
-        index_bytes = (node_count + edge_count) * 70  # dict key overhead
+        index_bytes = (
+            node_count + edge_count
+        ) * 70  # dict key overhead
 
         return {
             "nodes": node_count,
@@ -223,5 +235,7 @@ class GraphCompactor:
             "edge_bytes": edge_bytes,
             "index_bytes": index_bytes,
             "total_bytes": node_bytes + edge_bytes + index_bytes,
-            "total_mb": round((node_bytes + edge_bytes + index_bytes) / 1e6, 2),
+            "total_mb": round(
+                (node_bytes + edge_bytes + index_bytes) / 1e6, 2
+            ),
         }

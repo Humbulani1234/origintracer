@@ -92,7 +92,8 @@ _BUILTIN_PATTERNS: List[Tuple[str, str]] = [
 
 # Compile once at import time
 _BUILTIN_COMPILED: List[Tuple[re.Pattern, str]] = [
-    (re.compile(pattern), replacement) for pattern, replacement in _BUILTIN_PATTERNS
+    (re.compile(pattern), replacement)
+    for pattern, replacement in _BUILTIN_PATTERNS
 ]
 
 
@@ -121,7 +122,9 @@ class NormalizationRule:
     fn: Optional[Callable[[str], str]] = None
 
     # Internal compiled pattern
-    _compiled: Optional[re.Pattern] = field(default=None, repr=False, compare=False)
+    _compiled: Optional[re.Pattern] = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self):
         if self.pattern:
@@ -281,7 +284,9 @@ class GraphNormalizer:
         self._cache[cache_key] = result
         return result
 
-    def _normalize_uncached(self, service: str, name: str) -> str:
+    def _normalize_uncached(
+        self, service: str, name: str
+    ) -> str:
         result = name
 
         # Step 1 — built-in patterns (applied to all services)
@@ -324,7 +329,9 @@ class GraphNormalizer:
         if not config:
             return cls()
 
-        max_unique = config.get("max_unique_names_per_service", 500)
+        max_unique = config.get(
+            "max_unique_names_per_service", 500
+        )
         normalizer = cls(max_unique_names_per_service=max_unique)
 
         for rule_cfg in config.get("rules", []):
@@ -339,4 +346,7 @@ class GraphNormalizer:
 
     def stats(self) -> dict:
         r"""Return cardinality stats per service — useful in REPL \status."""
-        return {service: len(names) for service, names in self._seen_names.items()}
+        return {
+            service: len(names)
+            for service, names in self._seen_names.items()
+        }

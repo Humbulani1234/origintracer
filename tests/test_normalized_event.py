@@ -42,36 +42,52 @@ class TestNormalizedEventConstruction:
         assert e.trace_id == "t-001"
 
     def test_span_id_auto_generated(self):
-        e = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        e = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         assert e.span_id is not None
         assert len(e.span_id) == 16  # uuid4().hex[:16]
 
     def test_span_ids_unique_across_instances(self):
-        a = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
-        b = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        a = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
+        b = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         assert a.span_id != b.span_id
 
     def test_metadata_defaults_to_empty_dict(self):
-        e = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        e = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         assert e.metadata == {}
 
     def test_duration_ns_defaults_to_none(self):
-        e = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        e = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         assert e.duration_ns is None
 
     def test_pid_tid_default_to_none(self):
-        e = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        e = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         assert e.pid is None
         assert e.tid is None
 
     def test_wall_time_captured(self):
         before = time.time()
-        e = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        e = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         after = time.time()
         assert before <= e.wall_time <= after
 
     def test_parent_span_id_none_by_default(self):
-        e = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        e = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         assert e.parent_span_id is None
 
 
@@ -178,7 +194,9 @@ class TestNormalizedEventNow:
         assert "pid" not in e.metadata
 
     def test_duration_none_when_not_passed(self):
-        e = NormalizedEvent.now("request.entry", "t1", "nginx", "accept")
+        e = NormalizedEvent.now(
+            "request.entry", "t1", "nginx", "accept"
+        )
         assert e.duration_ns is None
 
     def test_wall_time_captured_at_call_site(self):
@@ -229,7 +247,9 @@ class TestNormalizedEventSerialisation:
             "timestamp",
             "metadata",
         ):
-            assert field in d, f"to_dict() missing field: {field}"
+            assert (
+                field in d
+            ), f"to_dict() missing field: {field}"
 
     def test_from_dict_restores_probe_service_name(self):
         e = self._make()
@@ -327,7 +347,9 @@ class TestNormalizedEventRepr:
         assert "abc123" in repr(e)
 
     def test_repr_does_not_raise_on_none_fields(self):
-        e = NormalizedEvent(probe="p", service="s", name="n", trace_id="t")
+        e = NormalizedEvent(
+            probe="p", service="s", name="n", trace_id="t"
+        )
         # Must not raise even with all optional fields at defaults
         _ = repr(e)
 
@@ -341,18 +363,24 @@ class TestNormalizedEventEdgeCases:
 
     def test_empty_trace_id_allowed(self):
         """Probes that don't have a trace context yet emit with trace_id=''."""
-        e = NormalizedEvent.now("gunicorn.master.start", "", "gunicorn", "master")
+        e = NormalizedEvent.now(
+            "gunicorn.master.start", "", "gunicorn", "master"
+        )
         assert e.trace_id == ""
 
     def test_zero_duration_ns_stored_as_zero_not_none(self):
         """duration_ns=0 is a valid value (e.g. sub-microsecond ops), not None."""
-        e = NormalizedEvent.now("p", "t", "s", "n", duration_ns=0)
+        e = NormalizedEvent.now(
+            "p", "t", "s", "n", duration_ns=0
+        )
         assert e.duration_ns == 0
         assert e.duration_ns is not None
 
     def test_large_duration_ns_stored_correctly(self):
         """30-second request = 30_000_000_000 ns — must not overflow."""
-        e = NormalizedEvent.now("p", "t", "s", "n", duration_ns=30_000_000_000)
+        e = NormalizedEvent.now(
+            "p", "t", "s", "n", duration_ns=30_000_000_000
+        )
         assert e.duration_ns == 30_000_000_000
 
     def test_metadata_is_independent_per_instance(self):
