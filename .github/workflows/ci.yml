@@ -57,4 +57,4 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest stacktracer/tests/ -x -q --tb=short
+          pytest tests/ -x -q --tb=short
