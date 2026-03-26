@@ -181,10 +181,12 @@ def _init_repository() -> None:
         try:
             import psycopg2
 
-            from stacktracer.storage.base import EventRepository
+            from stacktracer.storage.base import (
+                PGEventRepository,
+            )
 
             conn = psycopg2.connect(db_dsn)
-            _repository = EventRepository(conn)
+            _repository = PGEventRepository(conn)
             logger.info(
                 "Storage: PostgreSQL (%s)", db_dsn.split("@")[-1]
             )

@@ -1,8 +1,3 @@
-"""
-The NormalizedEvent is the only data interface between probes and the engine.
-Probe-specific fields do not cross this boundary to the engine.
-"""
-
 from __future__ import annotations
 
 import time
@@ -120,8 +115,8 @@ ProbeTypes.register_many(
 @dataclass
 class NormalizedEvent:
     """
-    The semantic observation from any probe.
-    This crosses the probe↔engine boundary as the sole data contract.
+    The NormalizedEvent is the only data interface between probes and the engine.
+    Probe-specific fields do not cross this boundary to the engine.
 
     Fields
     ------

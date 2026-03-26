@@ -326,38 +326,6 @@ class StackTracerSpanExporter:
         return True
 
 
-# ── otel_mode flag in __init__.py ─────────────────────────────────────────────
-#
-# Add this to stacktracer/__init__.py in the init() function:
-#
-#   def init(
-#       ...
-#       otel_mode: bool = False,
-#       ...
-#   ) -> None:
-#       ...
-#       cfg = ResolvedConfig(...)
-#
-#       _init_engine(cfg)
-#
-#       if otel_mode:
-#           # skip probe startup — OTel bridge is the event source
-#           logger.info("StackTracer running in OTel bridge mode — native probes disabled")
-#           return
-#
-#       _init_probes(cfg)        # only runs when otel_mode=False
-#       _init_uploader(cfg)
-#
-# With otel_mode=True, the engine starts (graph, causal rules, REPL all work)
-# but no probes are installed. Events come exclusively from OTel spans via
-# StackTracerSpanExporter.export().
-#
-# With otel_mode=False (default), native probes run as normal.
-# StackTracerSpanExporter can still be added alongside native probes if you
-# want to receive OTel spans from external services while probing locally —
-# the engine accepts events from both sources simultaneously.
-
-
 # ── W3C traceparent extraction helper ────────────────────────────────────────
 
 

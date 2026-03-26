@@ -31,6 +31,7 @@ dev = [
     "black>=24.0",
     "ruff>=0.4",
     "pre-commit>=3.7",
+    "clickhouse_driver>=0.2.10"
 ]
 
 [tool.setuptools.packages.find]

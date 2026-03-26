@@ -1,23 +1,3 @@
-"""
-buffer/uploader.py
-
-Background thread that ships probe events and graph snapshots to the
-StackTracer backend (SaaS or self-hosted).
-
-Two independent flush loops run on a single daemon thread:
-
-    _flush_events()    — every flush_interval seconds (default 10s)
-                         drains EventBuffer → POST /api/v1/events
-                         carries raw NormalizedEvent dicts for persistence
-
-    _flush_snapshot()  — every snapshot_interval seconds (default 60s)
-                         serialises engine.graph → POST /api/v1/graph/snapshot
-                         carries the full RuntimeGraph as msgpack bytes
-                         FastAPI deserialises this and serves all graph queries
-
-
-"""
-
 from __future__ import annotations
 
 import logging
@@ -30,11 +10,6 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 logger = logging.getLogger("stacktracer.uploader")
-
-
-# ====================================================================== #
-# Internal buffers
-# ====================================================================== #
 
 
 class _UploaderEventBuffer:
@@ -85,13 +60,26 @@ def _serialize_events(payload: Dict) -> tuple:
 
 
 def _serialize_graph(graph: Any) -> tuple:
-    """Serialise RuntimeGraph to msgpack bytes using GraphSerializer."""
-    from stacktracer.core.graph_serializer import (
-        MsgpackSerializer,
-    )
+    """Serialise RuntimeGraph — prefers protobuf, falls back to msgpack."""
+    try:
+        from stacktracer.core.graph_serializer import (
+            MsgpackSerializer,
+        )
 
-    data = MsgpackSerializer().serialize(graph)
-    return data, "application/msgpack"
+        return (
+            MsgpackSerializer().serialize(graph),
+            "application/msgpack",
+        )
+
+    except ImportError:
+        from stacktracer.core.graph_serializer import (
+            ProtobufSerializer,
+        )
+
+        return (
+            ProtobufSerializer().serialize(graph),
+            "application/x-protobuf",
+        )
 
 
 # ====================================================================== #
@@ -261,8 +249,6 @@ class Uploader:
         payload = {"events": batch, "count": len(batch)}
 
         try:
-            import httpx
-
             body, content_type = _serialize_events(payload)
             print(">>>>I RUN TOO alsooo", body)
             print(f"MY END POINT{self._endpoint}/api/v1/events")
@@ -459,10 +445,6 @@ class Uploader:
             logger.warning(
                 "Failed to send deployment marker: %s", exc
             )
-
-    # ------------------------------------------------------------------ #
-    # Stats
-    # ------------------------------------------------------------------ #
 
     def stats(self) -> Dict[str, Any]:
         return {
