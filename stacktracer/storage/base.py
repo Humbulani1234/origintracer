@@ -1,33 +1,3 @@
-"""
-storage/repository.py
-
-Storage backends for StackTracer.
-
-Three backends, one interface:
-
-    EventRepository       — PostgreSQL  (production)
-    ClickHouseRepository  — ClickHouse  (analytics / long retention)
-    InMemoryRepository    — No deps     (dev / tests)
-
-Interface (BaseRepository):
-    insert_event(event)                    — store one probe event
-    query_events(trace_id, probe, ...)     — retrieve events for trace queries
-    insert_snapshot(customer_id, data, …) — store serialised graph bytes
-    get_latest_snapshot(customer_id)       — retrieve latest graph bytes
-    insert_marker(customer_id, label)      — store deployment marker
-    close()                                — clean up connections
-
-Tables:
-    st_events      — raw probe events  (7-day TTL on ClickHouse, unbounded on PG)
-    st_snapshots   — serialised graph  (one row per customer, most recent wins)
-    st_markers     — deployment markers (labelled timestamps)
-
-The snapshot table is how FastAPI survives restarts without losing the
-graph. On startup, FastAPI calls get_latest_snapshot() per customer and
-deserialises the bytes back into a RuntimeGraph. Queries work immediately
-without waiting 60 seconds for the agent to send the next snapshot.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -38,14 +8,11 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 
+from clickhouse_driver import Client
+
 from stacktracer.core.event_schema import NormalizedEvent
 
 logger = logging.getLogger("stacktracer.storage")
-
-
-# ====================================================================== #
-# Abstract interface
-# ====================================================================== #
 
 
 class BaseRepository(ABC):
@@ -521,8 +488,6 @@ class ClickHouseRepository(BaseRepository):
         database: str = "stacktracer",
     ) -> None:
         try:
-            from clickhouse_driver import Client
-
             self._client = Client(
                 host=host, port=port, database=database
             )

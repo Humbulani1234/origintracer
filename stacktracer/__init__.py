@@ -14,14 +14,18 @@ Config merge order:
 from __future__ import annotations
 
 import atexit
+import importlib
+import importlib.util
 import logging
 import os
 import sys
+import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from .context.vars import get_trace_id  # noqa: F401
 from .core.event_schema import NormalizedEvent  # noqa: F401
+from .sdk.base_probe import ProbeRegistry
 from .sdk.emitter import emit  # noqa: F401
 
 logger = logging.getLogger("stacktracer")
@@ -413,8 +417,6 @@ def _init_engine(
     from .sdk.emitter import bind_engine
 
     graph = RuntimeGraph()
-    graph.normalizer = normalizer
-
     engine = Engine(
         causal_registry=registry,
         semantic_layer=semantic,
@@ -423,6 +425,7 @@ def _init_engine(
     engine.graph = graph
     engine.compactor = compactor
     engine.tracker = tracker
+    engine.normalizer = normalizer
 
     if repository:
         engine.repository = repository
@@ -445,13 +448,6 @@ def _init_probes(
     3. Start probes named in cfg.probes (user stacktracer.yaml takes precedence
        over defaults.yaml probes list via _deep_merge).
     """
-    import importlib
-
-    from .sdk.base_probe import ProbeRegistry
-
-    # import pdb
-    # pdb.set_trace()
-
     # Builtin modules from defaults.yaml — no hardcoded list
     for module_path in cfg.builtin_probes:
         try:
@@ -472,8 +468,6 @@ def _init_probes(
     probes = ProbeRegistry.load_from_config(
         {"probes": cfg.probes}
     )
-
-    print(">>>PROBES:", probes)
     started = []
     for probe in probes:
         try:
@@ -504,12 +498,6 @@ def _discover_user_probes(app_root: str) -> None:
     Importing registers the BaseProbe subclass with ProbeRegistry as a
     side-effect of class definition.
     """
-    import importlib.util
-    import traceback
-
-    # import pdb
-    # pdb.set_trace()
-
     probes_dir = os.path.join(app_root, "probes")
     if not os.path.isdir(probes_dir):
         logger.debug(
@@ -659,6 +647,7 @@ def init(
     compactor: Optional[Dict] = None,
     active_requests: Optional[Dict] = None,
     observe: Optional[Dict] = None,
+    otel_mode: bool = False,
 ) -> None:
     """
     Initialise StackTracer.
@@ -782,8 +771,9 @@ def init(
 
     _init_local_server(_engine)
 
-    _active_probes = _init_probes(_config, _engine, app_root)
-    _engine.probes = _active_probes
+    if otel_mode:
+        _active_probes = _init_probes(_config, _engine, app_root)
+        _engine.probes = _active_probes
 
     if repository is None:
         _init_uploader(_config, _engine)

@@ -321,3 +321,111 @@ python load_test.py --requests 200 --workers 20 --delay 0
 # burst waves — watch graph between waves
 python burst_test.py --waves 6 --burst 100 --workers 15 --quiet 5
 ```
+
+---
+
+## OTel Bridge Mode (optional)
+
+StackTracer can run in OpenTelemetry bridge mode instead of native probe mode.
+In this mode OTel is the event source — StackTracer's own probes are disabled
+and the engine receives events translated from OTel spans instead.
+
+**When to use OTel mode:**
+- Your team already has OTel instrumentation deployed
+- You want causal rules and the graph without adding a second instrumentation layer
+- You need distributed tracing across polyglot services (Go, Java, Node)
+
+**When to use native probe mode (default):**
+- You want asyncio internals — `Task.__step`, loop tick, ready queue depth
+- You want kernel-level timing via kprobe (accept4, epoll_wait)
+- You want gunicorn worker lifecycle events and nginx correlation
+
+Both modes feed the same engine, same REPL, same React UI. Only the event
+source changes.
+
+### Install OTel SDK
+
+```bash
+pip install opentelemetry-sdk \
+            opentelemetry-instrumentation-django \
+            opentelemetry-instrumentation-psycopg2 \
+            opentelemetry-instrumentation-redis
+```
+
+### Enable OTel mode
+
+Set the flag in `settings.py`:
+
+```python
+STACKTRACER_OTEL_MODE = True   # False = native probes (default)
+```
+
+`apps.py` reads this flag automatically and switches between native and OTel
+initialisation. No other code changes needed.
+
+### What `apps.py` does in each mode
+
+```
+STACKTRACER_OTEL_MODE = False (default)
+    → stacktracer.init()               starts engine + native probes
+    → TracerMiddleware                 sets trace_id per request
+    → django/asyncio/gunicorn probes   emit NormalizedEvents directly
+
+STACKTRACER_OTEL_MODE = True
+    → stacktracer.init(otel_mode=True) starts engine only, no probes
+    → DjangoInstrumentor               OTel instruments Django automatically
+    → Psycopg2Instrumentor             OTel instruments DB queries
+    → BatchSpanProcessor               batches completed spans
+    → StackTracerSpanExporter          converts OTel spans → NormalizedEvents
+    → engine.process(event)            same graph, same causal rules
+```
+
+### traceparent propagation
+
+In OTel mode, W3C `traceparent` headers are propagated automatically by the
+OTel SDK. If you also have `TracerMiddleware` active, extract and share the
+trace_id so native events and OTel spans are correlated:
+
+```python
+# in TracerMiddleware.__call__() entry path
+from stacktracer.bridge.otel_bridge import extract_trace_id_from_traceparent
+
+traceparent = request.META.get("HTTP_TRACEPARENT", "")
+if traceparent:
+    trace_id = extract_trace_id_from_traceparent(traceparent)
+    if trace_id:
+        set_trace_id(trace_id)   # StackTracer uses the same trace_id as OTel
+```
+
+This means nginx → uvicorn → Django events and OTel spans all share one
+`trace_id` and the `\stitch` command reconstructs the full timeline.
+
+### What is observed in each mode
+
+| Signal | Native probes | OTel bridge |
+|---|---|---|
+| Django request lifecycle | ✓ | ✓ |
+| DB query timing | ✓ | ✓ |
+| Redis calls | ✓ | ✓ |
+| Celery tasks | ✓ | ✓ |
+| asyncio `Task.__step` | ✓ | ✗ |
+| Event loop tick / ready queue | ✓ | ✗ |
+| nginx kprobe | ✓ | ✗ |
+| Gunicorn worker lifecycle | ✓ | ✗ |
+| Cross-service distributed tracing | ✗ | ✓ |
+
+### REPL usage in OTel mode
+
+Identical to native probe mode. Once spans start flowing through
+`StackTracerSpanExporter`, the graph builds normally:
+
+```bash
+python -m stacktracer.scripts.repl
+
+› SHOW nodes
+› CAUSAL
+› DIFF SINCE deployment
+```
+
+The causal rules — loop starvation, N+1, retry amplification — evaluate
+against the same `RuntimeGraph` regardless of how events arrived.

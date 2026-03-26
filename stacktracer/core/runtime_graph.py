@@ -1,11 +1,3 @@
-"""
-core/runtime_graph.py
-
-An in-memory directed graph that grows as NormalizedEvents arrive.
-Supports neighbor traversal, upstream blame, and reachability BFS —
-the minimum needed for causal reasoning.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -64,19 +56,12 @@ class GraphEdge:
 
 class RuntimeGraph:
     """
-    Thread-safe directed graph.
+    An in-memory directed graph that grows as NormalizedEvents arrive.
+    Supports neighbor traversal, upstream blame, and reachability BFS —
+    the minimum needed for causal reasoning.
 
     Node ID convention:  "<service>::<name>"
     Edge key convention: "<source>→<target>:<type>"
-
-    Key methods
-    -----------
-    add_from_event()    — primary ingest path
-    neighbors()         — downstream edges from a node
-    callers()           — upstream (reverse) edges into a node
-    reachable_from()    — BFS downstream reachability
-    hottest_nodes()     — sorted by call count or duration
-    snapshot()          — serialisable dict for storage / diff
     """
 
     def __init__(self) -> None:
@@ -89,7 +74,7 @@ class RuntimeGraph:
         )  # reverse
         self._edge_index: Dict[str, GraphEdge] = (
             {}
-        )  # dedup key → edge
+        )  # dedup key:edge
         self._lock = RLock()
         self.last_updated: float = time.time()
 

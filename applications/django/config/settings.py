@@ -51,6 +51,9 @@ TEMPLATES = [
 
 STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+STACKTRACER_OTEL_MODE = (
+    False  # True = OTel bridge, False = native probes
+)
 
 # ── StackTracer ──────────────────────────────────────────────────────
 # Initialise StackTracer once at settings import time.

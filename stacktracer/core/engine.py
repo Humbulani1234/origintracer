@@ -1,14 +1,3 @@
-"""
-core/engine.py
-
-The Engine is the central, stack-agnostic coordinator.
-It receives NormalizedEvents from any probe via emit(),
-builds the RuntimeGraph, drives the TemporalStore,
-and exposes causal/semantic query surfaces.
-
-The Engine never imports from any probe module.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -16,13 +5,15 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from ..query.parser import execute, parse
+from ..sdk.base_probe import BaseProbe
 from .active_requests import ActiveRequestTracker
 from .causal import (
     CausalMatch,
     PatternRegistry,
     build_default_registry,
 )
-from .event_schema import NormalizedEvent
+from .event_schema import NormalizedEvent, ProbeTypes
 from .graph_compactor import GraphCompactor
 from .graph_normalizer import GraphNormalizer
 from .runtime_graph import RuntimeGraph
@@ -34,7 +25,10 @@ logger = logging.getLogger("stacktracer.engine")
 
 class Engine:
     """
-    Single-process engine instance.
+    Engine is the central, stack-agnostic coordinator.
+    It receives NormalizedEvents from any probe via emit(),
+    builds the RuntimeGraph, drives the TemporalStore,
+    and exposes causal/semantic query surfaces.
 
     Lifecycle
     ---------
@@ -44,10 +38,6 @@ class Engine:
     4. Call `engine.start_background_tasks()` to enable periodic snapshots.
     5. Query via `engine.query(...)` or the HTTP API.
 
-    Thread safety
-    -------------
-    RuntimeGraph is internally thread-safe via RLock.
-    Engine-level operations (snapshot, evaluate) acquire no additional locks.
     """
 
     def __init__(
@@ -63,15 +53,17 @@ class Engine:
         )
         self.tracker = (
             ActiveRequestTracker()
-        )  # overwritten in init()
+        )  # overwridden in init()
         self.normalizer = (
             GraphNormalizer()
-        )  # overwritten in init()
+        )  # overwridden in init()
         self.compactor = (
             GraphCompactor()
-        )  # overwritten in init()
-        self.causal = causal_registry or build_default_registry()
+        )  # overwridden in init()
         self.semantic = semantic_layer or SemanticLayer()
+        self.causal = causal_registry or build_default_registry()
+        # System active probes - overridden during init()
+        self.probes: Optional[List[BaseProbe]] = None
 
         self._snapshot_interval = snapshot_interval_s
         self._snapshot_thread: Optional[threading.Thread] = None
@@ -84,7 +76,7 @@ class Engine:
         self._trace_ttl_s: float = 60.0
         self._last_event_per_trace: Dict[str, tuple] = (
             {}
-        )  # trace_id → (NormalizedEvent, float)
+        )  # trace_id > (NormalizedEvent, float)
         self._last_event_lock = threading.Lock()
 
         # In-order event log (bounded ring buffer for replay / timeline)
@@ -92,17 +84,12 @@ class Engine:
         self._event_log_max = 10_000
         self._event_log_lock = threading.Lock()
 
-        # Injected storage repository (optional — set after construction)
+        # The Uploader — set after engine construction
         self.repository: Optional[Any] = None
-
-    # ------------------------------------------------------------------ #
-    # Primary ingest path
-    # ------------------------------------------------------------------ #
 
     def process(self, event: NormalizedEvent) -> None:
         """
-        Called by sdk.emitter for every emitted probe event.
-        Must be fast — this runs on the hot path.
+        Called by the Uploader for every emitted probe event.
         """
         if self.repository:
             try:
@@ -157,10 +144,6 @@ class Engine:
                 trace_id=event.trace_id, probe=event.probe
             )
 
-    # ------------------------------------------------------------------ #
-    # Snapshot (called periodically or on deployment events)
-    # ------------------------------------------------------------------ #
-
     def snapshot(
         self, label: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -177,10 +160,6 @@ class Engine:
         self.temporal.mark_event(label)
         logger.info("Deployment marker set: %s", label)
 
-    # ------------------------------------------------------------------ #
-    # Causal evaluation
-    # ------------------------------------------------------------------ #
-
     def evaluate(
         self, tags: Optional[List[str]] = None
     ) -> List[CausalMatch]:
@@ -193,17 +172,11 @@ class Engine:
             self.graph, self.temporal, self.tracker, tags=tags
         )
 
-    # ------------------------------------------------------------------ #
-    # Query surface
-    # ------------------------------------------------------------------ #
-
     def query(self, query_str: str) -> Dict[str, Any]:
         """
         Entry point for the DSL query layer.
         Delegates to query/executor.py.
         """
-        from ..query.parser import execute, parse
-
         parsed = parse(query_str)
         return execute(parsed, self)
 
@@ -216,8 +189,6 @@ class Engine:
         annotated with inter-stage durations.
         Uses ProbeTypes registry — no manual probe list to maintain.
         """
-        from .event_schema import ProbeTypes
-
         with self._event_log_lock:
             events = [
                 e
@@ -294,10 +265,6 @@ class Engine:
             for n in self.graph.hottest_nodes(top_n=top_n)
         ]
 
-    # ------------------------------------------------------------------ #
-    # Background periodic snapshot thread
-    # ------------------------------------------------------------------ #
-
     def start_background_tasks(self) -> None:
         if self._running:
             return
@@ -366,10 +333,6 @@ class Engine:
                 "Evicted %d stale trace_ids from _last_event_per_trace",
                 len(stale),
             )
-
-    # ------------------------------------------------------------------ #
-    # State
-    # ------------------------------------------------------------------ #
 
     def status(self) -> Dict[str, Any]:
         return {
