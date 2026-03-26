@@ -10,7 +10,7 @@ Grammar:
                status | active | probes | rules | semantic |
     FILTERS := FILTER [AND FILTER]*
     FILTER  := FIELD OP VALUE
-    OP      := = | > | < | >= | <= | LIKE
+    OP      := = | > | < | >= | <= | LIKE # currently supports only: =
     FIELD   := service | probe | system | trace_id | node | name | tags
     VALUE   := quoted string | number
 
@@ -178,8 +178,12 @@ def _parse_where_limit(
             ):
                 if i + 2 < len(tokens):
                     key = tokens[i]
-                    tokens[i + 1]
+                    op = tokens[i + 1]
                     val = tokens[i + 2]
+                    if op != "=":
+                        raise ValueError(
+                            f"Unsupported operator: {op}"
+                        )
                     # Type coerce numbers
                     try:
                         val = int(val)
@@ -260,7 +264,6 @@ def _exec_show(
     # pdb.set_trace()
 
     metric = query.metric
-    # print(">>>>THE METRIC", metric)
     filters = query.filters
 
     node_scope = None

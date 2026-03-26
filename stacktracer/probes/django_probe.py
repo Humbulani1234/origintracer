@@ -113,9 +113,17 @@ class TracerMiddleware:
         )
         token = set_trace(trace_id)
         request._st_t0 = time.perf_counter()
-        print(
-            f">>> request.enter trace={get_trace_id()} path={request.path}"
-        )
+
+        import stacktracer
+
+        engine = stacktracer.get_engine()
+        pattern = engine.tracker._normalize_path(request.path)
+        if engine:
+            engine.tracker.start(
+                trace_id=trace_id,
+                service="django",
+                pattern=pattern,
+            )
         emit(
             NormalizedEvent.now(
                 probe="request.entry",
@@ -145,6 +153,19 @@ class TracerMiddleware:
                 duration_ns=duration_ns,
             )
         )
+        import stacktracer
+
+        engine = stacktracer.get_engine()
+        pattern = engine.tracker._normalize_path(request.path)
+        if engine:
+            span = engine.tracker.complete(trace_id)
+            if span and span.duration_ms:
+                logger.debug(
+                    "request complete trace_id=%s pattern=%s duration_ms=%.1f",
+                    trace_id,
+                    pattern,
+                    span.duration_ms,
+                )
 
     def _error(
         self, request: Any, exc: Exception, trace_id: str
