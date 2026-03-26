@@ -91,13 +91,7 @@ class Engine:
         """
         Called by the Uploader for every emitted probe event.
         """
-        if self.repository:
-            try:
-                self.repository.insert_event(event)
-            except Exception as exc:
-                logger.debug("Repository insert failed: %s", exc)
-
-        # 2. Update runtime graph — build edges between consecutive events in same trace
+        # Update runtime graph — build edges between consecutive events in same trace
         with self._last_event_lock:
             entry = self._last_event_per_trace.get(
                 event.trace_id
@@ -126,6 +120,13 @@ class Engine:
             parent.name = self.normalizer.normalize(
                 event.service, parent_name
             )
+
+        # Send normalized events to the Uploader
+        if self.repository:
+            try:
+                self.repository.insert_event(event)
+            except Exception as exc:
+                logger.debug("Repository insert failed: %s", exc)
 
         # Add events to graph
         self.graph.add_from_event(event, parent_event=parent)
