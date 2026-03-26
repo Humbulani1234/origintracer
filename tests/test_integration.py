@@ -295,41 +295,43 @@ class TestDeploymentCorrelation:
 
 class TestHighCardinalityNormalization:
     """
-    Without normalization, 1000 different user IDs in URLs create 1000
-    graph nodes. With normalization, they collapse to one pattern node.
-    This test verifies the normalizer integrates correctly with the graph.
+    Verifies that the Engine scrubs high-cardinality names
+    before they ever reach the RuntimeGraph or the Tracker.
     """
 
-    def test_url_variants_collapse_to_single_node(self):
-        pytest.importorskip("stacktracer.core.graph_normalizer")
-        from stacktracer.core.graph_normalizer import (
-            GraphNormalizer,
-        )
-        from stacktracer.core.runtime_graph import RuntimeGraph
-
-        normalizer = GraphNormalizer(enable_builtins=True)
-        g = RuntimeGraph()
-        g.normalizer = normalizer
-
-        # 100 different user IDs in the URL
+    def test_engine_collapses_url_variants(self, engine):
+        # 1. Ingest 100 events with unique user IDs into the ENGINE
+        # We use the 'engine' fixture which is already bound
         for uid in range(100):
-            e = NormalizedEvent.now(
-                "function.call",
-                str(uuid.uuid4()),
-                "django",
-                f"/api/users/{uid}/orders/",
+            trace_id = str(uuid.uuid4())
+
+            # Create a raw event with a high-cardinality ID
+            raw_event = NormalizedEvent.now(
+                probe="uvicorn.request.receive",
+                trace_id=trace_id,
+                service="django",
+                name=f"/api/users/{uid}/orders/",
             )
-            g.add_from_event(e)
-        # All 100 should collapse to one normalized node
+
+            # The Engine should normalize this internally during ingest
+            engine.process(raw_event)
+
+        # 2. Check the Graph (via the engine.graph shortcut)
         django_nodes = [
-            nid for nid in g._nodes if nid.startswith("django::")
+            nid
+            for nid in engine.graph._nodes
+            if nid.startswith("django::")
         ]
-        assert len(django_nodes) == 1
+
+        # ASSERTIONS
+        # Even with 100 different UIDs, we should only have ONE node
         assert (
-            "{id}" in django_nodes[0]
-            or "{uuid}" in django_nodes[0]
-            or "id" in django_nodes[0]
-        )
+            len(django_nodes) == 1
+        ), f"Cardinality explosion! Found nodes: {django_nodes}"
+
+        # Verify the node was correctly transformed by the built-in rules
+        assert "{id}" in django_nodes[0]
+        assert "/0/" not in django_nodes[0]
 
 
 # ====================================================================== #

@@ -226,9 +226,6 @@ def _load_snapshots_on_startup() -> None:
     """
     if _repository is None:
         return
-    if not hasattr(_repository, "get_latest_snapshot"):
-        return
-
     # Known customers come from the API key map.
     # For multi-tenant production: iterate a customers table instead.
     customer_ids = set(_valid_api_keys.values())

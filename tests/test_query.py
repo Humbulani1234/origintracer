@@ -135,6 +135,43 @@ class TestQueryExecutor:
             r["service"] == "django" for r in result["data"]
         )
 
+    def test_show_latency_fails_on_unsupported_operator(
+        self, engine, trace_id
+    ):
+        engine.process(
+            evt(
+                service="django",
+                name="orders_view",
+                trace_id=trace_id,
+                duration_ns=5_000_000,
+            )
+        )
+
+        # Using '>' should fail since only '=' is supported
+        with pytest.raises(
+            ValueError, match="Unsupported operator"
+        ):
+            self._run(
+                'SHOW latency WHERE service > "django"', engine
+            )
+
+        # Using '<' should also fail
+        with pytest.raises(
+            ValueError, match="Unsupported operator"
+        ):
+            self._run(
+                'SHOW latency WHERE service < "django"', engine
+            )
+
+        # '=' still works
+        result = self._run(
+            'SHOW latency WHERE service = "django"', engine
+        )
+        assert "data" in result
+        assert any(
+            r["service"] == "django" for r in result["data"]
+        )
+
     def test_show_latency_excludes_other_services(
         self, engine, trace_id
     ):

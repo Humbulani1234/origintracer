@@ -138,11 +138,12 @@ class StackTracerASGIMiddleware:
     async def __call__(
         self, scope: dict, receive: Callable, send: Callable
     ) -> None:
+        if scope["type"] == "lifespan":
+            await self._handle_lifespan(scope, receive, send)
+            return
         if scope["type"] != "http":
-            # WebSocket and lifespan scopes pass through unmodified
             await self.app(scope, receive, send)
             return
-
         await self._handle_http(scope, receive, send)
 
     async def _handle_http(
@@ -253,6 +254,24 @@ class StackTracerASGIMiddleware:
                 )
             )
             reset_trace(token)
+
+    async def _handle_lifespan(
+        self, scope, receive, send
+    ) -> None:
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+
+            elif message["type"] == "lifespan.shutdown":
+                # flush uploader before process dies
+                import stacktracer
+
+                stacktracer.shutdown()
+                await send(
+                    {"type": "lifespan.shutdown.complete"}
+                )
+                return
 
 
 # ====================================================================== #

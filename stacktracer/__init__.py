@@ -13,6 +13,7 @@ Config merge order:
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import sys
@@ -801,6 +802,7 @@ def init(
         user_config_path or "defaults only",
         app_root,
     )
+    atexit.register(shutdown)
 
 
 # ====================================================================== #

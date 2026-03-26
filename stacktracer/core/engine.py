@@ -23,6 +23,8 @@ from .causal import (
     build_default_registry,
 )
 from .event_schema import NormalizedEvent
+from .graph_compactor import GraphCompactor
+from .graph_normalizer import GraphNormalizer
 from .runtime_graph import RuntimeGraph
 from .semantic import SemanticLayer
 from .temporal import TemporalStore
@@ -59,7 +61,15 @@ class Engine:
         self.temporal = TemporalStore(
             max_diffs=max_temporal_diffs
         )
-        self.tracker = ActiveRequestTracker()
+        self.tracker = (
+            ActiveRequestTracker()
+        )  # overwritten in init()
+        self.normalizer = (
+            GraphNormalizer()
+        )  # overwritten in init()
+        self.compactor = (
+            GraphCompactor()
+        )  # overwritten in init()
         self.causal = causal_registry or build_default_registry()
         self.semantic = semantic_layer or SemanticLayer()
 
@@ -118,6 +128,19 @@ class Engine:
                     event,
                     time.monotonic(),
                 )
+
+        # Normalise the events before adding to graph
+        name = event.name
+        event.name = self.normalizer.normalize(
+            event.service, name
+        )
+        if parent is not None:
+            parent_name = parent.name
+            parent.name = self.normalizer.normalize(
+                event.service, parent_name
+            )
+
+        # Add events to graph
         self.graph.add_from_event(event, parent_event=parent)
 
         # 3. Append to in-memory event log (bounded)
@@ -179,8 +202,7 @@ class Engine:
         Entry point for the DSL query layer.
         Delegates to query/executor.py.
         """
-        from ..query.executor import execute
-        from ..query.parser import parse
+        from ..query.parser import execute, parse
 
         parsed = parse(query_str)
         return execute(parsed, self)

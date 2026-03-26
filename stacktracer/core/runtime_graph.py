@@ -159,14 +159,7 @@ class RuntimeGraph:
         Translate one NormalizedEvent into graph mutations.
         If parent_event is provided, an edge is drawn from parent → this event.
         """
-        # Normalise name before it enters the graph
         name = event.name
-        if (
-            hasattr(self, "normalizer")
-            and self.normalizer is not None
-        ):
-            name = self.normalizer.normalize(event.service, name)
-
         node_id = self._node_id(event.service, name)
         node_type = (
             event.service
@@ -190,13 +183,6 @@ class RuntimeGraph:
 
         if parent_event:
             parent_name = parent_event.name
-            if (
-                hasattr(self, "normalizer")
-                and self.normalizer is not None
-            ):
-                parent_name = self.normalizer.normalize(
-                    parent_event.service, parent_name
-                )
             parent_id = self._node_id(
                 parent_event.service, parent_name
             )
