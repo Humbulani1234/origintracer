@@ -14,8 +14,8 @@ logger = logging.getLogger("stacktracer.uploader")
 
 class _UploaderEventBuffer:
     """
-    Thread-safe bounded FIFO buffer of event dicts.
-    Bounded at maxlen — oldest events are silently dropped when full.
+    A bounded FIFO buffer of event dicts.
+    Bounded at maxlen - oldest events are silently dropped when full.
     This is intentional: dropping old events under sustained overload
     is safer than growing memory without bound.
     """
@@ -39,9 +39,7 @@ class _UploaderEventBuffer:
         return len(self._q)
 
 
-# ====================================================================== #
-# Serialisation helpers
-# ====================================================================== #
+# --------------------- Serialisation helpers ---------------------
 
 
 def _serialize_events(payload: Dict) -> tuple:
@@ -197,9 +195,7 @@ class Uploader:
             self._snapshots_sent,
         )
 
-    # ------------------------------------------------------------------ #
-    # Background loop
-    # ------------------------------------------------------------------ #
+    # ---------------------- Background loop ------------------
 
     def _run(self) -> None:
         """

@@ -52,6 +52,11 @@ import textwrap
 import time
 import uuid
 
+try:
+    import readline
+except ImportError:
+    pass  # Windows - fine without it
+
 # Make sure the project root is on the path (harmless if already there)
 sys.path.insert(
     0,
@@ -735,11 +740,6 @@ def cmd_help() -> None:
     print()
 
 
-# ------------------------------------------------------------------ #
-# Main loop
-# ------------------------------------------------------------------ #
-
-
 def cmd_stitch(trace_id: str) -> None:
     """
     Query every live worker socket for the same trace_id and print
@@ -856,20 +856,17 @@ def cmd_stitch(trace_id: str) -> None:
     )
 
 
+# -------------------- Main loop ------------------------------
+
 HISTORY_FILE = os.path.expanduser("~/.stacktracer_history")
 
 
 def main():
     try:
-        import readline
-
-        try:
-            readline.read_history_file(HISTORY_FILE)
-        except FileNotFoundError:
-            pass
-        readline.set_history_length(200)
-    except ImportError:
-        pass  # Windows — fine without it
+        readline.read_history_file(HISTORY_FILE)
+    except FileNotFoundError:
+        pass
+    readline.set_history_length(200)
 
     print(
         c("\n  StackTracer REPL", BOLD, CYAN)
@@ -902,8 +899,6 @@ def main():
             continue
 
         try:
-            import readline
-
             readline.write_history_file(HISTORY_FILE)
         except Exception:
             pass
@@ -948,7 +943,7 @@ def main():
                 err(f"Unknown command: \\{cmd}  (try \\help)")
             continue
 
-        # ── DSL query — forwarded verbatim to the live engine ──────
+        # DSL query — forwarded to the live engine
         t0 = time.perf_counter()
         result = query(sock_path, raw)
         print(f"DEBUG raw: {result}")  # add this temporarily

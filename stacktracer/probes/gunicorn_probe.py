@@ -1,15 +1,7 @@
 """
-probes/gunicorn_probe.py  (revised — official hooks only, no class patching)
-
 Observes gunicorn using only its documented configuration callbacks.
 
-Previous approach:
-    Patched Arbiter.spawn_worker, Arbiter._kill_worker, Worker.init_process,
-    Worker.notify, SyncWorker.handle_request at the class level.
-    Risk: These are internal classes — method signatures and names can change
-    between gunicorn versions. Any gunicorn upgrade could silently break the probe.
-
-This approach:
+Approach:
     gunicorn has a documented server hooks system — callback functions you
     define in gunicorn.conf.py. These are the official, stable extension
     points for exactly this kind of observation. They are versioned public API.
@@ -28,12 +20,6 @@ This approach:
         We do NOT re-add handle_request patching here — TracerMiddleware
         is the correct observation point for request timing regardless
         of whether the worker is sync or async.
-
-    For worker heartbeat:
-        gunicorn workers write to a pipe to signal liveness to the master.
-        We can observe this via kprobe on sys_write filtered to gunicorn pids,
-        or we simply skip heartbeat tracing — it adds noise without insight.
-        The important events are spawn, init, and exit. Heartbeat is omitted.
 
 Integration with gunicorn.conf.py:
     The user adds one line to their gunicorn config:
@@ -69,8 +55,7 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from ..core.event_schema import NormalizedEvent, ProbeTypes
 from ..sdk.base_probe import BaseProbe
@@ -178,17 +163,15 @@ def _drain_pre_fork_events(engine) -> None:
     Feed events that were captured in the master process (before fork)
     into the worker's engine after AppConfig.ready() has run.
 
-    Why this works:
-        fork() copies the entire parent address space into the child.
-        _pre_fork_events is a module-level list — it is copied verbatim
-        into every worker. AppConfig.ready() creates a new engine in the
-        worker, but _pre_fork_events still holds the master events.
-        We feed them into the new engine here.
+    fork() copies the entire parent address space into the child.
+    _pre_fork_events is a module-level list - it is copied verbatim
+    into every worker. AppConfig.ready() creates a new engine in the
+    worker, but _pre_fork_events still holds the master events.
+    We feed them into the new engine here.
 
-    Why we clear after draining:
-        Every worker gets the same copy of _pre_fork_events. We only
-        want each worker to process them once. Clearing after drain
-        prevents double-processing if somehow this is called twice.
+    Every worker gets the same copy of _pre_fork_events. We only
+    want each worker to process them once. Clearing after drain
+    prevents double-processing if somehow this is called twice.
     """
     if not _pre_fork_events or engine is None:
         return
@@ -260,6 +243,7 @@ def st_worker_int(worker: Any) -> None:
     worker_class = type(worker).__name__
     trace_id = f"gunicorn-worker-{worker_pid}"
 
+    # TODO: blocks the app, find a better way
     emit_direct(
         NormalizedEvent.now(
             probe="gunicorn.worker.crash",

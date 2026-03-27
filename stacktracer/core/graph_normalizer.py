@@ -1,48 +1,3 @@
-"""
-core/graph_normalizer.py
-
-Normalizes node names before they enter the RuntimeGraph.
-
-The problem:
-    RuntimeGraph keys nodes by "service::name".
-    If `name` is high-cardinality (URL with user IDs, query text,
-    coroutine repr with memory addresses), the graph grows without bound.
-
-    /api/users/1234/profile   → one node per user
-    /api/users/5678/profile   → another node
-    ... 10,000 users = 10,000 nodes for what is structurally one endpoint
-
-This module normalizes names to their structural form before graph insertion.
-
-    /api/users/1234/profile   → /api/users/{id}/profile
-    /api/users/5678/profile   → /api/users/{id}/profile   (same node)
-
-The graph then has one node for the endpoint pattern, with call_count
-accumulating across all individual user requests. This is almost always
-what you want for causal reasoning — you care that "the user profile
-endpoint is slow", not that user 1234 specifically was slow.
-
-Usage:
-    Passed to RuntimeGraph at construction time:
-        from stacktracer.core.graph_normalizer import GraphNormalizer
-        normalizer = GraphNormalizer()
-        graph = RuntimeGraph(normalizer=normalizer)
-
-    RuntimeGraph calls normalizer.normalize(service, name) in add_from_event()
-    before constructing the node ID.
-
-Extending (user-facing):
-    Users add their own rules via:
-        normalizer.add_pattern(service="django", pattern=r"/api/items/(\\d+)/", replacement="/api/items/{id}/")
-        normalizer.add_rule(service="celery", fn=my_normalizer_fn)
-
-    Or in stacktracer.yaml:
-        normalize:
-          - service: django
-            pattern: "/api/items/(\\d+)/"
-            replacement: "/api/items/{id}/"
-"""
-
 from __future__ import annotations
 
 import logging
@@ -153,20 +108,46 @@ class GraphNormalizer:
         3. Global rules (service="*") registered by user
         4. Max-length truncation
 
-    After normalization, high-cardinality names collapse into
-    structural patterns:
+    Normalizes node names before they enter the RuntimeGraph.
 
-        Before: ("django", "/api/users/1234/profile")
-        After:  ("django", "/api/users/{id}/profile")
+    The problem:
+        RuntimeGraph keys nodes by "service::name".
+        If `name` is high-cardinality (URL with user IDs, query text,
+        coroutine repr with memory addresses), the graph grows without bound.
 
-        Before: ("asyncio", "coro at 0x7f3a2b4c1d0")
-        After:  ("asyncio", "coro")
+        /api/users/1234/profile   → one node per user
+        /api/users/5678/profile   → another node
+        ... 10,000 users = 10,000 nodes for what is structurally one endpoint
 
-        Before: ("postgres", "SELECT * FROM users WHERE id = 1234")
-        After:  ("postgres", "SELECT * FROM users WHERE id = ?")
+    This module normalizes names to their structural form before graph insertion.
 
-    Thread-safe: rules list is built at startup and never mutated
-    after first normalize() call in production.
+        /api/users/1234/profile   → /api/users/{id}/profile
+        /api/users/5678/profile   → /api/users/{id}/profile   (same node)
+
+    The graph then has one node for the endpoint pattern, with call_count
+    accumulating across all individual user requests. This is almost always
+    what you want for causal reasoning — you care that "the user profile
+    endpoint is slow", not that user 1234 specifically was slow.
+
+    Usage:
+        Passed to RuntimeGraph at construction time:
+            from stacktracer.core.graph_normalizer import GraphNormalizer
+            normalizer = GraphNormalizer()
+            graph = RuntimeGraph(normalizer=normalizer)
+
+        RuntimeGraph calls normalizer.normalize(service, name) in add_from_event()
+        before constructing the node ID.
+
+    Extending (user-facing):
+        Users add their own rules via:
+            normalizer.add_pattern(service="django", pattern=r"/api/items/(\\d+)/", replacement="/api/items/{id}/")
+            normalizer.add_rule(service="celery", fn=my_normalizer_fn)
+
+        Or in stacktracer.yaml:
+            normalize:
+            - service: django
+                pattern: "/api/items/(\\d+)/"
+                replacement: "/api/items/{id}/"
     """
 
     def __init__(

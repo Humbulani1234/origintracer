@@ -1,58 +1,3 @@
-"""
-core/graph_serializer.py
-
-Serializes and deserializes RuntimeGraph using protobuf or MessagePack.
-
-Two backends are provided:
-
-ProtobufSerializer
-    Uses the compiled stacktracer_pb2 module generated from stacktracer.proto.
-    Requires: pip install protobuf grpcio-tools
-    Compile first:
-        python -m grpc_tools.protoc \\
-            -I stacktracer/core \\
-            --python_out=stacktracer/core \\
-            stacktracer/core/stacktracer.proto
-
-    Smaller output, strictly typed, good for network transport.
-    Typical sizes: 5000-node graph ≈ 800KB protobuf vs 6MB JSON.
-
-MsgpackSerializer
-    Uses MessagePack — no schema, no compilation step needed.
-    Requires: pip install msgpack
-    Simpler to set up, slightly larger than protobuf, still 3-5x smaller than JSON.
-    Good first choice for local persistence before adding the protobuf compile step.
-
-Usage:
-    from stacktracer.core.graph_serializer import MsgpackSerializer
-
-    serializer = MsgpackSerializer()
-
-    # Save graph to file
-    with open("graph.msgpack", "wb") as f:
-        f.write(serializer.serialize(graph))
-
-    # Load graph from file
-    with open("graph.msgpack", "rb") as f:
-        restored_graph = serializer.deserialize(f.read())
-
-    # Or use protobuf
-    from stacktracer.core.graph_serializer import ProtobufSerializer
-    serializer = ProtobufSerializer()
-    data = serializer.serialize(graph)          # bytes
-    graph2 = serializer.deserialize(data)       # RuntimeGraph
-
-When to serialize:
-    1. Periodic checkpoint (every 5 min) — survive process restart
-    2. Before deployment — snapshot pre-deployment state for DIFF comparison
-    3. Remote backend upload — send graph to hosted StackTracer for team visibility
-    4. Debug export — share exact graph state with a colleague
-
-Loaded graphs are fully functional RuntimeGraph instances —
-all methods (neighbors, callers, causal rules, DSL queries) work identically
-on a deserialized graph as on a live one.
-"""
-
 from __future__ import annotations
 
 import json
@@ -185,6 +130,59 @@ def dict_to_graph(data: Dict) -> Any:
 
 
 class GraphSerializer(ABC):
+    """
+    Serializes and deserializes RuntimeGraph using protobuf or MessagePack.
+
+    Two backends are provided:
+
+    ProtobufSerializer
+        Uses the compiled stacktracer_pb2 module generated from stacktracer.proto.
+        Requires: pip install protobuf grpcio-tools
+        Compile first:
+            python -m grpc_tools.protoc \\
+                -I stacktracer/core \\
+                --python_out=stacktracer/core \\
+                stacktracer/core/stacktracer.proto
+
+        Smaller output, strictly typed, good for network transport.
+        Typical sizes: 5000-node graph ≈ 800KB protobuf vs 6MB JSON.
+
+    MsgpackSerializer
+        Uses MessagePack — no schema, no compilation step needed.
+        Requires: pip install msgpack
+        Simpler to set up, slightly larger than protobuf, still 3-5x smaller than JSON.
+        Good first choice for local persistence before adding the protobuf compile step.
+
+    Usage:
+        from stacktracer.core.graph_serializer import MsgpackSerializer
+
+        serializer = MsgpackSerializer()
+
+        # Save graph to file
+        with open("graph.msgpack", "wb") as f:
+            f.write(serializer.serialize(graph))
+
+        # Load graph from file
+        with open("graph.msgpack", "rb") as f:
+            restored_graph = serializer.deserialize(f.read())
+
+        # Or use protobuf
+        from stacktracer.core.graph_serializer import ProtobufSerializer
+        serializer = ProtobufSerializer()
+        data = serializer.serialize(graph)          # bytes
+        graph2 = serializer.deserialize(data)       # RuntimeGraph
+
+    When to serialize:
+        1. Periodic checkpoint (every 5 min) — survive process restart
+        2. Before deployment — snapshot pre-deployment state for DIFF comparison
+        3. Remote backend upload — send graph to hosted StackTracer for team visibility
+        4. Debug export — share exact graph state with a colleague
+
+    Loaded graphs are fully functional RuntimeGraph instances —
+    all methods (neighbors, callers, causal rules, DSL queries) work identically
+    on a deserialized graph as on a live one.
+    """
+
     @abstractmethod
     def serialize(self, graph: Any) -> bytes:
         """Serialize a RuntimeGraph to bytes."""

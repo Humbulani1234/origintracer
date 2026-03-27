@@ -16,6 +16,7 @@ import time
 from collections import deque
 from typing import List, Optional
 
+from ..core.engine import Engine
 from ..core.event_schema import NormalizedEvent
 
 logger = logging.getLogger("stacktracer.emitter")
@@ -102,7 +103,7 @@ class _DrainThread(threading.Thread):
 
 # --------------- Module-level state -------------------------
 
-_engine = None  # Set by bind_engine()
+_engine: Optional[Engine] = None  # Set by bind_engine()
 _buffer = _DrainEventBuffer()
 _direct_mode = (
     False  # True = emit directly into Engine (MVP default)
@@ -121,7 +122,7 @@ def enable_sync_mode():
     _SYNC_MODE = True
 
 
-def bind_engine(engine: object) -> None:
+def bind_engine(engine: Engine) -> None:
     global _engine, _drain_thread
 
     # 1. If a thread is already running, stop it first!
@@ -190,13 +191,13 @@ def emit(event: NormalizedEvent) -> None:
 
 def emit_direct(event: NormalizedEvent) -> None:
     """
-    Bypass buffer — process immediately. For lifecycle events.
+    Bypass buffer - process immediately. For lifecycle events.
 
     Use for gunicorn.worker.fork, celery.worker.fork, nginx.worker.discovered
     and any other topology event that must appear in the graph immediately
     at startup before the drain thread fires its first interval.
 
-    Never use for per-request events — those belong in the buffer.
+    And per-request events belong in the buffer.
     """
     import stacktracer
 

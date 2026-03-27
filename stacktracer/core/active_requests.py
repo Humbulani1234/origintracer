@@ -1,61 +1,3 @@
-"""
-core/active_requests.py
-
-Tracks in-flight requests in a bounded dict with TTL eviction.
-
-This is NOT a second graph. It is a 30-second window of active
-trace_ids that enables one thing the RuntimeGraph cannot do alone:
-compare current request latency against stored historical averages.
-
-Why not use the RuntimeGraph for this:
-    RuntimeGraph nodes store avg_duration_ns accumulated over all time.
-    That is the right structure for topology and causal rules.
-    But avg_duration_ns cannot tell you whether the CURRENT request
-    is anomalous — it reflects all past requests, not the live one.
-
-    To detect "this endpoint is 3x slower than normal right now",
-    you need to know both:
-        A. Historical average (from RuntimeGraph node.avg_duration_ns)
-        B. Current in-flight duration (from this tracker)
-
-What this tracks:
-    {trace_id: RequestSpan}
-    RequestSpan: service, pattern (normalized name), start_time, last_event
-
-Lifecycle:
-    start()   → called when a traced request enters (TracerMiddleware,
-                 Celery task_prerun, etc.)
-    event()   → called on every NormalizedEvent to update last_event
-    complete()→ called when request exits, returns RequestSpan with duration
-    TTL       → entries not completed within 30s are evicted automatically
-
-Memory:
-    One dict entry per in-flight request.
-    At 1000 req/s with 50ms P99 latency → ~50 entries at any moment.
-    At 1000 req/s with 5s P99 (slow system) → ~5000 entries.
-    Max cap of 10000 entries prevents unbounded growth under extreme load.
-    Eviction is FIFO when cap is hit — oldest entries go first.
-
-Integration with causal rules:
-    The _request_duration_anomaly rule (in causal.py) reads:
-        tracker.recent_completions(pattern, window_s=60)
-    and compares the completion durations against the RuntimeGraph
-    node's avg_duration_ns to detect live divergence.
-
-Usage:
-    tracker = ActiveRequestTracker()
-    # In TracerMiddleware / Celery probe:
-    tracker.start(trace_id="abc-123", service="django",
-                  pattern="/api/users/{id}/")
-    # In Engine.ingest():
-    tracker.event(trace_id="abc-123", probe="django.db.query")
-    # In TracerMiddleware exit / task_postrun:
-    span = tracker.complete(trace_id="abc-123")
-    if span:
-        duration_ms = span.duration_ms
-        # Compare against graph node avg for anomaly detection
-"""
-
 from __future__ import annotations
 
 import collections
@@ -102,10 +44,59 @@ class RequestSpan:
 
 class ActiveRequestTracker:
     """
-    Bounded in-flight request tracker with TTL eviction.
+    Tracks in-flight requests in a bounded dict with TTL eviction.
 
-    Thread-safe. All operations are O(1) except eviction which is O(n)
-    but runs in a background thread every 5 seconds, not on the hot path.
+    This is NOT a second graph. It is a 30-second window of active
+    trace_ids that enables one thing the RuntimeGraph cannot do alone:
+    compare current request latency against stored historical averages.
+
+    Why not use the RuntimeGraph for this:
+        RuntimeGraph nodes store avg_duration_ns accumulated over all time.
+        That is the right structure for topology and causal rules.
+        But avg_duration_ns cannot tell you whether the CURRENT request
+        is anomalous — it reflects all past requests, not the live one.
+
+        To detect "this endpoint is 3x slower than normal right now",
+        you need to know both:
+            A. Historical average (from RuntimeGraph node.avg_duration_ns)
+            B. Current in-flight duration (from this tracker)
+
+    What this tracks:
+        {trace_id: RequestSpan}
+        RequestSpan: service, pattern (normalized name), start_time, last_event
+
+    Lifecycle:
+        start()   → called when a traced request enters (TracerMiddleware,
+                    Celery task_prerun, etc.)
+        event()   → called on every NormalizedEvent to update last_event
+        complete()→ called when request exits, returns RequestSpan with duration
+        TTL       → entries not completed within 30s are evicted automatically
+
+    Memory:
+        One dict entry per in-flight request.
+        At 1000 req/s with 50ms P99 latency → ~50 entries at any moment.
+        At 1000 req/s with 5s P99 (slow system) → ~5000 entries.
+        Max cap of 10000 entries prevents unbounded growth under extreme load.
+        Eviction is FIFO when cap is hit — oldest entries go first.
+
+    Integration with causal rules:
+        The _request_duration_anomaly rule (in causal.py) reads:
+            tracker.recent_completions(pattern, window_s=60)
+        and compares the completion durations against the RuntimeGraph
+        node's avg_duration_ns to detect live divergence.
+
+    Usage:
+        tracker = ActiveRequestTracker()
+        # In TracerMiddleware / Celery probe:
+        tracker.start(trace_id="abc-123", service="django",
+                    pattern="/api/users/{id}/")
+        # In Engine.ingest():
+        tracker.event(trace_id="abc-123", probe="django.db.query")
+        # In TracerMiddleware exit / task_postrun:
+        span = tracker.complete(trace_id="abc-123")
+        if span:
+            duration_ms = span.duration_ms
+            # Compare against graph node avg for anomaly detection
     """
 
     def __init__(

@@ -1,5 +1,4 @@
 """
-django_burst_ultimate.py
 Complete benchmark suite for StackTracer.
 Requires the /__tracer__/stats/ view to be active in Django.
 """
@@ -17,10 +16,10 @@ from urllib.request import Request, urlopen
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_WAVES = 6
 DEFAULT_BURST_SIZE = 100
-DEFAULT_WORKERS = 15  # Balanced for t3.small
+DEFAULT_WORKERS = 15
 DEFAULT_QUIET_S = 5.0
 
-# ── Data Retrieval (The Fix) ─────────────────────────────────────────────────
+# Data Retrieval
 
 
 def _get_live_engine_stats(base_url: str) -> dict:
@@ -37,9 +36,6 @@ def _get_live_engine_stats(base_url: str) -> dict:
         return {"error": str(exc)}
 
 
-# ── Your Original Reporting Logic (Restored) ─────────────────────────────────
-
-
 def _print_engine_health(
     label: str, stats: dict, prev_dropped: int = 0
 ) -> int:
@@ -52,7 +48,7 @@ def _print_engine_health(
 
     dropped_total = stats.get("buf_dropped", 0)
     dropped_delta = dropped_total - prev_dropped
-    health = "✓" if dropped_delta == 0 else "⚠️  DROPPED"
+    health = "OK" if dropped_delta == 0 else "DROPPED"
 
     print(
         f"    [{label}] "
@@ -69,7 +65,7 @@ def _print_engine_health(
             f"    [{label}] total dropped={dropped_total} — drain is lagging"
         )
 
-    # Patterns Summary (Your original bar chart logic)
+    # Patterns Summary
     patterns = stats.get("patterns_summary", {})
     if patterns:
         top = sorted(
@@ -88,7 +84,7 @@ def _print_engine_health(
     return dropped_total
 
 
-# ── HTTP burst logic ─────────────────────────────────────────────────────────
+# HTTP burst logic
 
 
 def build_pool(base: str) -> list:
@@ -161,7 +157,7 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
     }
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -------------------- Main ----------------------------------------
 
 
 def main():
@@ -250,9 +246,9 @@ def main():
 
     # Final Summary
     final_stats = _get_live_engine_stats(args.url)
-    print("\n   ══════════════════════════════")
+    print("\n   ________________________________")
     print("   Run complete")
-    print("   ══════════════════════════════")
+    print("   _________________________________")
     if final_stats and "error" not in final_stats:
         print(f"   Total Requests: {total_requests:,}")
         print(
