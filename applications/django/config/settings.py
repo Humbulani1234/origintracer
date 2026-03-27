@@ -15,10 +15,14 @@ SECRET_KEY = os.environ.get(
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
+STACKTRACER_OTEL_MODE = (
+    False  # True = OTel bridge, False = native probes
+)
+
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
-    "django_tracer",
+    "django_tracer.apps.WorkerConfig",
 ]
 
 MIDDLEWARE = [
@@ -51,9 +55,6 @@ TEMPLATES = [
 
 STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-STACKTRACER_OTEL_MODE = (
-    False  # True = OTel bridge, False = native probes
-)
 
 # ── StackTracer ──────────────────────────────────────────────────────
 # Initialise StackTracer once at settings import time.

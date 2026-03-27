@@ -207,7 +207,6 @@ class Uploader:
         Checks whether each flush interval has elapsed on every wake.
         """
         while self._running:
-            print(">>>WE DO REACH HERE")
             time.sleep(1)  # wake every second to check intervals
 
             now = time.time()

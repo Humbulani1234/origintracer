@@ -188,6 +188,44 @@ def emit(event: NormalizedEvent) -> None:
             )
 
 
+def emit_direct(event: NormalizedEvent) -> None:
+    """
+    Bypass buffer — process immediately. For lifecycle events.
+
+    Use for gunicorn.worker.fork, celery.worker.fork, nginx.worker.discovered
+    and any other topology event that must appear in the graph immediately
+    at startup before the drain thread fires its first interval.
+
+    Never use for per-request events — those belong in the buffer.
+    """
+    import stacktracer
+
+    engine = (
+        stacktracer.get_engine()
+    )  # always reads current live engine
+    if engine is not None:
+        engine.process(event)
+
+
+def _restart_drain_thread() -> None:
+    """
+    Restart the drain thread after os.fork().
+
+    Threads do not survive fork — the child process has the parent's
+    buffer but no running drain thread. Call this in post_fork hooks
+    (gunicorn st_post_fork, celery worker_process_init) before any
+    emit() calls so the buffer drains correctly in the worker.
+    """
+    global _drain_thread
+    if (
+        _drain_thread is not None
+        and not _drain_thread.is_alive()
+    ):
+        _drain_thread = _DrainThread(_buffer, interval_s=0.05)
+        _drain_thread.start()
+        logger.info("emitter: drain thread restarted after fork")
+
+
 def flush() -> None:
     """Drain buffer into engine (used in non-direct mode)."""
     if _engine is None or _direct_mode:

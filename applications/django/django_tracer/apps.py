@@ -6,7 +6,7 @@ from django.conf import settings
 
 
 class WorkerConfig(AppConfig):
-    name = "worker"
+    name = "django_tracer"
 
     def ready(self):
         # 1. Guard: Only run in the worker process, skip the reloader parent
