@@ -18,9 +18,8 @@ The engine is open source. Deeper knowledge — traced book chapters and the rul
 
 ## How it works
 
-Every probe in the system observes one framework or layer. When something happens — a Django view executes, an asyncio task steps, the kernel returns I/O events from epoll — the probe emits a `NormalizedEvent` through `emit()`. The engine receives it, updates the runtime graph, appends it to the event log, and checks it against the temporal store. Nothing else. Probes never touch the engine. The engine never touches probes.
-
-**How it is extensible:** probes only call `emit()`. The engine only receives `NormalizedEvent`. Neither side knows about the other's internals. Swap the engine, mock it for tests, or run it remotely — probes are unaffected.
+Every probe in the system observes one framework or layer. When something happens — a Django view executes, an asyncio task steps, the kernel returns I/O events from epoll — the probe emits a `NormalizedEvent` through `emit()`. The engine receives it, updates the runtime graph, appends it to the event log, and checks it against the temporal store. Nothing else. Probes never touch the engine, and the engine never touches probes - that's the decoupling between the
+user application and engine.
 
 ---
 
@@ -35,7 +34,7 @@ pip install -e /path/to/stack-tracer
 
 ---
 
-## Quick start — Django + gunicorn
+## Quick start — Django application
 
 **settings.py** — middleware must be first:
 
@@ -82,7 +81,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 
 ---
 
-## Quick start — Celery in applications
+## Quick start — Celery application
 
 Celery forks independently from gunicorn. Each process group gets its own engine.
 
@@ -158,7 +157,7 @@ For Windows users, **WSL2 (Windows Subsystem for Linux)** is a strict requiremen
 
 ll five observe real production stacks. Add them to `stacktracer.yaml`.
 
-### nginx - on the stacktracer website
+### nginx - on [stacktracer.io](https://stacktracer.io)
 
 Two modes, auto-selected at startup:
 
@@ -172,13 +171,13 @@ probes:
 
 ProbeTypes: `nginx.connection.accept`, `nginx.request.parse`, `nginx.request.route`, `nginx.recv`, `nginx.upstream.dispatch`, `nginx.epoll.tick`
 
-### gunicorn - on the stacktracer website
+### gunicorn - on [stacktracer.io](https://stacktracer.io)
 
 Patches `Arbiter.spawn_worker`, `Arbiter._kill_worker`, `Worker.init_process`, `Worker.notify`, and `SyncWorker.handle_request`. Observes worker process lifecycle in the master process and per-request handling in sync workers. For `UvicornWorker`, request handling is covered by the uvicorn probe.
 
 ProbeTypes: `gunicorn.worker.spawn`, `gunicorn.worker.init`, `gunicorn.worker.exit`, `gunicorn.request.handle`, `gunicorn.worker.heartbeat`
 
-### uvicorn - on the stacktracer website
+### uvicorn - on [stacktracer.io](https://stacktracer.io)
 
 Patches `run_asgi()` on both `H11Protocol` and `HttpToolsProtocol` — the two HTTP/1.1 backends uvicorn ships with. Captures the full ASGI lifecycle from parsed request to response sent. Reads `X-Request-ID` forwarded by nginx so nginx and uvicorn events share the same trace ID automatically.
 
@@ -189,22 +188,21 @@ proxy_set_header X-Request-ID $request_id;
 
 ProbeTypes: `uvicorn.request.receive`, `uvicorn.response.send`, `uvicorn.h11.cycle`, `uvicorn.httptools.cycle`
 
-### django
+### django - builtin
 
 `TracerMiddleware` wraps the full request lifecycle. Hooks into URL resolution and view dispatch via Django's internal signals. Works with both sync and async views.
 
 ProbeTypes: `django.middleware.enter`, `django.middleware.exit`, `django.url.resolve`, `django.view.enter`, `django.view.exit`
 
-### asyncio
+### asyncio - builtin
 
-Four layers applied in combination by Python version:
+Three layers applied in combination by Python version:
 
 | Layer | Mechanism | Python | What it observes |
 |---|---|---|---|
 | 1 | eBPF on `BaseEventLoop._run_once()` | All versions | `select()`/`epoll_wait()` duration, events returned by kernel, ready queue depth before and after |
-| 2 | `Task.__step` patch | 3.11 only | Per-coroutine step with coro name, `fut_waiter` state |
-| 3 | eBPF on `_asyncio.cpython-3XX.so` | 3.12+ Linux root | Per-step timing at C level |
-| 4 | `asyncio.create_task()` wrap | All versions | Task creation with coro name |
+| 2 | eBPF on `_asyncio.cpython-3XX.so` | 3.12+ Linux root | Per-step timing at C level |
+| 3 | `asyncio.create_task()` wrap | All versions | Task creation with coro name |
 
 Layer 1 is crucial. `_run_once()` is pure Python in all versions — only `Task` moved to C in 3.12. Layer 1 captures the exact line where the kernel returns I/O events:
 
@@ -216,8 +214,7 @@ The `asyncio.loop.select` event tells you how long `epoll_wait()` blocked and wh
 
 ProbeTypes: `asyncio.loop.select`, `asyncio.loop.run_once`, `asyncio.loop.tick`, `asyncio.task.create`
 
-
-### Adding your own probe
+---
 
 ## Extending with custom probes and rules
 
@@ -349,7 +346,7 @@ Unknown probe type strings are warned in debug logs but never rejected. The regi
 | Rule | Detects |
 |---|---|
 | `new_sync_call_after_deployment` | New call edges appearing after a deployment marker | 
-| `asyncio_loop_starvation` | asyncio tick nodes averaging > 10ms |
+| `asyncio_loop_starvation` on [stacktracer.io](https://stacktracer.io) | asyncio tick nodes averaging > 10ms |
 | `retry_amplification` | Task nodes with retry count > 3 |
 | `db_query_hotspot` | Single query node > 30% of all DB calls on the trace |
 | `n_plus_one` | Query call count ≥ 2× the view call count |
@@ -429,7 +426,7 @@ pre-commit run --all-files
 ```
 ---
 
-## OTel Bridge Mode (optional)
+## OTel Bridge Mode - optional
 
 StackTracer can run in OpenTelemetry bridge mode instead of native probe mode.
 In this mode OTel is the event source — StackTracer's own probes are disabled
@@ -484,27 +481,6 @@ STACKTRACER_OTEL_MODE = True
     → StackTracerSpanExporter          converts OTel spans → NormalizedEvents
     → engine.process(event)            same graph, same causal rules
 ```
-
-### traceparent propagation
-
-In OTel mode, W3C `traceparent` headers are propagated automatically by the
-OTel SDK. If you also have `TracerMiddleware` active, extract and share the
-trace_id so native events and OTel spans are correlated:
-
-```python
-# in TracerMiddleware.__call__() entry path
-from stacktracer.bridge.otel_bridge import extract_trace_id_from_traceparent
-
-traceparent = request.META.get("HTTP_TRACEPARENT", "")
-if traceparent:
-    trace_id = extract_trace_id_from_traceparent(traceparent)
-    if trace_id:
-        set_trace_id(trace_id)   # StackTracer uses the same trace_id as OTel
-```
-
-This means nginx → uvicorn → Django events and OTel spans all share one
-`trace_id` and the `\stitch` command reconstructs the full timeline.
-
 
 ### REPL usage in OTel mode
 
