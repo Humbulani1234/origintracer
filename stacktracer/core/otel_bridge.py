@@ -1,6 +1,4 @@
 """
-stacktracer/bridge/otel_bridge.py
-
 Makes StackTracer an optional OpenTelemetry SpanExporter.
 
 When this bridge is active, OTel is the source of truth for spans.
@@ -256,7 +254,7 @@ def span_to_event(span: "ReadableSpan") -> Optional[object]:
     )
 
 
-# ── StackTracerSpanExporter ───────────────────────────────────────────────────
+# StackTracerSpanExporter
 
 
 class StackTracerSpanExporter:
@@ -326,7 +324,7 @@ class StackTracerSpanExporter:
         return True
 
 
-# ── W3C traceparent extraction helper ────────────────────────────────────────
+# W3C traceparent extraction helper
 
 
 def extract_trace_id_from_traceparent(

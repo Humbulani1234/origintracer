@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """
-scripts/repl.py
-
 StackTracer REPL — connects to a running agent via Unix socket.
 
 Run from any terminal while gunicorn is running:

@@ -1,13 +1,3 @@
-"""
-core/temporal.py
-
-Stores graph snapshots as incremental diffs, NOT full copies.
-Supports:
-  - Time travel: "show me the graph at T"
-  - Change detection: "what new edges appeared after this deployment?"
-  - Deployment correlation: "what changed in the 60s after this commit?"
-"""
-
 from __future__ import annotations
 
 import time
@@ -54,7 +44,12 @@ class GraphDiff:
 
 class TemporalStore:
     """
-    Maintains a ring buffer of GraphDiffs.
+    Stores graph snapshots as incremental diffs, NOT full copies.
+
+    Supports:
+        - Time travel: "show me the graph at T"
+        - Change detection: "what new edges appeared after this deployment?"
+        - Deployment correlation: "what changed in the 60s after this commit?
 
     Usage
     -----

@@ -1,6 +1,4 @@
 """
-query/parser.py + query/executor.py
-
 A simple but graph-aware query DSL.
 
 Grammar:
@@ -216,21 +214,7 @@ def _parse_filters(tokens: List[str]) -> Dict[str, Any]:
     return filters
 
 
-"""
-query/executor.py
-
-Executes ParsedQuery objects against the live Engine.
-
-All built-in commands from local_server._evaluate() have been absorbed
-here. local_server._evaluate() is now a single line:
-
-    parsed = parse(query_str)
-    return {"ok": True, "data": execute(parsed, engine)}
-"""
-
-# ====================================================================== #
-# Entry point
-# ====================================================================== #
+# --------------------------- Executor entry point ---------------------
 
 
 def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:

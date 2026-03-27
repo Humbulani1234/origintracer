@@ -1,14 +1,12 @@
 """
-core/kprobe_bridge.py
-
 The correlation layer between kernel-level observations and Python trace context.
 
-The problem:
+Problem:
     kprobes fire inside the kernel. They know pid, tid, and kernel state.
     They do not know Python trace IDs, coroutine names, or Django view names.
     Python code knows all of those but nothing about what the kernel is doing.
 
-The solution — a shared BPF hash map:
+Solution - a shared BPF hash map:
     Python writes (pid, tid) → trace_id into a BPF hash map when a traced
     request starts. Every kprobe handler reads from the same map. If it finds
     an entry for the current (pid, tid), the kernel event is attributed to
@@ -23,7 +21,7 @@ The solution — a shared BPF hash map:
         key   = tid — unique per thread
         value = { trace_id: char[36], start_ns: u64, service: char[32] }
 
-Usage (Python side):
+Usage - Python side:
     from stacktracer.core.kprobe_bridge import KprobeBridge
 
     bridge = KprobeBridge()
@@ -63,11 +61,6 @@ Shared map approach:
     The epoll probe, TCP probe, and any other kprobe are compiled as
     part of the same BPF object so they share the map by name.
     This avoids map pinning complexity for the MVP.
-
-Thread safety:
-    BPF_HASH is safe for concurrent updates from multiple threads.
-    Each thread has a unique tid so there are no key collisions.
-    Python GIL means only one thread writes at a time anyway.
 
 Permissions:
     kprobes require CAP_BPF or root on Linux.

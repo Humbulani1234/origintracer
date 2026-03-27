@@ -1,6 +1,4 @@
 """
-backend/main.py
-
 FastAPI service — persistence, query, and UI surface for StackTracer.
 
 Surfaces:
@@ -118,17 +116,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*"
-    ],  # tighten in production with explicit origins
+    allow_origins=["*"],  # in production use explicit origins
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ====================================================================== #
-# State
-# ====================================================================== #
+# ------------------------- State --------------------------
 
 # One deserialised RuntimeGraph per customer.
 # This is the cache in front of st_snapshots in the database.
@@ -144,10 +138,7 @@ _repository: Optional[Any] = None
 # API key → customer_id mapping.
 _valid_api_keys: Dict[str, str] = {}
 
-
-# ====================================================================== #
-# Startup
-# ====================================================================== #
+# -------------------------- Startup -----------------------------
 
 
 def _load_api_keys() -> None:
@@ -288,9 +279,7 @@ def _authenticate(authorization: Optional[str]) -> str:
     return customer_id
 
 
-# ====================================================================== #
-# Graph helpers
-# ====================================================================== #
+# ----------------------- Graph helpers ------------------------
 
 
 def get_graph(customer_id: str) -> Optional[Any]:
