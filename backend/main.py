@@ -457,6 +457,8 @@ async def ingest_events(
         raise HTTPException(status_code=400, detail="Empty body")
 
     content_type = request.headers.get("content-type", "")
+    import pdb
+
     try:
         if "msgpack" in content_type:
             import msgpack

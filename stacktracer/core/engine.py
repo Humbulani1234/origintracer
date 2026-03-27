@@ -292,11 +292,8 @@ class Engine:
             try:
                 self.snapshot()
                 self._evict_stale_traces()
-                if (
-                    hasattr(self, "compactor")
-                    and self.compactor is not None
-                ):
-                    self.compactor.compact(self.graph)
+                # Run graph compaction
+                self.compactor.compact(self.graph)
             except Exception as exc:
                 logger.warning(
                     "Snapshot/compact failed: %s", exc
@@ -310,8 +307,6 @@ class Engine:
         Why this matters: every unique trace_id that ever passes through
         process() is inserted into this dict. Without eviction it grows
         forever — one entry per request for the lifetime of the process.
-        At 100 req/s that is 360,000 entries per hour, each holding a
-        reference to a NormalizedEvent object.
 
         Called from _snapshot_loop so it runs every snapshot_interval seconds
         (default 15s), which is well within the 60s TTL threshold.

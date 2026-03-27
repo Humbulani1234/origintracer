@@ -5,9 +5,18 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Dict, Iterator, List, Optional, Set
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Set,
+)
 
-from .event_schema import NormalizedEvent
+if TYPE_CHECKING:
+    from .event_schema import NormalizedEvent
 
 logger = logging.getLogger("core.runtime_graph")
 
@@ -77,10 +86,6 @@ class RuntimeGraph:
         )  # dedup key:edge
         self._lock = RLock()
         self.last_updated: float = time.time()
-
-    # ------------------------------------------------------------------ #
-    # Mutation
-    # ------------------------------------------------------------------ #
 
     def _node_id(self, service: str, name: str) -> str:
         return f"{service}::{name}"
@@ -272,10 +277,6 @@ class RuntimeGraph:
             return nid
         return None
 
-    # ------------------------------------------------------------------ #
-    # Queries
-    # ------------------------------------------------------------------ #
-
     def neighbors(self, node_id: str) -> List[GraphEdge]:
         """Downstream: what does this node call?"""
         with self._lock:
@@ -350,10 +351,6 @@ class RuntimeGraph:
     def all_edges(self) -> Iterator[GraphEdge]:
         with self._lock:
             yield from self._edge_index.values()
-
-    # ------------------------------------------------------------------ #
-    # Snapshot (for temporal diff and storage)
-    # ------------------------------------------------------------------ #
 
     def snapshot(self) -> Dict[str, Any]:
         """Return a serialisable point-in-time copy."""

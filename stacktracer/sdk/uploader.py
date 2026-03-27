@@ -82,11 +82,6 @@ def _serialize_graph(graph: Any) -> tuple:
         )
 
 
-# ====================================================================== #
-# Uploader
-# ====================================================================== #
-
-
 class Uploader:
     """
     Ships probe events and graph snapshots to the StackTracer backend.
@@ -100,10 +95,7 @@ class Uploader:
         uploader.bind_engine(engine)      # must be called after start()
         engine.repository = uploader      # Engine calls insert_event() per event
 
-    Thread model:
-        One daemon thread runs _run() which calls both flush methods
-        on independent time schedules. The application thread only ever
-        calls insert_event() → _event_buffer.push() which is ~0.5µs.
+
     """
 
     def __init__(
@@ -250,8 +242,6 @@ class Uploader:
 
         try:
             body, content_type = _serialize_events(payload)
-            print(">>>>I RUN TOO alsooo", body)
-            print(f"MY END POINT{self._endpoint}/api/v1/events")
             response = httpx.post(
                 f"{self._endpoint}/api/v1/events",
                 content=body,
@@ -261,7 +251,6 @@ class Uploader:
                 },
                 timeout=10.0,
             )
-            print(">>>>MY REPONSE", response)
             if response.status_code == 200:
                 self._events_sent_total += len(batch)
                 logger.debug(
@@ -298,31 +287,25 @@ class Uploader:
 
     def _flush_snapshot(self) -> None:
         """
-        Serialize the current RuntimeGraph and upload it to the backend.
+         Serialize the current RuntimeGraph and upload it to the backend.
 
-        This method runs on the uploader thread and is responsible for:
-        1. Serializing the in-memory graph into a compact binary format
-        2. Sending a full snapshot to the backend
-        3. Optionally sending the latest incremental diff
+         This method runs on the uploader thread and is responsible for:
+         1. Serializing the in-memory graph into a compact binary format
+         2. Sending a full snapshot to the backend
+         3. Optionally sending the latest incremental diff
 
-        Concurrency model:
-        - Serialization acquires the graph's RLock only for the duration
-            of the read, keeping contention minimal.
-        - Work is intentionally off the application thread to avoid
-            impacting request latency.
 
-        Network behavior:
-        - Snapshot uploads are relatively large (~MB scale) and use a longer timeout.
-        - Diff uploads are lightweight and use a shorter timeout.
 
-        Failure handling:
-        - Serialization failures abort the entire operation.
-        - Snapshot and diff uploads are tracked independently.
-        - All errors are logged at debug/warning level; no exceptions escape.
+        .
 
-        Backend contract:
-        - POST /api/v1/graph/snapshot → full graph replacement
-        - POST /api/v1/graph/diff     → incremental update
+         Failure handling:
+         - Serialization failures abort the entire operation.
+         - Snapshot and diff uploads are tracked independently.
+         - All errors are logged at debug/warning level; no exceptions escape.
+
+         Backend contract:
+         - POST /api/v1/graph/snapshot → full graph replacement
+         - POST /api/v1/graph/diff     → incremental update
         """
         if self._engine is None:
             logger.debug(
@@ -369,7 +352,7 @@ class Uploader:
                     snapshot_resp.status_code,
                     snapshot_resp.text[:200],
                 )
-                return  # ⛔ don’t send diff if snapshot failed
+                return  # don’t send diff if snapshot failed
 
         except httpx.TimeoutException as exc:
             self._failed_snap_sends += 1

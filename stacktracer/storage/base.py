@@ -8,8 +8,6 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 
-from clickhouse_driver import Client
-
 from stacktracer.core.event_schema import NormalizedEvent
 
 logger = logging.getLogger("stacktracer.storage")
@@ -32,7 +30,9 @@ class BaseRepository(ABC):
         since: Optional[float] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """Retrieve events matching filters, newest first."""
+        """
+        Retrieve events matching filters, newest first.
+        """
         ...
 
     @abstractmethod
@@ -47,7 +47,7 @@ class BaseRepository(ABC):
         """
         Persist a serialised RuntimeGraph snapshot.
         Called by FastAPI on every POST /api/v1/graph/snapshot.
-        Only the most recent snapshot per customer needs to be queryable —
+        Only the most recent snapshot per customer needs to be queryable -
         older ones can be overwritten or retained for audit.
         """
         ...
@@ -393,9 +393,7 @@ class PGEventRepository(BaseRepository):
             pass
 
 
-# ====================================================================== #
-# ClickHouse
-# ====================================================================== #
+# -------------------- ClickHouse ---------------------------
 
 _CH_EVENTS_DDL = """
 CREATE TABLE IF NOT EXISTS st_probe_events (
@@ -488,6 +486,8 @@ class ClickHouseRepository(BaseRepository):
         database: str = "stacktracer",
     ) -> None:
         try:
+            from clickhouse_driver import Client
+
             self._client = Client(
                 host=host, port=port, database=database
             )

@@ -82,18 +82,13 @@ class _DrainThread(threading.Thread):
         self._running = False
 
     def run(self) -> None:
-
-        # import pdb
-        # pdb.set_trace()
-
         while self._running:
-            # import pdb
-            # pdb.set_trace()
-
             try:
                 events = self._buffer.drain(max_batch=500)
-                # print(">>>MY EVENTS", events)
-                if events and _engine is not None:
+                if not events:
+                    time.sleep(0.001)  # Remove?
+                    continue
+                if _engine is not None:
                     for event in events:
                         try:
                             _engine.process(event)
@@ -103,7 +98,6 @@ class _DrainThread(threading.Thread):
                             )
             except Exception as exc:
                 logger.debug("drain: loop error: %s", exc)
-            time.sleep(self._interval)
 
 
 # --------------- Module-level state -------------------------

@@ -23,12 +23,7 @@ When to compact:
     Compaction runs on a background thread (called by Engine's snapshot loop)
     or can be triggered manually. It does NOT run on the hot path.
 
-Memory estimate:
-    GraphNode:   ~300 bytes per node (dataclass + dict overhead)
-    GraphEdge:   ~250 bytes per edge
-    5000 nodes + ~15000 edges ≈ 5.25 MB
-    50000 nodes + ~150000 edges ≈ 52 MB  ← before compaction
-    Compaction keeps this bounded at the configured ceiling.
+M
 
 Usage:
     compactor = GraphCompactor(max_nodes=5000, node_ttl_s=3600)
