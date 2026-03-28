@@ -85,7 +85,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 
 Celery forks independently from gunicorn. Each process group gets its own engine.
 
-**config/celery.py** — no `init()` here:
+**config/celery.py**
 
 ```python
 import os
@@ -144,9 +144,9 @@ For Windows users, **WSL2 (Windows Subsystem for Linux)** is a strict requiremen
 * **Nginx kprobes:** Kernel-level tracing and log-tailing triggers.
 * **Performance Stability:** High-concurrency benchmarking via Gunicorn/Uvicorn.
 
-### Quick Start on WSL2
+**Quick Start on WSL2**
 
-1. Ensure you are running **WSL2** (Ubuntu 22.04+ recommended).
+1. Ensure you are running **WSL2**.
 2. Install dependencies within the Linux terminal:
    ```bash
    pip install stacktracer
@@ -155,7 +155,7 @@ For Windows users, **WSL2 (Windows Subsystem for Linux)** is a strict requiremen
 
 ## Probe reference
 
-ll five observe real production stacks. Add them to `stacktracer.yaml`.
+These probes observe real production stacks. Add them to `stacktracer.yaml`.
 
 ### nginx - on [stacktracer.io](https://stacktracer.io)
 
@@ -201,10 +201,10 @@ Three layers applied in combination by Python version:
 | Layer | Mechanism | Python | What it observes |
 |---|---|---|---|
 | 1 | eBPF on `BaseEventLoop._run_once()` | All versions | `select()`/`epoll_wait()` duration, events returned by kernel, ready queue depth before and after |
-| 2 | eBPF on `_asyncio.cpython-3XX.so` | 3.12+ Linux root | Per-step timing at C level |
+| 2 | sys monitoring on `Task.__step()` | 3.12+ Python | Per-step timing |
 | 3 | `asyncio.create_task()` wrap | All versions | Task creation with coro name |
 
-Layer 1 is crucial. `_run_once()` is pure Python in all versions — only `Task` moved to C in 3.12. Layer 1 captures the exact line where the kernel returns I/O events:
+Layer 1 is crucial. `_run_once()` is Python in all versions.
 
 ```python
 event_list = self._selector.select(timeout)  # ← we intercept here
@@ -225,10 +225,10 @@ myapp/
 ├── stacktracer.yaml
 └── stacktracer/
     ├── probes/
-    │   ├── celery_types.py     ← register ProbeType constants here
-    │   └── celery_probe.py     ← auto-discovered (*_probe.py)
+    │   ├── celery_types.py     << register ProbeType constants here
+    │   └── celery_probe.py     << auto-discovered (*_probe.py)
     └── rules/
-        └── celery_rules.py     ← auto-discovered (*_rules.py)
+        └── celery_rules.py     << auto-discovered (*_rules.py)
 ```
 
 No YAML entry required for files in these directories following the naming convention.
@@ -481,22 +481,6 @@ STACKTRACER_OTEL_MODE = True
     → StackTracerSpanExporter          converts OTel spans → NormalizedEvents
     → engine.process(event)            same graph, same causal rules
 ```
-
-### REPL usage in OTel mode
-
-Identical to native probe mode. Once spans start flowing through
-`StackTracerSpanExporter`, the graph builds normally:
-
-```bash
-python -m stacktracer.scripts.repl
-
-› SHOW nodes
-› CAUSAL
-› DIFF SINCE deployment
-```
-
-The causal rules — loop starvation, N+1, retry amplification — evaluate
-against the same `RuntimeGraph` regardless of how events arrived.
 
 ---
 

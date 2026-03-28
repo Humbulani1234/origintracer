@@ -1,18 +1,3 @@
-"""
-core/semantic.py
-
-Maps human business concepts ("export system", "auth pipeline") to
-graph node IDs and service names.
-
-This layer is what makes queries human-legible.
-Instead of:  SHOW latency WHERE node = "django::flags_client.call_remote"
-You write:   SHOW latency WHERE system = "export"
-
-The mapping is built from:
-  1. Static registration (config files, code)
-  2. Interaction learning (future: watch what engineers search for)
-"""
-
 from __future__ import annotations
 
 import os
@@ -57,7 +42,16 @@ class SemanticAlias:
 
 class SemanticLayer:
     """
-    Registry of human→graph mappings.
+    Maps human business concepts ("export system", "auth pipeline") to
+    graph node IDs and service names.
+
+    This layer is what makes queries human-legible.
+    Instead of:  SHOW latency WHERE node = "django::flags_client.call_remote"
+    You write:   SHOW latency WHERE system = "export"
+
+    The mapping is built from:
+    1. Static registration (config files, code)
+    2. Interaction learning (future: watch what engineers search for)
 
     Usage
     -----

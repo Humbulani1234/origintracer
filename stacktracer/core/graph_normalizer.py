@@ -139,11 +139,8 @@ class GraphNormalizer:
         before constructing the node ID.
 
     Extending (user-facing):
-        Users add their own rules via:
-            normalizer.add_pattern(service="django", pattern=r"/api/items/(\\d+)/", replacement="/api/items/{id}/")
-            normalizer.add_rule(service="celery", fn=my_normalizer_fn)
 
-        Or in stacktracer.yaml:
+        In stacktracer.yaml:
             normalize:
             - service: django
                 pattern: "/api/items/(\\d+)/"
