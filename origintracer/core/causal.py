@@ -40,10 +40,6 @@ from origintracer.core.active_requests import (
 from .runtime_graph import RuntimeGraph
 from .temporal import TemporalStore
 
-# ====================================================================== #
-# Core types
-# ====================================================================== #
-
 
 @dataclass
 class CausalMatch:
@@ -78,11 +74,7 @@ class CausalRule:
     tags: List[str] = field(default_factory=list)
 
 
-# ====================================================================== #
 # Registry
-# ====================================================================== #
-
-
 class PatternRegistry:
     """
     Register causal rules and evaluate them over the live graph.
@@ -141,11 +133,6 @@ class PatternRegistry:
         return list(self._rules.keys())
 
 
-# ====================================================================== #
-# Helpers
-# ====================================================================== #
-
-
 def _is_db_node(node) -> bool:
     """
     True if this node is a database query.
@@ -167,9 +154,7 @@ def _is_gunicorn_worker(node) -> bool:
     )
 
 
-# ====================================================================== #
-# Rule 1 — Retry amplification
-# ====================================================================== #
+# ---------------- Retry amplification ------------------------
 
 
 def _retry_amplification(
@@ -208,10 +193,7 @@ RETRY_AMPLIFICATION = CausalRule(
     tags=["latency", "retry"],
 )
 
-
-# ====================================================================== #
-# Rule 2 — New synchronous call after deployment
-# ====================================================================== #
+# ------------- New synchronous call after deployment -----------
 
 
 def _new_sync_call_after_deployment(
@@ -249,10 +231,7 @@ NEW_SYNC_CALL = CausalRule(
     tags=["deployment", "latency", "async"],
 )
 
-
-# ====================================================================== #
-# Rule 3 — asyncio event loop starvation
-# ====================================================================== #
+# --------------------- asyncio event loop starvation -------------------
 
 
 def _asyncio_loop_starvation(
@@ -302,10 +281,7 @@ LOOP_STARVATION = CausalRule(
     tags=["asyncio", "latency", "blocking"],
 )
 
-
-# ====================================================================== #
-# Rule 4 — N+1 query detection
-# ====================================================================== #
+# ------------------------- N+1 query detection --------------------------
 
 
 def _n_plus_one_queries(
@@ -388,10 +364,7 @@ N_PLUS_ONE = CausalRule(
     tags=["db", "performance", "n+1"],
 )
 
-
-# ====================================================================== #
-# Rule 5 — Worker imbalance
-# ====================================================================== #
+# ----------------------- Worker imbalance ------------------------------
 
 
 def _worker_imbalance(
@@ -472,10 +445,7 @@ WORKER_IMBALANCE = CausalRule(
     tags=["gunicorn", "concurrency", "blocking"],
 )
 
-
-# ====================================================================== #
-# Rule 6 — DB query hotspot
-# ====================================================================== #
+# ---------------------- DB query hotspot --------------------------------
 
 
 def _db_query_hotspot(
@@ -535,10 +505,7 @@ DB_HOTSPOT = CausalRule(
     tags=["db", "performance"],
 )
 
-
-# ====================================================================== #
-# Rule 7 — Request duration anomaly  (requires ActiveRequestTracker)
-# ====================================================================== #
+# ---------------------- Request duration anomaly --------------------------
 
 
 def _request_duration_anomaly(
@@ -655,9 +622,7 @@ REQUEST_DURATION_ANOMALY = CausalRule(
 )
 
 
-# ====================================================================== #
 # Registry builder
-# ====================================================================== #
 
 
 def build_default_registry(tracker=None) -> PatternRegistry:
