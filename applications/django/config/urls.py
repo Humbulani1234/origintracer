@@ -1,10 +1,9 @@
 """config/urls.py"""
 
 # In your Django project's urls.py
+import stacktracer
 from django.http import JsonResponse
 from django.urls import include, path
-
-import stacktracer
 
 urlpatterns = [
     path("", include("django_tracer.urls")),

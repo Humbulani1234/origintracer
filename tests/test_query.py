@@ -24,7 +24,7 @@ from .conftest import evt
 class TestQueryParser:
 
     def _parse(self, query: str):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         return parse(query)
 
@@ -84,19 +84,19 @@ class TestQueryParser:
         assert "latency" in q.filters.get("tags", "")
 
     def test_empty_query_raises(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         with pytest.raises(ValueError, match="[Ee]mpty"):
             parse("")
 
     def test_unknown_verb_raises(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         with pytest.raises(ValueError, match="[Uu]nknown verb"):
             parse("DELETE everything")
 
     def test_whitespace_only_raises(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         with pytest.raises(ValueError):
             parse("   ")
@@ -110,7 +110,7 @@ class TestQueryParser:
 class TestQueryExecutor:
 
     def _run(self, query_str: str, engine):
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         return execute(parse(query_str), engine)
 

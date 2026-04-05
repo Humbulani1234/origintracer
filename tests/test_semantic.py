@@ -27,8 +27,8 @@ import tempfile
 
 import pytest
 
-from stacktracer.core.runtime_graph import RuntimeGraph
-from stacktracer.core.semantic import (
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.semantic import (
     SemanticAlias,
     SemanticLayer,
     load_from_dict,

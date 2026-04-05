@@ -12,12 +12,12 @@ import time
 
 import pytest
 
-from stacktracer.core.active_requests import (
+from origintracer.core.active_requests import (
     ActiveRequestTracker,
     RequestSpan,
 )
-from stacktracer.core.runtime_graph import RuntimeGraph
-from stacktracer.core.semantic import (
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.semantic import (
     SemanticAlias,
     SemanticLayer,
     load_from_dict,

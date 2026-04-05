@@ -14,7 +14,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
-from stacktracer.storage.base import InMemoryRepository
+from origintracer.storage.base import InMemoryRepository
 
 # ── Test client fixture ────────────────────────────────────────────────────
 
@@ -113,10 +113,10 @@ class TestGraphSnapshot:
 
     def _make_snapshot_bytes(self) -> bytes:
         """Build real msgpack snapshot bytes from a tiny RuntimeGraph."""
-        from stacktracer.core.graph_serializer import (
+        from origintracer.core.graph_serializer import (
             MsgpackSerializer,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node("django::view", "fn", "django")
@@ -198,10 +198,10 @@ class TestGraphQueries:
     async def load_snapshot(self, client):
         """Load a real snapshot before each test in this class."""
         pytest.importorskip("msgpack")
-        from stacktracer.core.graph_serializer import (
+        from origintracer.core.graph_serializer import (
             MsgpackSerializer,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for _ in range(5):
@@ -278,10 +278,10 @@ class TestStatus:
 
     async def test_status_with_snapshot(self, client):
         pytest.importorskip("msgpack")
-        from stacktracer.core.graph_serializer import (
+        from origintracer.core.graph_serializer import (
             MsgpackSerializer,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node("svc::fn", "fn", "svc")
@@ -342,10 +342,10 @@ AUTH = {"Authorization": "Bearer test-key-0000"}
 
 def _make_snapshot_bytes(node_count: int = 2) -> bytes:
     """Build minimal msgpack snapshot bytes."""
-    from stacktracer.core.graph_serializer import (
+    from origintracer.core.graph_serializer import (
         MsgpackSerializer,
     )
-    from stacktracer.core.runtime_graph import RuntimeGraph
+    from origintracer.core.runtime_graph import RuntimeGraph
 
     g = RuntimeGraph()
     g.upsert_node("django::view", "fn", "django")

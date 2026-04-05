@@ -34,13 +34,13 @@ import pytest
 
 @pytest.fixture
 def engine():
-    from stacktracer.core.causal import build_default_registry
-    from stacktracer.core.engine import Engine
-    from stacktracer.core.semantic import (
+    from origintracer.core.causal import build_default_registry
+    from origintracer.core.engine import Engine
+    from origintracer.core.semantic import (
         SemanticAlias,
         SemanticLayer,
     )
-    from stacktracer.sdk.emitter import bind_engine
+    from origintracer.sdk.emitter import bind_engine
 
     sem = SemanticLayer()
     sem.register(
@@ -73,7 +73,7 @@ def make_event(
     trace_id: str = "trace-1",
     **meta,
 ):
-    from stacktracer.core.event_schema import NormalizedEvent
+    from origintracer.core.event_schema import NormalizedEvent
 
     return NormalizedEvent.now(
         probe=probe,
@@ -92,7 +92,9 @@ def make_event(
 class TestNormalizedEvent:
 
     def test_creation(self):
-        from stacktracer.core.event_schema import NormalizedEvent
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+        )
 
         e = NormalizedEvent(
             probe="request.entry",
@@ -106,7 +108,9 @@ class TestNormalizedEvent:
         assert e.metadata == {}
 
     def test_factory_method(self):
-        from stacktracer.core.event_schema import NormalizedEvent
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+        )
 
         e = NormalizedEvent.now(
             "asyncio.loop.tick",
@@ -118,7 +122,9 @@ class TestNormalizedEvent:
         assert e.metadata["foo"] == "bar"
 
     def test_round_trip_serialisation(self):
-        from stacktracer.core.event_schema import NormalizedEvent
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+        )
 
         e = NormalizedEvent.now(
             "request.entry", "t1", "django", "/api", method="GET"
@@ -130,7 +136,9 @@ class TestNormalizedEvent:
         assert restored.span_id == e.span_id
 
     def test_repr(self):
-        from stacktracer.core.event_schema import NormalizedEvent
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+        )
 
         e = NormalizedEvent(
             probe="request.entry",
@@ -150,7 +158,7 @@ class TestNormalizedEvent:
 class TestRuntimeGraph:
 
     def test_upsert_node(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node("svc::fn", "function", "svc")
@@ -158,7 +166,7 @@ class TestRuntimeGraph:
         assert g._nodes["svc::fn"].call_count == 1
 
     def test_upsert_node_increments_count(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node(
@@ -172,7 +180,7 @@ class TestRuntimeGraph:
         assert n.total_duration_ns == 3000
 
     def test_avg_duration(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node(
@@ -184,7 +192,7 @@ class TestRuntimeGraph:
         assert g._nodes["svc::fn"].avg_duration_ns == 2000
 
     def test_add_edge_and_neighbors(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node("A", "function", "svc")
@@ -195,7 +203,7 @@ class TestRuntimeGraph:
         assert nbrs[0].target == "B"
 
     def test_callers(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node("A", "function", "svc")
@@ -206,7 +214,7 @@ class TestRuntimeGraph:
         assert callers[0].source == "A"
 
     def test_reachable_from(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for n in ["A", "B", "C", "D"]:
@@ -218,7 +226,7 @@ class TestRuntimeGraph:
         assert reachable == {"B", "C", "D"}
 
     def test_reachable_from_cycle_safe(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for n in ["A", "B"]:
@@ -231,7 +239,7 @@ class TestRuntimeGraph:
         )  # should terminate, not loop forever
 
     def test_snapshot_contains_node_and_edge_ids(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node("A", "fn", "svc")
@@ -242,7 +250,7 @@ class TestRuntimeGraph:
         assert any("A" in k for k in snap["edge_keys"])
 
     def test_add_from_event(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         e = make_event(
@@ -260,8 +268,8 @@ class TestRuntimeGraph:
 class TestTemporalStore:
 
     def test_capture_empty_diff(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         g = RuntimeGraph()
         t = TemporalStore()
@@ -269,8 +277,8 @@ class TestTemporalStore:
         assert diff.is_empty
 
     def test_capture_detects_new_node(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         g = RuntimeGraph()
         t = TemporalStore()
@@ -280,8 +288,8 @@ class TestTemporalStore:
         assert "A" in diff.added_node_ids
 
     def test_capture_detects_new_edge(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         g = RuntimeGraph()
         t = TemporalStore()
@@ -297,8 +305,8 @@ class TestTemporalStore:
     def test_new_edges_since(self):
         import time
 
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         g = RuntimeGraph()
         t = TemporalStore()
@@ -312,7 +320,7 @@ class TestTemporalStore:
         assert len(new) > 0
 
     def test_mark_event_and_label_diff(self):
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.temporal import TemporalStore
 
         t = TemporalStore()
         t.mark_event("deployment:v1.2")
@@ -329,15 +337,15 @@ class TestTemporalStore:
 class TestPatternRegistry:
 
     def test_register_and_match(self):
-        from stacktracer.core.active_requests import (
+        from origintracer.core.active_requests import (
             ActiveRequestTracker,
         )
-        from stacktracer.core.causal import (
+        from origintracer.core.causal import (
             CausalRule,
             PatternRegistry,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         def always_match(g, t, a):
             return True, {"evidence": "always"}
@@ -358,12 +366,12 @@ class TestPatternRegistry:
         assert matches[0].confidence == 0.9
 
     def test_rule_error_does_not_crash(self):
-        from stacktracer.core.causal import (
+        from origintracer.core.causal import (
             CausalRule,
             PatternRegistry,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         def broken_rule(g, t):
             raise RuntimeError("oops")
@@ -380,25 +388,24 @@ class TestPatternRegistry:
         assert matches[0].confidence == 0.0
 
     def test_loop_starvation_rule(self):
-        from stacktracer.core.causal import LOOP_STARVATION
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.causal import LOOP_STARVATION
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         g = RuntimeGraph()
         # Create a node that looks like a slow asyncio loop tick
         g.upsert_node(
-            "asyncio::asyncio.loop.tick",
+            "asyncio::loop.tick",
             "asyncio",
             "asyncio",
             duration_ns=50_000_000,
         )
         g.upsert_node(
-            "asyncio::asyncio.loop.tick",
+            "asyncio::loop.tick",
             "asyncio",
             "asyncio",
             duration_ns=50_000_000,
         )
-
         matched, evidence = LOOP_STARVATION.predicate(
             g, TemporalStore()
         )
@@ -413,8 +420,8 @@ class TestPatternRegistry:
 class TestSemanticLayer:
 
     def test_register_and_resolve(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.semantic import (
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.semantic import (
             SemanticAlias,
             SemanticLayer,
         )
@@ -440,8 +447,8 @@ class TestSemanticLayer:
         assert "django::other_fn" not in resolved
 
     def test_resolve_by_service(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.semantic import (
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.semantic import (
             SemanticAlias,
             SemanticLayer,
         )
@@ -469,8 +476,8 @@ class TestSemanticLayer:
         assert "django::view" not in resolved
 
     def test_missing_label_returns_empty(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.semantic import SemanticLayer
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.semantic import SemanticLayer
 
         layer = SemanticLayer()
         assert (
@@ -479,8 +486,8 @@ class TestSemanticLayer:
         )
 
     def test_regex_pattern(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.semantic import (
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.semantic import (
             SemanticAlias,
             SemanticLayer,
         )
@@ -612,7 +619,7 @@ class TestEngine:
 class TestQueryParser:
 
     def test_show_latency(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         q = parse('SHOW latency WHERE service = "django"')
         assert q.verb == "SHOW"
@@ -620,7 +627,7 @@ class TestQueryParser:
         assert q.filters["service"] == "django"
 
     def test_show_events_with_limit(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         q = parse(
             'SHOW events WHERE probe = "asyncio.task.block" LIMIT 50'
@@ -630,47 +637,47 @@ class TestQueryParser:
         assert q.limit == 50
 
     def test_trace_verb(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         q = parse("TRACE abc123def456")
         assert q.verb == "TRACE"
         assert q.filters["trace_id"] == "abc123def456"
 
     def test_blame_verb(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         q = parse('BLAME WHERE system = "export"')
         assert q.verb == "BLAME"
         assert q.filters["system"] == "export"
 
     def test_hotspot_with_n(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         q = parse("HOTSPOT TOP 20")
         assert q.verb == "HOTSPOT"
         assert q.limit == 20
 
     def test_diff_since_label(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         q = parse("DIFF SINCE deployment")
         assert q.verb == "DIFF"
         assert q.filters["since"] == "deployment"
 
     def test_causal_verb(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         q = parse("CAUSAL")
         assert q.verb == "CAUSAL"
 
     def test_unknown_verb_raises(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         with pytest.raises(ValueError, match="Unknown verb"):
             parse("DELETE everything")
 
     def test_empty_query_raises(self):
-        from stacktracer.query.parser import parse
+        from origintracer.query.parser import parse
 
         with pytest.raises(ValueError, match="Empty query"):
             parse("")
@@ -693,7 +700,7 @@ class TestQueryExecutor:
                 duration_ns=5_000_000,
             )
         )
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         result = execute(
             parse('SHOW latency WHERE service = "django"'),
@@ -714,20 +721,20 @@ class TestQueryExecutor:
                     trace_id=trace_id,
                 )
             )
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         result = execute(parse("HOTSPOT TOP 5"), engine)
         assert "data" in result
         assert len(result["data"]) <= 5
 
     def test_causal_executor(self, engine):
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         result = execute(parse("CAUSAL"), engine)
         assert "data" in result
 
     def test_blame_unknown_system(self, engine):
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         result = execute(
             parse('BLAME WHERE system = "nonexistent"'), engine
@@ -751,7 +758,7 @@ class TestQueryExecutor:
                 trace_id=trace_id,
             )
         )
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         result = execute(parse(f"TRACE {trace_id}"), engine)
         assert result["trace_id"] == trace_id
@@ -766,7 +773,7 @@ class TestQueryExecutor:
 class TestInMemoryRepository:
 
     def test_insert_and_query(self):
-        from stacktracer.storage.base import (
+        from origintracer.storage.base import (
             InMemoryRepository,
         )
 
@@ -780,7 +787,7 @@ class TestInMemoryRepository:
         assert results[0]["probe"] == "request.entry"
 
     def test_filter_by_probe(self):
-        from stacktracer.storage.base import (
+        from origintracer.storage.base import (
             InMemoryRepository,
         )
 
@@ -797,7 +804,7 @@ class TestInMemoryRepository:
         )
 
     def test_limit(self):
-        from stacktracer.storage.base import (
+        from origintracer.storage.base import (
             InMemoryRepository,
         )
 
@@ -810,7 +817,7 @@ class TestInMemoryRepository:
         assert len(results) == 5
 
     def test_maxlen_enforced(self):
-        from stacktracer.storage.base import (
+        from origintracer.storage.base import (
             InMemoryRepository,
         )
 
@@ -830,7 +837,9 @@ class TestInMemoryRepository:
 class TestAsyncioProbe:
 
     def test_start_stop_idempotent(self):
-        from stacktracer.probes.asyncio_probe import AsyncioProbe
+        from origintracer.probes.asyncio_probe import (
+            AsyncioProbe,
+        )
 
         probe = AsyncioProbe()
         probe.start()
@@ -844,11 +853,13 @@ class TestAsyncioProbe:
         self, engine, trace_id
     ):
         """Most important test: patching must not interfere with async execution."""
-        from stacktracer.context.vars import (
+        from origintracer.context.vars import (
             reset_trace,
             set_trace,
         )
-        from stacktracer.probes.asyncio_probe import AsyncioProbe
+        from origintracer.probes.asyncio_probe import (
+            AsyncioProbe,
+        )
 
         probe = AsyncioProbe()
         probe.start()

@@ -28,7 +28,7 @@ from .conftest import evt
 class TestRuntimeGraph:
 
     def setup_method(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         self.g = RuntimeGraph()
 
@@ -148,7 +148,9 @@ class TestRuntimeGraph:
         duration_ns ended up in metadata, add_from_event must still
         accumulate it via the metadata fallback path.
         """
-        from stacktracer.core.event_schema import NormalizedEvent
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+        )
 
         # Build event manually — bypass .now() to simulate old behaviour
         e = NormalizedEvent(
@@ -188,7 +190,9 @@ class TestRuntimeGraph:
         A gunicorn.worker.fork event must create a spawned edge from
         master → worker automatically via _add_structural_edges.
         """
-        from stacktracer.core.event_schema import NormalizedEvent
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+        )
 
         master_evt = NormalizedEvent.now(
             probe="gunicorn.master.start",
@@ -277,8 +281,8 @@ class TestRuntimeGraph:
 class TestTemporalStore:
 
     def setup_method(self):
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.temporal import TemporalStore
 
         self.store = TemporalStore()
         self.g = RuntimeGraph()
@@ -350,11 +354,11 @@ class TestTemporalStore:
 
     def test_ring_buffer_bounded(self):
         store = __import__(
-            "stacktracer.core.temporal",
+            "origintracer.core.temporal",
             fromlist=["TemporalStore"],
         ).TemporalStore(max_diffs=10)
         g = __import__(
-            "stacktracer.core.runtime_graph",
+            "origintracer.core.runtime_graph",
             fromlist=["RuntimeGraph"],
         ).RuntimeGraph()
         for _ in range(15):
@@ -370,7 +374,7 @@ class TestTemporalStore:
 class TestGraphNormalizer:
 
     def setup_method(self):
-        from stacktracer.core.graph_normalizer import (
+        from origintracer.core.graph_normalizer import (
             GraphNormalizer,
         )
 
@@ -441,7 +445,7 @@ class TestGraphNormalizer:
     def test_cardinality_guard(self):
         """After max_unique_names_per_service distinct names, overflow to sentinel."""
         n = __import__(
-            "stacktracer.core.graph_normalizer",
+            "origintracer.core.graph_normalizer",
             fromlist=["GraphNormalizer"],
         ).GraphNormalizer(
             enable_builtins=False, max_unique_names_per_service=5
@@ -466,7 +470,7 @@ class TestGraphCompactor:
     def _make_graph_with_nodes(
         self, count: int, cold: bool = False
     ):
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for i in range(count):
@@ -478,7 +482,7 @@ class TestGraphCompactor:
         return g
 
     def test_ttl_eviction_removes_cold_nodes(self):
-        from stacktracer.core.graph_compactor import (
+        from origintracer.core.graph_compactor import (
             GraphCompactor,
         )
 
@@ -493,10 +497,10 @@ class TestGraphCompactor:
 
     def test_ttl_eviction_spares_hot_nodes(self):
         """Nodes with call_count >= min_call_count must survive TTL eviction."""
-        from stacktracer.core.graph_compactor import (
+        from origintracer.core.graph_compactor import (
             GraphCompactor,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         # Hot node — called many times, but not seen recently
@@ -517,7 +521,7 @@ class TestGraphCompactor:
         assert "svc::cold" not in g._nodes
 
     def test_cap_eviction_when_over_limit(self):
-        from stacktracer.core.graph_compactor import (
+        from origintracer.core.graph_compactor import (
             GraphCompactor,
         )
 
@@ -540,10 +544,10 @@ class TestGraphCompactor:
         )  # Use "evicted_nodes" instead of "cap_evicted"
 
     def test_compact_runs_counter_increments(self):
-        from stacktracer.core.graph_compactor import (
+        from origintracer.core.graph_compactor import (
             GraphCompactor,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         c = GraphCompactor()

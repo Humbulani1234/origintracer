@@ -15,8 +15,8 @@ import time
 
 import pytest
 
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.sdk.uploader import (
+from origintracer.core.event_schema import NormalizedEvent
+from origintracer.sdk.uploader import (
     Uploader,
     _UploaderEventBuffer,
 )
@@ -96,18 +96,18 @@ class TestEmitter:
 
     def setup_method(self):
         # Reset emitter module state between tests
-        import stacktracer.sdk.emitter as em
+        import origintracer.sdk.emitter as em
 
         em._engine = None
 
     def test_emit_before_bind_is_silent(self):
-        from stacktracer.sdk.emitter import emit
+        from origintracer.sdk.emitter import emit
 
         # Must not raise
         emit(evt())
 
     def test_emit_after_bind_calls_engine_process(self):
-        from stacktracer.sdk.emitter import (
+        from origintracer.sdk.emitter import (
             bind_engine,
             emit,
             flush,
@@ -129,7 +129,7 @@ class TestEmitter:
         assert len(processed) == 1
 
     def test_bind_engine_twice_replaces_reference(self):
-        from stacktracer.sdk.emitter import (
+        from origintracer.sdk.emitter import (
             bind_engine,
             emit,
             flush,
@@ -162,7 +162,7 @@ class TestEmitter:
         assert len(calls_b) == 1
 
     def test_engine_exception_does_not_propagate(self):
-        from stacktracer.sdk.emitter import bind_engine, emit
+        from origintracer.sdk.emitter import bind_engine, emit
 
         class CrashingEngine:
             def process(self, e):
@@ -253,7 +253,7 @@ class TestUploaderHTTPFlush:
     ):
         import httpx
 
-        from stacktracer.sdk.uploader import Uploader
+        from origintracer.sdk.uploader import Uploader
 
         requests_made = []
 
@@ -284,8 +284,8 @@ class TestUploaderHTTPFlush:
     ):
         import httpx
 
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.sdk.uploader import Uploader
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.sdk.uploader import Uploader
 
         requests_made = []
 
@@ -325,7 +325,6 @@ class TestUploaderHTTPFlush:
 
         # This should now run without crashing
         u._flush_snapshot()
-
         assert any(
             "/api/v1/graph/snapshot" in url
             for url in requests_made
@@ -336,7 +335,7 @@ class TestUploaderHTTPFlush:
     ):
         import httpx
 
-        from stacktracer.sdk.uploader import Uploader
+        from origintracer.sdk.uploader import Uploader
 
         calls = []
         monkeypatch.setattr(
@@ -355,7 +354,7 @@ class TestUploaderHTTPFlush:
     ):
         import httpx
 
-        from stacktracer.sdk.uploader import Uploader
+        from origintracer.sdk.uploader import Uploader
 
         def mock_post(*a, **k):
             return httpx.Response(

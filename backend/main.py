@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from stacktracer.storage.base import InMemoryRepository
+from origintracer.storage.base import InMemoryRepository
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,11 +76,11 @@ class _BackendEngine:
     """
 
     def __init__(self, graph):
-        from stacktracer.core.causal import (
+        from origintracer.core.causal import (
             build_default_registry,
         )
-        from stacktracer.core.semantic import SemanticLayer
-        from stacktracer.core.temporal import TemporalStore
+        from origintracer.core.semantic import SemanticLayer
+        from origintracer.core.temporal import TemporalStore
 
         self.graph = graph
         self.semantic = SemanticLayer()
@@ -172,7 +172,7 @@ def _init_repository() -> None:
         try:
             import psycopg2
 
-            from stacktracer.storage.base import (
+            from origintracer.storage.base import (
                 PGEventRepository,
             )
 
@@ -190,7 +190,7 @@ def _init_repository() -> None:
 
     if ch_host:
         try:
-            from stacktracer.storage.base import (
+            from origintracer.storage.base import (
                 ClickHouseRepository,
             )
 
@@ -203,7 +203,7 @@ def _init_repository() -> None:
                 exc,
             )
 
-    from stacktracer.storage.base import InMemoryRepository
+    from origintracer.storage.base import InMemoryRepository
 
     _repository = InMemoryRepository()
     logger.info(
@@ -227,7 +227,7 @@ def _load_snapshots_on_startup() -> None:
             row = _repository.get_latest_snapshot(customer_id)
             if row is None:
                 continue
-            from stacktracer.core.graph_serializer import (
+            from origintracer.core.graph_serializer import (
                 MsgpackSerializer,
                 ProtobufSerializer,
             )
@@ -354,7 +354,7 @@ async def receive_snapshot(
         )
 
     try:
-        from stacktracer.core.graph_serializer import (
+        from origintracer.core.graph_serializer import (
             MsgpackSerializer,
             ProtobufSerializer,
         )
@@ -468,7 +468,7 @@ async def ingest_events(
             raw.setdefault("metadata", {})[
                 "customer_id"
             ] = customer_id
-            from stacktracer.core.event_schema import (
+            from origintracer.core.event_schema import (
                 NormalizedEvent,
             )
 
@@ -510,10 +510,10 @@ async def query(
     engine = _BackendEngine(graph)
 
     try:
-        from stacktracer.query.parser import (
+        from origintracer.query.parser import (
             execute as execute_query,
         )
-        from stacktracer.query.parser import (
+        from origintracer.query.parser import (
             parse as parse_query,
         )
 
@@ -535,8 +535,10 @@ async def get_graph_route(
     graph = require_graph(customer_id)
     engine = _BackendEngine(graph)
 
-    from stacktracer.query.parser import ParsedQuery
-    from stacktracer.query.parser import execute as execute_query
+    from origintracer.query.parser import ParsedQuery
+    from origintracer.query.parser import (
+        execute as execute_query,
+    )
 
     if system:
         q = ParsedQuery(
@@ -573,8 +575,8 @@ async def causal(
         [t.strip() for t in tags.split(",")] if tags else None
     )
 
-    from stacktracer.core.causal import build_default_registry
-    from stacktracer.core.temporal import TemporalStore
+    from origintracer.core.causal import build_default_registry
+    from origintracer.core.temporal import TemporalStore
 
     # No tracker — backend has no live requests.
     # build_default_registry(tracker=None) registers the anomaly rule
@@ -631,10 +633,10 @@ async def diff(
     graph = require_graph(customer_id)
     engine = _BackendEngine(graph)
 
-    from stacktracer.query.parser import (
+    from origintracer.query.parser import (
         ParsedQuery,
     )
-    from stacktracer.query.parser import (
+    from origintracer.query.parser import (
         execute as execute_query,
     )
 

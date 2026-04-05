@@ -373,8 +373,8 @@ class TestEngineCompactorIntegration:
         """
         import threading
 
-        from stacktracer.core.engine import Engine
-        from stacktracer.core.graph_compactor import (
+        from origintracer.core.engine import Engine
+        from origintracer.core.graph_compactor import (
             GraphCompactor,
         )
 
@@ -423,7 +423,7 @@ class TestEngineCompactorIntegration:
         Verifies the fix for the unbounded dict growth bug:
         at 100 req/s without eviction the dict accumulates 360k entries/hour.
         """
-        from stacktracer.core.engine import Engine
+        from origintracer.core.engine import Engine
 
         engine = Engine(snapshot_interval_s=9999)
         engine._trace_ttl_s = 0.05  # 50ms TTL so the test does not need to sleep long

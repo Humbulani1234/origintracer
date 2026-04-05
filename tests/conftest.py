@@ -17,16 +17,18 @@ import uuid
 
 import pytest
 
-from stacktracer.core.active_requests import ActiveRequestTracker
-from stacktracer.core.causal import build_default_registry
-from stacktracer.core.engine import Engine
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.core.semantic import (
+from origintracer.core.active_requests import (
+    ActiveRequestTracker,
+)
+from origintracer.core.causal import build_default_registry
+from origintracer.core.engine import Engine
+from origintracer.core.event_schema import NormalizedEvent
+from origintracer.core.semantic import (
     SemanticAlias,
     SemanticLayer,
 )
-from stacktracer.sdk.emitter import bind_engine, unbind_engine
-from stacktracer.storage.base import InMemoryRepository
+from origintracer.sdk.emitter import bind_engine, unbind_engine
+from origintracer.storage.base import InMemoryRepository
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

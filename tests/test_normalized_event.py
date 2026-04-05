@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from stacktracer.core.event_schema import NormalizedEvent
+from origintracer.core.event_schema import NormalizedEvent
 
 # ====================================================================== #
 # Direct construction

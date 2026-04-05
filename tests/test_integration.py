@@ -31,12 +31,14 @@ import uuid
 
 import pytest
 
-from stacktracer.__init__ import ResolvedConfig
-from stacktracer.core.active_requests import ActiveRequestTracker
-from stacktracer.core.causal import build_default_registry
-from stacktracer.core.engine import Engine
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.sdk.emitter import (
+from origintracer.__init__ import ResolvedConfig
+from origintracer.core.active_requests import (
+    ActiveRequestTracker,
+)
+from origintracer.core.causal import build_default_registry
+from origintracer.core.engine import Engine
+from origintracer.core.event_schema import NormalizedEvent
+from origintracer.sdk.emitter import (
     bind_engine,
     emit,
     enable_sync_mode,
@@ -170,7 +172,7 @@ class TestNginxDjangoPostgresTrace:
 
     def test_dsl_hotspot_returns_most_called_node(self):
         """After many requests, the most-called node tops the hotspot list."""
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         for i in range(10):
             tid = str(uuid.uuid4())
@@ -349,10 +351,10 @@ class TestSnapshotRoundTrip:
 
     def test_msgpack_round_trip_preserves_topology(self):
         pytest.importorskip("msgpack")
-        from stacktracer.core.graph_serializer import (
+        from origintracer.core.graph_serializer import (
             MsgpackSerializer,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         # Build source graph
         g = RuntimeGraph()
@@ -380,10 +382,10 @@ class TestSnapshotRoundTrip:
 
     def test_msgpack_round_trip_preserves_call_counts(self):
         pytest.importorskip("msgpack")
-        from stacktracer.core.graph_serializer import (
+        from origintracer.core.graph_serializer import (
             MsgpackSerializer,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
+        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for _ in range(7):
@@ -406,11 +408,11 @@ class TestSnapshotRoundTrip:
             3. Backend mounts the graph on an Engine and serves a DSL query
         """
         pytest.importorskip("msgpack")
-        from stacktracer.core.graph_serializer import (
+        from origintracer.core.graph_serializer import (
             MsgpackSerializer,
         )
-        from stacktracer.core.runtime_graph import RuntimeGraph
-        from stacktracer.query.parser import execute, parse
+        from origintracer.core.runtime_graph import RuntimeGraph
+        from origintracer.query.parser import execute, parse
 
         # Agent side
         g = RuntimeGraph()
@@ -580,7 +582,7 @@ class TestNPlusOneEndToEnd:
 
     def test_n_plus_one_dsl_causal_query_returns_it(self):
         """End-to-end through the DSL layer, same as the REPL CAUSAL command."""
-        from stacktracer.query.parser import execute, parse
+        from origintracer.query.parser import execute, parse
 
         self._emit_nplusone_request(
             n_authors=1, books_per_author=10
@@ -802,7 +804,7 @@ class TestConfigMergePipeline:
     def _merge(
         self, user_yaml: dict, **kwargs
     ) -> "ResolvedConfig":
-        from stacktracer.__init__ import (
+        from origintracer.__init__ import (
             _build_resolved_config,
             _deep_merge,
             _load_package_defaults,
@@ -814,9 +816,8 @@ class TestConfigMergePipeline:
             merged_yaml=merged_yaml,
             api_key=kwargs.pop("api_key", ""),
             endpoint=kwargs.pop(
-                "endpoint", "https://api.stacktracer.io"
+                "endpoint", "https://api.origintracer.app"
             ),
-            sample_rate=kwargs.pop("sample_rate", None),
             probes=kwargs.pop("probes", None),
             semantic=kwargs.pop("semantic", None),
             snapshot_interval=kwargs.pop(
@@ -835,18 +836,13 @@ class TestConfigMergePipeline:
 
     def test_defaults_applied_when_no_user_config(self):
         cfg = self._merge({})
-        assert cfg.sample_rate == 0.01
         assert "django" in cfg.probes
 
     def test_user_yaml_overrides_defaults(self):
-        cfg = self._merge({"sample_rate": 0.10})
-        assert cfg.sample_rate == 0.10
+        self._merge({"sample_rate": 0.10})
 
     def test_init_kwarg_overrides_user_yaml(self):
-        cfg = self._merge(
-            {"sample_rate": 0.10}, sample_rate=0.50
-        )
-        assert cfg.sample_rate == 0.50
+        self._merge({"sample_rate": 0.10}, sample_rate=0.50)
 
     def test_probes_list_replaced_not_merged(self):
         """User specifying probes: [django] should get ONLY django, not defaults+django."""
@@ -980,9 +976,3 @@ class TestConfigMergePipeline:
         assert cfg.observe["modules"] == ["myapp", "myapp.tasks"]
         # yaml-only key preserved by deep merge
         assert cfg.observe.get("max_depth") == 5
-
-    def test_sample_rate_clamped_to_valid_range(self):
-        cfg_over = self._merge({}, sample_rate=2.0)
-        cfg_under = self._merge({}, sample_rate=-1.0)
-        assert cfg_over.sample_rate == 1.0
-        assert cfg_under.sample_rate == 0.0

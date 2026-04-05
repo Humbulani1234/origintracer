@@ -46,7 +46,6 @@ class WorkerConfig(AppConfig):
         from opentelemetry.sdk.trace.export import (
             BatchSpanProcessor,
         )
-
         from stacktracer.bridge.otel_bridge import (
             StackTracerSpanExporter,
         )

@@ -10,7 +10,7 @@ import os
 import django
 from django.core.asgi import get_asgi_application
 
-from stacktracer.probes.uvicorn_probe import (
+from origintracer.probes.uvicorn_probe import (
     StackTracerASGIMiddleware,
 )
 

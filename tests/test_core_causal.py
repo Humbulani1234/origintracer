@@ -23,8 +23,10 @@ import time
 
 import pytest
 
-from stacktracer.core.active_requests import ActiveRequestTracker
-from stacktracer.core.causal import (
+from origintracer.core.active_requests import (
+    ActiveRequestTracker,
+)
+from origintracer.core.causal import (
     DB_HOTSPOT,
     LOOP_STARVATION,
     N_PLUS_ONE,
@@ -35,8 +37,8 @@ from stacktracer.core.causal import (
     PatternRegistry,
     build_default_registry,
 )
-from stacktracer.core.runtime_graph import RuntimeGraph
-from stacktracer.core.temporal import TemporalStore
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.temporal import TemporalStore
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -640,7 +642,7 @@ class TestRequestDurationAnomaly:
         return tracker
 
     def test_fires_when_p99_exceeds_3x_avg(self):
-        from stacktracer.core.causal import (
+        from origintracer.core.causal import (
             REQUEST_DURATION_ANOMALY,
         )
 
@@ -667,7 +669,7 @@ class TestRequestDurationAnomaly:
         )
 
     def test_silent_when_latency_within_normal_range(self):
-        from stacktracer.core.causal import (
+        from origintracer.core.causal import (
             REQUEST_DURATION_ANOMALY,
         )
 
@@ -690,7 +692,7 @@ class TestRequestDurationAnomaly:
 
     def test_silent_when_tracker_is_none(self):
         """Anomaly rule with tracker=None must never crash."""
-        from stacktracer.core.causal import (
+        from origintracer.core.causal import (
             REQUEST_DURATION_ANOMALY,
         )
 

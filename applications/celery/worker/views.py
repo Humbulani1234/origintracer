@@ -30,7 +30,6 @@ import json
 from django.http import JsonResponse
 from django.views import View
 from probes.redis_probe import TracedRedis
-
 from stacktracer.context.vars import get_trace_id
 from stacktracer.core.event_schema import NormalizedEvent
 from stacktracer.probes.celery_probe import dispatch

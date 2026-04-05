@@ -25,7 +25,7 @@ import time
 
 import pytest
 
-from stacktracer.storage.base import (
+from origintracer.storage.base import (
     BaseRepository,
     InMemoryRepository,
 )
@@ -235,14 +235,14 @@ class TestEventRepositoryPostgres:
     def pg_repo(self):
         import psycopg2
 
-        from stacktracer.storage.base import (
-            EventRepository,
+        from origintracer.storage.base import (
+            PGEventRepository,
         )
 
         conn = psycopg2.connect(
             os.environ["STACKTRACER_TEST_DB_DSN"]
         )
-        repo = EventRepository(conn)
+        repo = PGEventRepository(conn)
         yield repo
         # Cleanup test data
         with conn.cursor() as cur:
