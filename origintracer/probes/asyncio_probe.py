@@ -419,23 +419,13 @@ class AsyncioProbe(BaseProbe):
         self, observe_modules: Optional[List[str]] = None
     ) -> None:
         global _originals, _patched, _original_step
-
-        major, minor = sys.version_info[:2]
-        if (major, minor) not in SUPPORTED_PYTHONS:
-            logger.warning(
-                "asyncio probe: unsupported Python %d.%d",
-                major,
-                minor,
-            )
-            return
-
         if _patched:
             logger.warning(
-                "asyncio probe already installed — skipping"
+                "asyncio probe already installed - skipping"
             )
             return
 
-        # ── Layer 1: epoll kprobe ──────────────────────────────────────
+        # Layer 1: epoll kprobe
         bridge = get_bridge()
         if bridge.available and sys.platform == "linux":
             self._epoll_kprobe = _EpollKprobe(bridge)
@@ -446,24 +436,12 @@ class AsyncioProbe(BaseProbe):
             logger.info(
                 "asyncio probe: epoll kprobe unavailable "
                 "(platform=%s, bridge=%s). "
-                "Coroutine-level tracing still active via sys.monitoring.",
+                "Coroutine-level tracing still active.",
                 sys.platform,
                 bridge.available,
             )
 
-        # ── Layer 2: coroutine observation ─────────────────────────────
-        # if minor >= 12:
-        #     _setup_monitoring_312()
-        # else:
-        #     _setup_setprofile_311()
-
-        # ── Layer 2: Task.__step patch (3.9–3.11 only; 3.12 uses __step_run_and_handle_result) ──
-        # if minor <= 11:
-        #     step_attr = "__step"
-        # else:
-        #     step_attr = "__step_run_and_handle_result"  # renamed in 3.12
-
-        # Try modern attribute first
+        # Layer 2: coroutine observation
         step = getattr(asyncio.Task, "_step", None)
 
         if step is None:
@@ -479,9 +457,8 @@ class AsyncioProbe(BaseProbe):
             return _patched_step(self, exc)
 
         asyncio.Task._step = wrapper
-        _patched = True
 
-        # ── Layer 3: create_task ───────────────────────────────────────
+        # Layer 3: create_task
         _originals["create_task"] = asyncio.create_task
         asyncio.create_task = _make_create_task_wrapper(
             asyncio.create_task
@@ -495,30 +472,14 @@ class AsyncioProbe(BaseProbe):
         if not _patched:
             return
 
-        major, minor = sys.version_info[:2]
-        # Restore Task.__step / __step_run_and_handle_result
-        for attr in ("__step", "__step_run_and_handle_result"):
-            if attr in _originals:
-                setattr(
-                    asyncio.tasks.Task,
-                    attr,
-                    _originals.pop(attr),
-                )
-
         if _original_step:
             asyncio.Task._step = _original_step
 
-        _patched = False
         _original_step = None
 
         if self._epoll_kprobe:
             self._epoll_kprobe.stop()
             self._epoll_kprobe = None
-
-        # if minor >= 12:
-        #     _teardown_monitoring_312()
-        # else:
-        #     _teardown_setprofile_311()
 
         if "create_task" in _originals:
             asyncio.create_task = _originals.pop("create_task")
