@@ -405,9 +405,7 @@ def _make_create_task_wrapper(original: Callable) -> Callable:
 
 class AsyncioProbe(BaseProbe):
     """
-    Observes the asyncio event loop without patching Task.__step.
-
-
+    Observes the asyncio event loop.
     """
 
     name = "asyncio"

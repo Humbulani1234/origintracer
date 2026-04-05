@@ -39,7 +39,7 @@ include = ["origintracer*"]
 [tool.setuptools.package-data]
 origintracer = ["config/*.yaml"]   # ship defaults.yaml inside the package
 
-# ── black config ──────────────────────────────────────────────────────────────
+# black config
 [tool.black]
 line-length = 100
 target-version = ["py311", "py312"]
@@ -54,7 +54,7 @@ exclude = '''
 )/
 '''
 
-# ── ruff config ───────────────────────────────────────────────────────────────
+# ruff config
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -71,7 +71,7 @@ ignore = [
     "F401", # unused import — too noisy during active development
 ]
 
-# ── pytest config ─────────────────────────────────────────────────────────────
+# pytest config
 [tool.pytest.ini_options]
 testpaths = ["tests/"]
 asyncio_mode = "auto"
