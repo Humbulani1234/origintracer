@@ -1,9 +1,9 @@
 """
 Minimal usage, most settings come from defaults:
 
-    import stacktracer
-    stacktracer.init(api_key="test-key-123")
-    MIDDLEWARE = ["stacktracer.probes.django_probe.TracerMiddleware", ...]
+    import origintracer
+    origintracer.init(api_key="test-key-123")
+    MIDDLEWARE = ["origintracer.probes.django_probe.TracerMiddleware", ...]
 
 Config merge order:
     1. Package defaults — stacktracer/config/defaults.yaml
@@ -23,48 +23,45 @@ import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
+import yaml
+
 from .context.vars import get_trace_id  # noqa: F401
+from .core.engine import Engine  # noqa: F401
 from .core.event_schema import NormalizedEvent  # noqa: F401
-from .sdk.base_probe import ProbeRegistry
+from .sdk.base_probe import BaseProbe, ProbeRegistry
 from .sdk.emitter import emit  # noqa: F401
+from .sdk.uploader import Uploader  # noqa: F401
 
 logger = logging.getLogger("origintracer")
 
-
-# ====================================================================== #
-# Package-level singletons — one per process
-# ====================================================================== #
-
+# Package-level variables — one per process
 _config: Optional["ResolvedConfig"] = None
-_engine: Optional[Any] = None
-_active_probes: List[Any] = []
-_uploader: Optional[Any] = None
+_engine: Optional[Engine] = None
+_active_probes: List[BaseProbe] = []
+_uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
 
 
 def _register_post_init_callback(fn: Callable) -> None:
-    """Register a function to call once after init() completes."""
+    """
+    Register a function to call once after init() completes.
+    """
     if _engine is not None:
         fn()
     else:
         _post_init_callbacks.append(fn)
 
 
-# ====================================================================== #
-# Step 1 — Raw config loading and merging
-# ====================================================================== #
+# ----------- Step 1 — Raw config loading and merging ---------------
 
 
 def _load_package_defaults() -> Dict[str, Any]:
     """
     Load the package-shipped defaults.yaml.
-    Lives at origintracer/config/defaults.yaml — never edited by users.
-    If missing (broken install) returns empty dict and logs a loud warning.
-    All values the system needs must be in defaults.yaml — nothing is
-    hardcoded in Python anymore.
+    Lives at origintracer/config/defaults.yaml.
+    If missing (broken install) returns empty dict and logs a warning.
+    All values the system needs must be in defaults.yaml.
     """
-    import yaml
-
     defaults_path = os.path.join(
         os.path.dirname(__file__), "config", "defaults.yaml"
     )
@@ -92,8 +89,8 @@ def _find_user_config(
 
     Search order:
         1. explicit_path if provided
-        2. STACKTRACER_CONFIG environment variable
-        3. Walk up from cwd looking for stacktracer.yaml (max 5 levels)
+        2. ORIGINTRACER_CONFIG environment variable
+        3. Walk up from cwd looking for origintracer.yaml (max 5 levels)
     """
     if explicit_path:
         if os.path.exists(explicit_path):
@@ -109,7 +106,7 @@ def _find_user_config(
 
     current = os.getcwd()
     for _ in range(5):
-        candidate = os.path.join(current, "stacktracer.yaml")
+        candidate = os.path.join(current, "origintracer.yaml")
         if os.path.exists(candidate):
             return candidate
         parent = os.path.dirname(current)
@@ -121,7 +118,9 @@ def _find_user_config(
 
 
 def _load_user_config(path: Optional[str]) -> Dict[str, Any]:
-    """Load user yaml if found, otherwise empty dict."""
+    """
+    Load user yaml if found, otherwise empty dict.
+    """
     if path is None:
         return {}
     try:
@@ -161,9 +160,6 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
                 user_yaml=val,
                 init_kwarg=[],
             )
-
-        # Inside _deep_merge in stacktracer/__init__.py
-
         elif (
             key == "normalize"
             and key in result
@@ -174,7 +170,7 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
             if not val:
                 result[key] = []
             else:
-                # Otherwise, we keep the user's rules as the "New Base"
+                # Otherwise, we keep the user's rules as the New Base
                 result[key] = val
         else:
             result[key] = val
@@ -213,16 +209,14 @@ def _extend_normalize(
     return base
 
 
-# ====================================================================== #
-# Step 2 — ResolvedConfig
-# ====================================================================== #
+# ----------------- Step 2 — ResolvedConfig ----------------------------
 
 
 @dataclass
 class ResolvedConfig:
     """
     Fully resolved configuration after merging defaults.yaml,
-    user stacktracer.yaml, and init() kwargs.
+    user origintracer.yaml, and init() kwargs.
     Built once in init() and stored as _config.
     """
 
@@ -276,12 +270,8 @@ def _build_resolved_config(
 ) -> ResolvedConfig:
     """
     Apply init() kwargs as the final override layer on top of merged yaml.
-    merged_yaml = _deep_merge(defaults.yaml, user stacktracer.yaml).
+    merged_yaml = _deep_merge(defaults.yaml, user origintracer.yaml).
     """
-
-    # import pdb
-    # pdb.set_trace()
-
     resolved_semantic = _merge_semantic(
         defaults=merged_yaml.get("semantic", []),
         user_yaml=[],  # already in merged_yaml
@@ -435,9 +425,9 @@ def _init_probes(
        Side-effect: each module registers its BaseProbe subclass with ProbeRegistry.
        No hardcoded list here — defaults.yaml owns it.
 
-    2. Discover user probes from <app_root>/stacktracer/probes/*_probe.py.
+    2. Discover user probes from <app_root>/origintracer/probes/*_probe.py.
 
-    3. Start probes named in cfg.probes (user stacktracer.yaml takes precedence
+    3. Start probes named in cfg.probes (user origintracer.yaml takes precedence
        over defaults.yaml probes list via _deep_merge).
     """
     # Builtin modules from defaults.yaml — no hardcoded list
@@ -476,7 +466,7 @@ def _init_probes(
 
 def _app_root_from_config(config_path: Optional[str]) -> str:
     """
-    App root = parent directory of stacktracer.yaml, or cwd if no config found.
+    App root = parent directory of origintracer.yaml, or cwd if no config found.
     User probes and rules are discovered relative to this directory.
     """
     if config_path and os.path.isfile(config_path):
@@ -486,7 +476,7 @@ def _app_root_from_config(config_path: Optional[str]) -> str:
 
 def _discover_user_probes(app_root: str) -> None:
     """
-    Auto-discover *_probe.py files from <app_root>/stacktracer/probes/.
+    Auto-discover *_probe.py files from <app_root>/origintracer/probes/.
     Importing registers the BaseProbe subclass with ProbeRegistry as a
     side-effect of class definition.
     """
@@ -498,12 +488,10 @@ def _discover_user_probes(app_root: str) -> None:
         return
 
     for fname in sorted(os.listdir(probes_dir)):
-        if not fname.endswith("_probe.py") or fname.startswith(
-            "__"
-        ):
+        if not fname.endswith("_probe.py"):
             continue
         full_path = os.path.join(probes_dir, fname)
-        module_name = f"_stacktracer_user_probe_{fname[:-3]}"
+        module_name = f"_origintracer_user_probe_{fname[:-3]}"
         try:
             spec = importlib.util.spec_from_file_location(
                 module_name, full_path
@@ -523,20 +511,18 @@ def _discover_user_probes(app_root: str) -> None:
 
 def _discover_user_rules(registry: Any, app_root: str) -> None:
     """
-    Auto-discover *_rules.py files from <app_root>/stacktracer/rules/.
+    Auto-discover *_rules.py files from <app_root>/origintracer/rules/.
     Each file must expose register(registry) which adds CausalRule instances.
     """
     import importlib.util
     import traceback
 
-    rules_dir = os.path.join(app_root, "stacktracer", "rules")
+    rules_dir = os.path.join(app_root, "origintracer", "rules")
     if not os.path.isdir(rules_dir):
         return
 
     for fname in sorted(os.listdir(rules_dir)):
-        if not fname.endswith("_rules.py") or fname.startswith(
-            "__"
-        ):
+        if not fname.endswith("_rules.py"):
             continue
         full_path = os.path.join(rules_dir, fname)
         module_name = f"_stacktracer_user_rule_{fname[:-3]}"
@@ -619,11 +605,7 @@ def _init_uploader(
         return None
 
 
-# ====================================================================== #
 # Public init()
-# ====================================================================== #
-
-
 def init(
     api_key: str = "test-key-123",
     endpoint: str = "http://localhost:8000",
@@ -641,33 +623,33 @@ def init(
     otel_mode: bool = False,
 ) -> None:
     """
-    Initialise StackTracer.
+    Initialise OriginTracer.
 
     Config merge order (last wins):
-        1. stacktracer/config/defaults.yaml   — package defaults, never edited
-        2. stacktracer.yaml                   — user app config, takes precedence
-        3. init() kwargs                      — highest priority
+        1. origintracer/config/defaults.yaml - package defaults, never edited
+        2. origintracer.yaml - user app config, takes precedence
+        3. init() kwargs - highest priority
 
     Minimal usage:
-        stacktracer.init()   # all defaults from defaults.yaml apply
+        origintracer.init()   # all defaults from defaults.yaml apply
 
     Typical usage in apps.py:
-        stacktracer.init(
-            config  = str(BASE_DIR / "stacktracer.yaml"),
+        origintracer.init(
+            config  = str(BASE_DIR / "origintracer.yaml"),
             debug   = True,
         )
 
-         Parameters
+    Parameters
     ----------
     api_key
         API key for remote upload to StackTracer backend.
         Omit or pass "" to run in local-only mode (no upload).
 
     endpoint
-        Backend URL. Default: https://api.stacktracer.io
+        Backend URL. Default: https://origintracer.app
 
     config
-        Explicit path to user stacktracer.yaml.
+        Explicit path to user origintracer.yaml.
         If omitted, searched automatically from cwd upward (max 5 levels).
 
     probes
@@ -686,11 +668,11 @@ def init(
         Seconds between uploader event batch flushes. Default: 10
 
     debug
-        If True, enables StackTracer even when DJANGO_DEBUG=True.
+        If True, enables OriginTracer even when DJANGO_DEBUG=True.
         Default: False (auto-disables in Django debug environments)
 
     repository
-        Pre-built storage backend (EventRepository, ClickHouseRepository).
+        Pre-built storage backend (PGEventRepository, ClickHouseRepository).
         Overrides the remote uploader as the event sink.
 
     normalize
@@ -709,14 +691,14 @@ def init(
     """
     global _config, _engine, _active_probes
 
-    # ── 1. Load and merge ─────────────────────────────────────────────
+    # 1. Load and merge
     package_defaults = _load_package_defaults()
     user_config_path = _find_user_config(config)
     user_yaml = _load_user_config(user_config_path)
     merged_yaml = _deep_merge(package_defaults, user_yaml)
     app_root = _app_root_from_config(user_config_path)
 
-    # ── 2. Build ResolvedConfig ───────────────────────────────────────
+    # 2. Build ResolvedConfig
     _config = _build_resolved_config(
         merged_yaml=merged_yaml,
         api_key=api_key,
@@ -734,10 +716,10 @@ def init(
     )
 
     if not _config.enabled:
-        logger.info("StackTracer disabled — not initialising")
+        logger.info("OriginTracer disabled — not initialising")
         return
 
-    # ── 3. Initialise components ──────────────────────────────────────
+    # 3. Initialise components
     normalizer = _init_normalizer(_config)
     compactor_ = _init_compactor(_config)
     semantic_layer = _init_semantic(_config)
@@ -773,7 +755,7 @@ def init(
             logger.warning("post-init callback failed: %s", exc)
     _post_init_callbacks.clear()
     logger.info(
-        "StackTracer ready | probes=%s config=%s app_root=%s",
+        "OriginTracer ready | probes=%s config=%s app_root=%s",
         [p.name for p in _active_probes],
         user_config_path or "defaults only",
         app_root,
@@ -781,26 +763,16 @@ def init(
     atexit.register(shutdown)
 
 
-# ====================================================================== #
-# Public accessors
-# ====================================================================== #
-
-
 def get_config() -> "ResolvedConfig":
     if _config is None:
         raise RuntimeError(
-            "stacktracer.init() has not been called"
+            "origintracer.init() has not been called"
         )
     return _config
 
 
 def get_engine() -> Any:
     return _engine
-
-
-# ====================================================================== #
-# Shutdown
-# ====================================================================== #
 
 
 def shutdown() -> None:
@@ -827,105 +799,7 @@ def shutdown() -> None:
         _engine = None
 
     _config = None
-    logger.info("StackTracer shut down")
-
-
-# ====================================================================== #
-# Decorators and helpers
-# ====================================================================== #
-
-
-def trace(name: Optional[str] = None):
-    """
-    Decorator for explicit function-level tracing.
-
-        @stacktracer.trace("my_expensive_function")
-        async def my_fn(): ...
-    """
-    import functools
-
-    def decorator(fn: Any) -> Any:
-        fn_name = name or fn.__qualname__
-        is_async = _is_async_fn(fn)
-        if is_async:
-
-            @functools.wraps(fn)
-            async def async_wrapper(
-                *args: Any, **kwargs: Any
-            ) -> Any:
-                return await _traced_call(
-                    fn, fn_name, args, kwargs, is_async=True
-                )
-
-            return async_wrapper
-        else:
-
-            @functools.wraps(fn)
-            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                return _traced_call(
-                    fn, fn_name, args, kwargs, is_async=False
-                )
-
-            return sync_wrapper
-
-    return decorator
-
-
-def _is_async_fn(fn: Any) -> bool:
-    import asyncio
-    import inspect
-
-    return asyncio.iscoroutinefunction(
-        fn
-    ) or inspect.iscoroutinefunction(fn)
-
-
-def _traced_call(fn, fn_name, args, kwargs, is_async):
-    import time as _time
-
-    from .context.vars import get_span_id, get_trace_id
-    from .core.event_schema import NormalizedEvent
-    from .sdk.emitter import emit
-
-    trace_id = get_trace_id()
-    if not trace_id:
-        return fn(*args, **kwargs)
-
-    emit(
-        NormalizedEvent.now(
-            probe="function.call",
-            trace_id=trace_id,
-            service="user",
-            name=fn_name,
-            parent_span_id=get_span_id(),
-        )
-    )
-    start = _time.perf_counter()
-    try:
-        return fn(*args, **kwargs)
-    except Exception as exc:
-        emit(
-            NormalizedEvent.now(
-                probe="function.exception",
-                trace_id=trace_id,
-                service="user",
-                name=fn_name,
-                exception_type=type(exc).__name__,
-            )
-        )
-        raise
-    finally:
-        emit(
-            NormalizedEvent.now(
-                probe="function.return",
-                trace_id=trace_id,
-                service="user",
-                name=fn_name,
-                duration_ns=int(
-                    (_time.perf_counter() - start) * 1e9
-                ),
-            )
-        )
+    logger.info("OriginTracer shut down")
 
 
 def mark_deployment(label: str = "deployment") -> None:
@@ -941,17 +815,12 @@ def mark_deployment(label: str = "deployment") -> None:
         logger.warning("mark_deployment called before init()")
 
 
-# ====================================================================== #
-# Public re-exports
-# ====================================================================== #
-
 __version__ = "0.1.0"
 __all__ = [
     "init",
     "shutdown",
     "get_config",
     "get_engine",
-    "trace",
     "mark_deployment",
     "emit",
     "NormalizedEvent",
