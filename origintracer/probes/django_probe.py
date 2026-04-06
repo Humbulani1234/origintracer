@@ -15,19 +15,6 @@ What you get:
     django.db.query    — every ORM / raw SQL query with duration
     django.exception   — unhandled exceptions
 
-Why View.dispatch instead of sys.monitoring:
-    sys.monitoring fires on every Python function call process-wide.
-    Filtering that firehose down to just your views requires fighting
-    framework internals, coroutine resume events, class body executions,
-    and flag value differences across Python versions.
-
-    View.dispatch() is the single method every Django class-based view
-    passes through. One patch captures all CBVs cleanly with no filtering,
-    no noise, and no version sensitivity. Works on Python 3.11, 3.12, 3.13.
-
-    Function-based views are already identified by request.entry name field
-    (the URL path) — no additional patching needed.
-
 TracerMiddleware is REQUIRED and must be first in MIDDLEWARE:
     MIDDLEWARE = [
         "stacktracer.probes.django_probe.TracerMiddleware",
@@ -50,14 +37,6 @@ from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
 
 logger = logging.getLogger("stacktracer.probes.django")
-
-_originals: dict = {}
-_patched: bool = False
-
-
-# ====================================================================== #
-# TracerMiddleware
-# ====================================================================== #
 
 
 class TracerMiddleware:
@@ -212,9 +191,10 @@ class TracerMiddleware:
         )
 
 
-# ====================================================================== #
-# View.dispatch patch — CBV observation
-# ====================================================================== #
+# ------------------ View.dispatch patch — CBV observation ----------
+
+_originals: dict = {}
+_patched: bool = False
 
 
 def _patch_view_dispatch() -> None:
@@ -294,9 +274,7 @@ def _unpatch_view_dispatch() -> None:
         pass
 
 
-# ====================================================================== #
 # Database execute_wrapper
-# ====================================================================== #
 
 
 def _make_db_wrapper():
@@ -392,9 +370,7 @@ def _uninstall_db_wrapper() -> None:
         pass
 
 
-# ====================================================================== #
-# Django signals
-# ====================================================================== #
+# -------------------------- Django signals ----------------------
 
 
 def _on_unhandled_exception(
@@ -443,22 +419,19 @@ def _uninstall_signals() -> None:
         pass
 
 
-# ====================================================================== #
-# DjangoProbe
-# ====================================================================== #
+# ------------------------- DjangoProbe --------------------------------
 
 
 class DjangoProbe(BaseProbe):
     """
     Observes Django using stable, version-safe extension points.
-    No sys.monitoring — View.dispatch patch covers all CBVs cleanly.
 
     Hooks installed at start():
-        1. View.dispatch() patch  — CBV entry/exit with class name + duration
-        2. execute_wrapper        — every DB query with SQL + duration
-        3. got_request_exception  — unhandled exceptions
+        1. View.dispatch() patch - CBV entry/exit with class name + duration
+        2. execute_wrapper - every DB query with SQL + duration
+        3. got_request_exception - unhandled exceptions
 
-    TracerMiddleware handles request.entry / request.exit and must be
+    TracerMiddleware handles request.entry/request.exit and must be
     added manually as the first entry in settings.MIDDLEWARE.
     """
 

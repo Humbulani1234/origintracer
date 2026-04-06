@@ -68,7 +68,7 @@ ProbeTypes.register_many(
     }
 )
 
-# ----- Asyncio-only BPF fragment -------------------
+# ---------------- Asyncio-only BPF fragment ----------------------
 
 _ASYNCIO_EPOLL_BPF = r"""
 // ********** epoll_wait enter **********
@@ -233,13 +233,10 @@ class _EpollKprobe:
             logger.debug("epoll event handling error: %s", exc)
 
 
-# ====================================================================== #
-# Layer 2 — sys.monitoring (Python 3.12+) / sys.setprofile (3.11)
-# ====================================================================== #
-
-
 _original_step = None
 _patched: bool = False
+
+# -------------- Layer 2 — coroutine tracing ------------------------
 
 
 def _format_fut_waiter(task) -> str | None:
@@ -297,10 +294,7 @@ def _patched_step(self, exc=None):
     return _original_step(self, exc) if _original_step else None
 
 
-# ====================================================================== #
-# Layer 3 — asyncio.create_task() (all versions, public API)
-# ====================================================================== #
-_originals: dict = {}
+# ------------------------ Layer 3 — asyncio.create_task() --------------
 
 
 def _make_create_task_wrapper(original: Callable) -> Callable:
@@ -332,9 +326,7 @@ def _make_create_task_wrapper(original: Callable) -> Callable:
     return _traced_create_task
 
 
-# ====================================================================== #
-# AsyncioProbe
-# ====================================================================== #
+# -------------------------- AsyncioProbe ---------------------------
 
 
 class AsyncioProbe(BaseProbe):
