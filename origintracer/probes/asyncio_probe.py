@@ -44,6 +44,7 @@ import os
 import sys
 import threading
 import time
+from asyncio import base_events, tasks
 from typing import Any, Callable, List, Optional
 
 from ..context.vars import get_span_id, get_trace_id
@@ -233,65 +234,106 @@ class _EpollKprobe:
             logger.debug("epoll event handling error: %s", exc)
 
 
-_original_step = None
 _patched: bool = False
+_originals: dict = {}
+_original_step: dict = {}
 
 # -------------- Layer 2 — coroutine tracing ------------------------
 
 
-def _format_fut_waiter(task) -> str | None:
-    fut = getattr(task, "_fut_waiter", None)
-    if fut is None:
-        return None
-    return repr(fut)
+def _has_pure_python_task() -> bool:
+    """True on Python 3.11 where Task.__step is accessible."""
+    return hasattr(tasks.Task, "_Task__step")
 
 
-def _patched_step(self, exc=None):
-    trace_id = get_trace_id()
+def _make_step_wrapper(original_step):
+    """
+    Closure-based wrapper for Task.__step that instruments every coroutine
+    step taken by the asyncio event loop.
 
-    if trace_id and _original_step:
-        try:
-            coro = self.get_coro()
-            coro_name = getattr(
-                coro, "__qualname__", type(coro).__name__
-            )
-            task_name = self.get_name()
-            fut_waiter = _format_fut_waiter(self)
+    asyncio.Task._step() is the internal method the event loop calls each
+    time a coroutine is resumed (i.e. after an await completes). By wrapping
+    it we get a hook into every coroutine scheduling decision without
+    modifying user code.
 
-            loop = asyncio.get_event_loop()
-            ready_count = len(getattr(loop, "_ready", []))
-            sched_count = len(getattr(loop, "_scheduled", []))
+    Python 3.11 and earlier ship asyncio.Task as a pure-Python class,
+    so Task.__step is directly patchable and this layer activates
+    automatically.
 
-            t0 = time.perf_counter()
-            result = _original_step(self, exc)
-            duration_ns = int((time.perf_counter() - t0) * 1e9)
+    Python 3.12 and later ship asyncio.Task as a C extension
+    (_asyncio.Task) by default. Task.__step does not exist on the C class
+    and _has_pure_python_task() returns False, so this layer is skipped
+    unless you explicitly force the pure-Python implementation.
 
-            emit(
-                NormalizedEvent.now(
-                    probe="asyncio.loop.tick",
-                    trace_id=trace_id,
-                    service="asyncio",
-                    name="loop.tick",
-                    coro_name=coro_name,
-                    parent_span_id=get_span_id(),
-                    task_name=task_name,
-                    fut_waiter=fut_waiter,
-                    ready_queue_depth=ready_count,
-                    scheduled_count=sched_count,
-                    had_exception=exc is not None,
-                    duration_ns=duration_ns,
+    To force the pure-Python Task before the event loop creates any tasks,
+    modify the gunicorn ot_post_fork hook, which runs in each
+    worker process before any async code starts:
+
+        # gunicorn_probe.py
+        def ot_post_fork(server, worker):
+            import asyncio
+            import asyncio.tasks as tasks
+            if hasattr(tasks, "_PyTask"):
+                tasks.Task = tasks._PyTask
+                asyncio.Task = tasks._PyTask
+            ...
+            Existing code...
+
+    This is a development configuration. For production deployments
+    on Python 3.12+, rely on the kprobe layer - it
+    provides event-loop-level timing without CPython internals dependency.
+    """
+
+    def _traced_step(
+        self: asyncio.Task, exc: Optional[BaseException] = None
+    ):
+        trace_id = get_trace_id()
+
+        if trace_id:
+            try:
+                coro = self.get_coro()
+                coro_name = getattr(
+                    coro, "__qualname__", type(coro).__name__
                 )
-            )
+                task_name = self.get_name()
 
-            return result
+                # What this task was blocked on before this step
+                waiter = getattr(self, "_fut_waiter", None)
+                fut_waiter_repr = (
+                    repr(waiter)[:120]
+                    if waiter is not None
+                    else None
+                )
 
-        except Exception as probe_exc:
-            logger.debug(
-                "asyncio probe error in _step: %s", probe_exc
-            )
+                loop = self.get_loop()
+                ready_count = len(getattr(loop, "_ready", []))
+                scheduled_count = len(
+                    getattr(loop, "_scheduled", [])
+                )
 
-    # fallback
-    return _original_step(self, exc) if _original_step else None
+                emit(
+                    NormalizedEvent.now(
+                        probe="asyncio.loop.tick",
+                        trace_id=trace_id,
+                        service="asyncio",
+                        name=coro_name,
+                        parent_span_id=get_span_id(),
+                        task_name=task_name,
+                        fut_waiter=fut_waiter_repr,
+                        ready_queue_depth=ready_count,
+                        scheduled_count=scheduled_count,
+                        had_exception=exc is not None,
+                        source="python_patch",
+                    )
+                )
+            except Exception as probe_exc:
+                logger.debug(
+                    "asyncio step probe error: %s", probe_exc
+                )
+
+        return original_step(self, exc)
+
+    return _traced_step
 
 
 # ------------------------ Layer 3 — asyncio.create_task() --------------
@@ -369,21 +411,18 @@ class AsyncioProbe(BaseProbe):
                 )
 
         # Layer 2: coroutine observation
-        step = getattr(asyncio.Task, "_step", None)
-
-        if step is None:
-            # Cannot patch on this Python version
-            logger.debug(
-                "asyncio probe: Task._step not available, skipping patch"
+        if _has_pure_python_task():
+            original_step = getattr(tasks.Task, "_Task__step")
+            _original_step["task_step"] = original_step
+            setattr(
+                tasks.Task,
+                "_Task__step",
+                _make_step_wrapper(original_step),
             )
-            return
-
-        _original_step = step
-
-        def wrapper(self, exc=None):
-            return _patched_step(self, exc)
-
-        asyncio.Task._step = wrapper
+            logger.info(
+                "asyncio probe: Task.__step patched (Python %d.%d pure-Python Task)",
+                *sys.version_info[:2],
+            )
 
         # Layer 3: create_task
         _originals["create_task"] = asyncio.create_task
@@ -399,10 +438,12 @@ class AsyncioProbe(BaseProbe):
         if not _patched:
             return
 
-        if _original_step:
-            asyncio.Task._step = _original_step
-
-        _original_step = None
+        if "task_step" in _original_step:
+            setattr(
+                tasks.Task,
+                "_Task__step",
+                _original_step.pop("task_step"),
+            )
 
         if self._epoll_kprobe:
             self._epoll_kprobe.stop()

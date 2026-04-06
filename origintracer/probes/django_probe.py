@@ -7,9 +7,9 @@ Extension points used:
     View.dispatch() patch         Single patch on the public CBV base class
     got_request_exception signal  Official Django signal — unhandled exceptions
 
-What you get:
-    request.entry      — every HTTP request enters middleware
-    request.exit       — every HTTP response leaves middleware
+Probes:
+    request.entry - every HTTP request enters middleware
+    request.exit - every HTTP response leaves middleware
     django.view.enter  — CBV dispatch entered (class name, e.g. AsyncView)
     django.view.exit   — CBV dispatch returned
     django.db.query    — every ORM / raw SQL query with duration
@@ -17,7 +17,7 @@ What you get:
 
 TracerMiddleware is REQUIRED and must be first in MIDDLEWARE:
     MIDDLEWARE = [
-        "stacktracer.probes.django_probe.TracerMiddleware",
+        "origintracer.probes.django_probe.TracerMiddleware",
         "django.middleware.security.SecurityMiddleware",
         ...
     ]
