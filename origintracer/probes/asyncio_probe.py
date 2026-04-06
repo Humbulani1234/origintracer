@@ -359,19 +359,22 @@ class AsyncioProbe(BaseProbe):
 
         # Layer 1: epoll kprobe
         bridge = get_bridge()
-        if bridge.available and sys.platform == "linux":
-            self._epoll_kprobe = _EpollKprobe(bridge)
-            ok = self._epoll_kprobe.start()
-            if not ok:
-                self._epoll_kprobe = None
-        else:
-            logger.info(
-                "asyncio probe: epoll kprobe unavailable "
-                "(platform=%s, bridge=%s). "
-                "Coroutine-level tracing still active.",
-                sys.platform,
-                bridge.available,
-            )
+        if sys.platform == "linux":
+            if not bridge.available:
+                bridge.start()  # idempotent — safe to call multiple times
+            if bridge.available:
+                self._epoll_kprobe = _EpollKprobe(
+                    bridge, correlator=None
+                )
+                ok = self._epoll_kprobe.start()
+                if not ok:
+                    self._epoll_kprobe = None
+            else:
+                logger.info(
+                    "asyncio probe: epoll kprobe unavailable "
+                    "(bridge failed to start). "
+                    "Coroutine-level tracing still active."
+                )
 
         # Layer 2: coroutine observation
         step = getattr(asyncio.Task, "_step", None)

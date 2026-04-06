@@ -1,7 +1,5 @@
 """
-probes/django_probe.py
-
-Observes Django using only stable, version-safe extension points.
+Observes Django using stable, version-safe extension points.
 
 Extension points used:
     TracerMiddleware              Official MIDDLEWARE hook — request lifecycle
@@ -125,7 +123,7 @@ class TracerMiddleware:
                 service="django",
                 pattern=pattern,
             )
-        # ── wire trace_id into BPF map so epoll kprobe can attribute events ───
+        # --- wire trace_id into BPF map so epoll kprobe can attribute events
         import threading
         import time as _time
 
