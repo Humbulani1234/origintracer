@@ -1,4 +1,4 @@
--- stacktracer/nginx/nginx.lua
+-- origintracer/nginx/nginx.lua
 -- Fires at rewrite phase (start) and log phase (complete).
 -- Sends JSON events via UDP to the Python engine's receiver.
 -- Correlation key: $remote_addr + $remote_port = same as kprobe accept4 sockaddr.
@@ -38,7 +38,7 @@ local function emit(event)
     if sock then sock:send(encode(event)) end
 end
 
--- ── rewrite phase: record start time ─────────────────────────────────
+-- **** rewrite phase: record start time ************************
 local function on_rewrite()
     ngx.ctx.st_start_ms    = ngx.now() * 1000
     ngx.ctx.st_trace_id    = ngx.var.request_id or (ngx.var.pid.."-"..ngx.now())

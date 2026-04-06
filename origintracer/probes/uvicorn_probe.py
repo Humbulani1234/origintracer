@@ -1,34 +1,16 @@
 """
-probes/uvicorn_probe.py  (revised — ASGI middleware, no H11Protocol patching)
+Observes uvicorn using ASGI middleware.
 
-Observes uvicorn using ASGI middleware instead of patching protocol classes.
-
-Previous approach:
-    Patched run_asgi() on H11Protocol and HttpToolsProtocol at the class level.
-    Risk: These are internal uvicorn classes. run_asgi() is not public API.
-    Any uvicorn refactor could silently break the patch.
-    Also required replacing self.send with a capturing function per request —
-    fragile interaction with uvicorn's internal response cycle.
-
-This approach:
+Approach:
     ASGI middleware wraps the application callable.
     This is the documented, stable ASGI extension point.
-    uvicorn calls app(scope, receive, send) — we wrap app with our middleware
-    so StackTracerASGIMiddleware(scope, receive, send) is called instead.
-    No protocol class patching. No internal method replacement.
-
-    This is identical to how:
-        - Starlette middleware works
-        - Django's ASGIHandler wrapping works
-        - OpenTelemetry's ASGI instrumentation works
+    uvicorn calls app(scope, receive, send) - we wrap app with our middleware
+    so OriginTracerASGIMiddleware(scope, receive, send) is called instead.
 
     The user wraps their application once:
         # asgi.py
-        from stacktracer.probes.uvicorn_probe import StackTracerASGIMiddleware
-        application = StackTracerASGIMiddleware(get_asgi_application())
-
-    Or we inject it via stacktracer.init() auto-wrapping if the user
-    passes their app reference.
+        from stacktracer.probes.uvicorn_probe import OriginTracerASGIMiddleware
+        application = OriginTracerASGIMiddleware(get_asgi_application())
 
     What we observe in ASGI middleware:
         scope["type"] == "http"          HTTP request lifecycle
@@ -92,44 +74,35 @@ ProbeTypes.register_many(
     }
 )
 
-
-# ====================================================================== #
-# ASGI middleware — the primary observation point
-# ====================================================================== #
+# -------------------- ASGI middleware (the primary observation point) --------
 
 
-class StackTracerASGIMiddleware:
+class OriginTracerASGIMiddleware:
     """
     Pure ASGI middleware that wraps the application callable.
 
     This is not monkey patching. ASGI middleware is the documented
-    standard for wrapping ASGI applications — the same mechanism used by
-    Starlette, Django, FastAPI, and every ASGI framework.
+    standard for wrapping ASGI applications.
 
     Usage — Django:
         # config/asgi.py
         from django.core.asgi import get_asgi_application
-        from stacktracer.probes.uvicorn_probe import StackTracerASGIMiddleware
+        from stacktracer.probes.uvicorn_probe import OriginTracerASGIMiddleware
 
         django_app  = get_asgi_application()
-        application = StackTracerASGIMiddleware(django_app)
+        application = OriginTracerASGIMiddleware(django_app)
 
     Usage — FastAPI:
         # main.py
         from fastapi import FastAPI
-        from stacktracer.probes.uvicorn_probe import StackTracerASGIMiddleware
+        from origintracer.probes.uvicorn_probe import OriginTracerASGIMiddleware
 
         app = FastAPI()
-        app = StackTracerASGIMiddleware(app)
+        app = OriginTracerASGIMiddleware(app)
 
     Then run with uvicorn or gunicorn+UvicornWorker as normal:
         uvicorn config.asgi:application
         gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker
-
-    Thread/process safety:
-        Each ASGI request is an independent coroutine call.
-        ContextVar isolates trace_id per coroutine correctly.
-        No shared mutable state between requests.
     """
 
     def __init__(self, app: Any) -> None:
@@ -274,9 +247,7 @@ class StackTracerASGIMiddleware:
                 return
 
 
-# ====================================================================== #
-# UvicornProbe — for the probe registry
-# ====================================================================== #
+# ---------------- UvicornProbe --------------------------------------
 
 
 class UvicornProbe(BaseProbe):
@@ -323,15 +294,14 @@ class UvicornProbe(BaseProbe):
             return
 
         logger.info(
-            "uvicorn probe: wrap your ASGI app with StackTracerASGIMiddleware.\n"
+            "uvicorn probe: wrap your ASGI app with OriginTracerASGIMiddleware.\n"
             "Example (asgi.py):\n"
-            "    from stacktracer.probes.uvicorn_probe import StackTracerASGIMiddleware\n"
-            "    application = StackTracerASGIMiddleware(get_asgi_application())\n"
-            "This is standard ASGI middleware — no internal patching."
+            "    from stacktracer.probes.uvicorn_probe import OriginTracerASGIMiddleware\n"
+            "    application = OriginTracerASGIMiddleware(get_asgi_application())\n"
+            "This is standard ASGI middleware - no internal patching."
         )
 
     def stop(self) -> None:
-        # No class-level patches to undo.
-        # ASGI middleware is part of the application — it stops
+        # ASGI middleware is part of the application - it stops
         # when the application stops.
         pass

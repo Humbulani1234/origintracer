@@ -6,20 +6,13 @@ Approach:
     define in gunicorn.conf.py. These are the official, stable extension
     points for exactly this kind of observation. They are versioned public API.
 
-    Documented hooks used:
-        on_starting(server)          master process starting
-        post_fork(server, worker)    worker process forked and running
-        worker_exit(server, worker)  worker process about to exit
-        worker_int(worker)           worker received SIGINT
-        worker_abort(worker)         worker received SIGABRT (crash)
-        pre_exec(server)             master about to exec() for graceful reload
-
-    For SyncWorker request handling:
-        gunicorn has no request-level hook. The clean option is Django/ASGI
-        middleware which already covers this at the application level.
-        We do NOT re-add handle_request patching here — TracerMiddleware
-        is the correct observation point for request timing regardless
-        of whether the worker is sync or async.
+    Hooks used:
+        on_starting(server) - master process starting
+        post_fork(server, worker) - worker process forked and running
+        worker_exit(server, worker) - worker process about to exit
+        worker_int(worker) - worker received SIGINT
+        worker_abort(worker) - worker received SIGABRT (crash)
+        pre_exec(server) - master about to exec() for graceful reload
 
 Integration with gunicorn.conf.py:
     The user adds one line to their gunicorn config:
@@ -121,14 +114,16 @@ def st_on_starting(server: Any) -> None:
     )
 
 
-def st_post_fork(server: Any, worker: Any) -> None:
+def ot_post_fork(server: Any, worker: Any) -> None:
     worker_pid = os.getpid()
     master_pid = os.getppid()
     worker_class = type(worker).__name__
     trace_id = f"gunicorn-worker-{worker_pid}"
 
     try:
-        from stacktracer.sdk.emitter import _restart_drain_thread
+        from origintracer.sdk.emitter import (
+            _restart_drain_thread,
+        )
 
         _restart_drain_thread()
     except Exception as exc:
@@ -329,7 +324,7 @@ def install_hooks() -> None:
     config_module = frame.f_globals
 
     _chain(config_module, "on_starting", st_on_starting)
-    _chain(config_module, "post_fork", st_post_fork)
+    _chain(config_module, "post_fork", ot_post_fork)
     _chain(config_module, "worker_exit", st_worker_exit)
     _chain(config_module, "worker_int", st_worker_int)
     _chain(config_module, "worker_abort", st_worker_abort)

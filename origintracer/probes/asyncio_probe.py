@@ -8,7 +8,7 @@ Layer 1 — kprobe on sys_epoll_wait (Linux, all Python versions)
     the actual kernel call, not a Python wrapper around it.
 
     Correlation with Python trace context via KprobeBridge:
-        bridge writes (tid → trace_id) to BPF map when trace starts
+        bridge writes (tid:trace_id) to BPF map when trace starts
         kprobe reads the map to attribute events to the right trace
 
 Layer 2 - Patched Task._Task__step at the class level. Fragile on 3.12+
@@ -29,11 +29,10 @@ The epoll kprobe tells us WHICH FD became ready, and we can correlate
 fd >> socket >> connection_type to understand what the task was waiting for
 at the I/O level.
 
-New ProbeTypes:
-    asyncio.loop.epoll_wait     epoll_wait returned with N ready fds
-    asyncio.loop.coro_call      coroutine entered (sys.monitoring)
-    asyncio.loop.coro_return    coroutine returned (sys.monitoring)
-    asyncio.task.create         create_task() called
+ProbeTypes:
+    asyncio.loop.epoll_wait - epoll_wait returned with N ready fds
+    asyncio.loop.tick - coroutine entered via Task.__step
+    asyncio.task.create - create_task() called
 """
 
 from __future__ import annotations
