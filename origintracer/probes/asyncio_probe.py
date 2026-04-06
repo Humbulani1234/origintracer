@@ -26,7 +26,7 @@ Layer 3 — asyncio.create_task() wrap (public API, all versions)
 
 
 The epoll kprobe tells us WHICH FD became ready, and we can correlate
-fd → socket → connection_type to understand what the task was waiting for
+fd >> socket >> connection_type to understand what the task was waiting for
 at the I/O level.
 
 New ProbeTypes:
@@ -47,6 +47,7 @@ import time
 from typing import Any, Callable, List, Optional
 
 from ..context.vars import get_span_id, get_trace_id
+from ..core.bpf_programs import BPFProgramPart, register_bpf
 from ..core.event_schema import NormalizedEvent, ProbeTypes
 from ..core.kprobe_bridge import get_bridge
 from ..sdk.base_probe import BaseProbe
@@ -67,169 +68,93 @@ ProbeTypes.register_many(
     }
 )
 
-_originals: dict = {}
-_patched = False
+# ----- Asyncio-only BPF fragment -------------------
 
-# sys.monitoring tool ID (3.12+)
-_MONITORING_TOOL_ID = None
-
-
-# ====================================================================== #
-# Layer 1 — kprobe on sys_epoll_wait
-# ====================================================================== #
-
-# BPF program for epoll_wait observation.
-# Uses the shared trace_context map from KprobeBridge.
-# Compiled together so the maps are shared by name.
-
-_EPOLL_BPF_PROGRAM = r"""
-// sys_epoll_wait signature:
-//   int epoll_wait(int epfd, struct epoll_event *events,
-//                  int maxevents, int timeout)
-//
-// We probe at entry to save the events pointer (needed at return),
-// and at return to read what the kernel wrote into the events[] array.
-
-#include <uapi/linux/ptrace.h>
-
-// Include shared bridge header — trace_context map and kernel_events
-// perf buffer are defined there.
-// (In the compiled version, KprobeBridge.bpf is passed to BPF() and
-//  the programs share the same BPF object, so the map is shared.)
-
-struct epoll_event_t {
-    __u32 events;
-    __u64 data;     // data.fd for most asyncio uses
-};
-
-// Save entry args so we can read events[] at return time
-struct epoll_entry_t {
-    u64  events_ptr;     // pointer to the events array in userspace
-    int  maxevents;
-    u64  entry_ns;
-};
-
-BPF_HASH(epoll_entry, u64, struct epoll_entry_t);   // tid → entry state
-
-struct epoll_result_t {
-    u64  timestamp_ns;
-    u32  pid;
-    u32  tid;
-    char trace_id[36];
-    char service[32];
-    int  n_events;
-    u64  duration_ns;
-    // First 8 ready fds (bounded for BPF stack safety)
-    u32  ready_fds[8];
-    u32  ready_events[8];   // EPOLLIN/EPOLLOUT bitmasks
-    int  fd_count;          // actual count, capped at 8
-};
-
-BPF_PERF_OUTPUT(epoll_events);
-
-// Entry: save the events pointer for use at return
+_ASYNCIO_EPOLL_BPF = r"""
+// ********** epoll_wait enter **********
 TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait) {
-    u64 tid = bpf_get_current_pid_tgid();
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u32 tid     = (u32)pid_tid;
+    u64 ts      = bpf_ktime_get_ns();
 
-    // Only trace if this thread is in a Python trace context
-    struct trace_entry_t *ctx_entry = trace_context.lookup(&tid);
-    if (!ctx_entry) return 0;
-
-    struct epoll_entry_t entry = {
-        .events_ptr = (u64)args->events,
-        .maxevents  = args->maxevents,
-        .entry_ns   = bpf_ktime_get_ns(),
-    };
-    epoll_entry.update(&tid, &entry);
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);
+    if (ctx) {
+        asyncio_epoll_ts.update(&pid_tid, &ts);
+    }
     return 0;
 }
 
-// Return: read what the kernel wrote into events[]
+// *********** epoll_wait exit (asyncio-only) *****************
 TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
-    u64 tid = bpf_get_current_pid_tgid();
-    int n_events = args->ret;
+    u64 pid_tid   = bpf_get_current_pid_tgid();
+    u32 pid       = (u32)(pid_tid >> 32);
+    u32 tid       = (u32)pid_tid;
+    u64 *entry_ts = asyncio_epoll_ts.lookup(&pid_tid);
+    if (!entry_ts) return 0;
+    asyncio_epoll_ts.delete(&pid_tid);
+    if (args->ret <= 0) return 0;
 
-    struct epoll_entry_t *entry = epoll_entry.lookup(&tid);
-    if (!entry) return 0;
-    epoll_entry.delete(&tid);
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);
+    if (!ctx) return 0;
 
-    if (n_events <= 0) return 0;   // timeout or error — skip
-
-    struct trace_entry_t *ctx_entry = trace_context.lookup(&tid);
-    if (!ctx_entry) return 0;
-
-    struct epoll_result_t result = {};
-    result.timestamp_ns = bpf_ktime_get_ns();
-    result.pid          = tid >> 32;
-    result.tid          = (u32)tid;
-    result.n_events     = n_events;
-    result.duration_ns  = result.timestamp_ns - entry->entry_ns;
-    __builtin_memcpy(result.trace_id, ctx_entry->trace_id, 36);
-    __builtin_memcpy(result.service,  ctx_entry->service,  32);
-
-    // Read up to 8 ready fd/event pairs from userspace
-    int count = n_events < 8 ? n_events : 8;
-    result.fd_count = count;
-
-    struct epoll_event_t ev;
-    struct epoll_event_t __user *events_ptr = (struct epoll_event_t __user *)entry->events_ptr;
-
-    #pragma unroll
-    for (int i = 0; i < 8; i++) {
-        if (i >= count) break;
-        if (bpf_probe_read_user(&ev, sizeof(ev), events_ptr + i) == 0) {
-            result.ready_fds[i]    = (u32)ev.data;
-            result.ready_events[i] = ev.events;
-        }
-    }
-
-    epoll_events.perf_submit(args, &result, sizeof(result));
+    struct kernel_event_t ev = {};
+    ev.timestamp_ns = bpf_ktime_get_ns();
+    ev.pid          = pid;
+    ev.tid          = tid;
+    ev.duration_ns  = ev.timestamp_ns - *entry_ts;
+    ev.value1       = args->ret;
+    __builtin_memcpy(ev.event_type, "epoll.wait", 11);
+    __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);
+    __builtin_memcpy(ev.service,    ctx->service,  32);
+    kernel_events.perf_submit(args, &ev, sizeof(ev));
     return 0;
 }
 """
 
+# Uncomment ONLY when deploying without the nginx probe:
+# register_bpf("asyncio", BPFProgramPart(
+#     maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
+#     probes=[_ASYNCIO_EPOLL_BPF],
+# ))
+
 
 class _EpollKprobe:
     """
-    kprobe-based observer for epoll_wait syscall.
-    Captures when the asyncio event loop returns from kernel I/O wait
-    and what file descriptors became ready.
+    Consumes epoll.wait events from the shared kernel_events perf buffer.
+
+    _EpollKprobe:
+        - opens kernel_events perf buffer on bridge.bpf
+        - filters to event_type == "epoll.wait"
+        - polls in a daemon thread
     """
 
-    def __init__(self, bridge) -> None:
+    def __init__(self, bridge, correlator):
         self._bridge = bridge
-        self._bpf = None
-        self._thread = None
-        self._running = False
+        self._corr = correlator
         self._our_pid = os.getpid()
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
 
     def start(self) -> bool:
         if not self._bridge.available:
-            return False
-
-        try:
-            from bcc import BPF
-        except ImportError:
-            return False
-
-        # Compile the epoll program together with the bridge so they
-        # share the trace_context map by name
-        full_program = _EPOLL_BPF_PROGRAM
-        try:
-            self._bpf = BPF(text=full_program)
             logger.info(
-                "asyncio epoll kprobe loaded — observing sys_epoll_wait "
-                "via tracepoints syscalls:sys_enter/exit_epoll_wait"
+                "asyncio epoll kprobe: bridge unavailable — skipping"
+            )
+            return False
+
+        try:
+            self._bridge.bpf["kernel_events"].open_perf_buffer(
+                self._handle_epoll_event
             )
         except Exception as exc:
+            # Already opened by nginx kprobe or dispatcher — log and continue.
+            # Events still flow if the opener dispatches epoll.wait events here.
             logger.warning(
-                "asyncio epoll BPF compile failed: %s", exc
+                "asyncio epoll kprobe: open_perf_buffer failed "
+                "(may already be opened by nginx or dispatcher): %s",
+                exc,
             )
-            return False
 
-        self._bpf["epoll_events"].open_perf_buffer(
-            self._handle_epoll_event
-        )
         self._running = True
         self._thread = threading.Thread(
             target=self._poll_loop,
@@ -237,20 +162,28 @@ class _EpollKprobe:
             name="stacktracer-epoll-kprobe",
         )
         self._thread.start()
+        logger.info(
+            "asyncio epoll kprobe: started (our_pid=%d)",
+            self._our_pid,
+        )
         return True
 
     def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=2)
-        self._bpf = None
+            self._thread.join(timeout=2.0)
+            self._thread = None
 
     def _poll_loop(self) -> None:
-        while self._running and self._bpf:
+        bpf = self._bridge.bpf
+        while self._running:
             try:
-                self._bpf.perf_buffer_poll(timeout=100)
+                bpf.perf_buffer_poll(timeout=100)
             except Exception as exc:
-                logger.debug("epoll kprobe poll error: %s", exc)
+                logger.debug(
+                    "asyncio epoll kprobe poll error: %s", exc
+                )
+                time.sleep(0.1)
 
     def _handle_epoll_event(
         self, cpu: int, data: Any, size: int
@@ -367,6 +300,7 @@ def _patched_step(self, exc=None):
 # ====================================================================== #
 # Layer 3 — asyncio.create_task() (all versions, public API)
 # ====================================================================== #
+_originals: dict = {}
 
 
 def _make_create_task_wrapper(original: Callable) -> Callable:

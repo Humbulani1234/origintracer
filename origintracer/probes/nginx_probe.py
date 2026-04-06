@@ -1,6 +1,6 @@
 """
 BCC (BPF Compiler Collection) Installation & Setup Guide
-=========================================================
+--------------------------------------------------------
 
 BCC is a system-level tool and CANNOT be installed inside a virtualenv with pip.
 It must be installed at the OS level and imported from there.
@@ -9,15 +9,13 @@ IMPORTANT: Run all commands as shown — order matters.
 
 STEP 1 — Check your kernel version
 ----------------------------------
+
     $ uname -r
     # Requires 4.9 or higher (5.x / 6.x are fine)
 
-    $ uname -a
-    # If output contains "microsoft" or "WSL" → see WSL2 note at the bottom
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 2 — Install kernel headers
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-------------------------------
+
 BCC compiles BPF programs at runtime against your running kernel and needs
 headers for that exact version.
 
@@ -26,28 +24,27 @@ headers for that exact version.
 
 Verify:
     $ ls /lib/modules/$(uname -r)/build
-    # Must show a directory — not "No such file or directory"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 3 — Install BCC from apt (NOT pip)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — Install BCC from apt
+---------------------------------------
+
     $ sudo apt install -y bpfcc-tools libbpfcc-dev python3-bpfcc
 
     Packages installed:
-        bpfcc-tools    → command-line BCC tools
-        python3-bpfcc  → Python bindings  →  from bcc import BPF
-        libbpfcc-dev   → C headers needed to compile BPF programs
+        bpfcc-tools    >> command-line BCC tools
+        python3-bpfcc  >> Python bindings  →  from bcc import BPF
+        libbpfcc-dev   >> C headers needed to compile BPF programs
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 4 — Verify the install OUTSIDE your virtualenv
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+---------------------------------------------------
+
     $ deactivate
     $ python3 -c "from bcc import BPF; print('bcc ok')"
     # Expected output: bcc ok
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 5 — Make BCC visible INSIDE your virtualenv  ← key step
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — Make BCC visible INSIDE your virtualenv
+--------------------------------------------------
+
 BCC's Python bindings live in the system Python, not in your venv.
 A .pth file bridges the gap.
 
@@ -66,9 +63,9 @@ Verify inside the venv:
 
 Once this passes, get_bridge() will work and bridge.available will be True.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 6 — Verify BPF permissions
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+--------------------------------
+
 BPF requires root or CAP_BPF. Test with:
     $ sudo $(which python) -c "
         from bcc import BPF
@@ -77,9 +74,9 @@ BPF requires root or CAP_BPF. Test with:
     "
     # Expected output: BPF compile ok
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 7 — Run gunicorn as root (dev only)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+----------------------------------------
+
 Kprobes require root to attach, so gunicorn must run as root in dev:
 
     $ sudo /path/to/your/venv/bin/gunicorn \
@@ -87,34 +84,21 @@ Kprobes require root to attach, so gunicorn must run as root in dev:
           config.asgi:application \
           --worker-class uvicorn.workers.UvicornWorker
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WSL2 NOTE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WSL2 runs a Microsoft-patched kernel that often has BPF disabled or restricted.
-Kprobes may not work at all, regardless of correct installation.
 
-Check if BPF is enabled:
-    $ zcat /proc/config.gz 2>/dev/null | grep CONFIG_BPF
-    # or
-    $ cat /boot/config-$(uname -r) 2>/dev/null | grep CONFIG_BPF
-
-If these return nothing or show CONFIG_BPF=n — kprobes are unavailable.
-The epoll probe will degrade gracefully to sys.monitoring. This is the
-intended fallback, not a bug. The four-service graph does not need BPF.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 QUICK CHECKLIST
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    1. uname -r                               →  kernel >= 4.9
-    2. apt install linux-headers-$(uname -r)  →  headers present
-    3. apt install python3-bpfcc              →  BCC installed at OS level
-    4. .pth file written into venv            →  BCC visible inside venv
-    5. sudo python -c "from bcc import BPF"   →  compile test passes
-    6. gunicorn run as sudo                   →  kprobes can attach
+---------------
+
+    1. uname -r                               >>  kernel >= 4.9
+    2. apt install linux-headers-$(uname -r)  >>  headers present
+    3. apt install python3-bpfcc              >>  BCC installed at OS level
+    4. .pth file written into venv            >>  BCC visible inside venv
+    5. sudo python -c "from bcc import BPF"   >>  compile test passes
+    6. gunicorn run as sudo                   >>  kprobes can attach
 
 **************************** INSTALLATION COMPLETE ************************
 
 probes/nginx_probe.py  (final — kprobe + Lua UDP, correlated)
+
 Three layers. Two correlate with each other. One is the fallback.
 
 Layer A — kprobe (accept4, epoll_wait, sendmsg, recvmsg):
@@ -134,6 +118,7 @@ Layer C — access log tail: zero-privilege fallback.
 
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
 import os
@@ -145,6 +130,7 @@ import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
+from ..core.bpf_programs import BPFProgramPart, register_bpf
 from ..core.event_schema import NormalizedEvent, ProbeTypes
 from ..core.kprobe_bridge import get_bridge
 from ..sdk.base_probe import BaseProbe
@@ -168,8 +154,7 @@ ProbeTypes.register_many(
 _NGINX_TRACE_PREFIX = "nginx-"
 
 # ── Pre-fork event parking ─────────────────────────────────────────────────
-# Same pattern as gunicorn_probe and celery_probe.
-# NginxProbe.start() runs in the gunicorn master before fork().
+#
 # Events emitted here would land in the master's engine — which is discarded
 # after fork. We park them in this list and drain them after init() completes
 # in the worker, so the worker's engine receives the full nginx topology.
@@ -262,105 +247,169 @@ def _ip_str(ip_be: int) -> str:
     )
 
 
-# ── BPF program ───────────────────────────────────────────────────────
+# ------- Ngnix BPF C source --------------------------------
 
 _NGINX_BPF = r"""
-#include <uapi/linux/ptrace.h>
-#include <linux/in.h>
-#include <linux/socket.h>
-
-BPF_HASH(nginx_pids, u32, u8);
-static inline int is_nginx() {
-    u32 p = bpf_get_current_pid_tgid() >> 32;
-    return nginx_pids.lookup(&p) != NULL;
+// ********* nginx pid filter *********************
+static inline int nginx_is_nginx(void) {
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    return nginx_pids.lookup(&pid) != NULL;
 }
 
-struct nginx_ev_t {
-    u64 ts_ns; u32 pid; u32 tid;
-    char etype[24];
-    s64 v1; s64 v2; u64 dur_ns;
-    u32 client_ip; u16 client_port; u16 _pad;
-};
-BPF_PERF_OUTPUT(nginx_events);
-
-BPF_HASH(accept_ts, u64, u64);
+// ******** accept4 enter ***********************
 TRACEPOINT_PROBE(syscalls, sys_enter_accept4) {
-    if (!is_nginx()) return 0;
-    u64 t = bpf_get_current_pid_tgid();
-    u64 n = bpf_ktime_get_ns();
-    accept_ts.update(&t, &n); return 0;
+    if (!nginx_is_nginx()) return 0;
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u64 ts      = bpf_ktime_get_ns();
+    nginx_accept_ts.update(&pid_tid, &ts);
+    return 0;
 }
+
+// *********** accept4 exit ********************
+// Note: upeer_sockaddr removed from sys_exit_accept4 args in kernel 6.x.
+// Client IP/port capture requires a dedicated enter-side map — omitted here
+// for kernel compatibility. Add if you need it and are on kernel < 6.0.
 TRACEPOINT_PROBE(syscalls, sys_exit_accept4) {
-    if (!is_nginx()) return 0;
+    if (!nginx_is_nginx()) return 0;
     if (args->ret < 0) return 0;
-    u64 t = bpf_get_current_pid_tgid();
-    u64 *s = accept_ts.lookup(&t); if (!s) return 0;
-    accept_ts.delete(&t);
-    struct nginx_ev_t ev = {};
-    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
-    ev.dur_ns = ev.ts_ns - *s; ev.v1 = args->ret;
-    __builtin_memcpy(ev.etype, "accept", 7);
-    struct sockaddr_in a = {};
-    if (args->upeer_sockaddr) {
-        bpf_probe_read_user(&a, sizeof(a), args->upeer_sockaddr);
-        if (a.sin_family == AF_INET) {
-            ev.client_ip = a.sin_addr.s_addr;
-            ev.client_port = a.sin_port;
-        }
-    }
-    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
+
+    u64 pid_tid   = bpf_get_current_pid_tgid();
+    u64 *entry_ts = nginx_accept_ts.lookup(&pid_tid);
+    if (!entry_ts) return 0;
+    nginx_accept_ts.delete(&pid_tid);
+
+    struct kernel_event_t ev = {};
+    ev.timestamp_ns = bpf_ktime_get_ns();
+    ev.pid          = (u32)(pid_tid >> 32);
+    ev.tid          = (u32)pid_tid;
+    ev.duration_ns  = ev.timestamp_ns - *entry_ts;
+    ev.value1       = args->ret;   // accepted fd
+    __builtin_memcpy(ev.event_type, "nginx.accept", 13);
+    kernel_events.perf_submit(args, &ev, sizeof(ev));
+    return 0;
 }
 
-BPF_HASH(epoll_ts, u64, u64);
+// ************ epoll_wait enter ************************
+// Handles BOTH nginx and asyncio paths in one tracepoint.
+// asyncio_probe does NOT attach its own epoll tracepoints — there can only
+// be one BPF program attached to a given tracepoint at a time.
 TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait) {
-    if (!is_nginx()) return 0;
-    u64 t = bpf_get_current_pid_tgid();
-    u64 n = bpf_ktime_get_ns();
-    epoll_ts.update(&t, &n); return 0;
-}
-TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
-    if (!is_nginx()) return 0;
-    if (args->ret <= 0) return 0;
-    u64 t = bpf_get_current_pid_tgid();
-    u64 *s = epoll_ts.lookup(&t); if (!s) return 0;
-    epoll_ts.delete(&t);
-    struct nginx_ev_t ev = {};
-    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
-    ev.dur_ns = ev.ts_ns - *s; ev.v1 = args->ret;
-    __builtin_memcpy(ev.etype, "epoll", 6);
-    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u32 tid     = (u32)pid_tid;
+    u64 ts      = bpf_ktime_get_ns();
+
+    if (nginx_is_nginx()) {
+        nginx_epoll_ts.update(&pid_tid, &ts);
+    }
+
+    // asyncio path: any thread registered in trace_context
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);
+    if (ctx) {
+        nginx_epoll_ts.update(&pid_tid, &ts);
+    }
+
+    return 0;
 }
 
-TRACEPOINT_PROBE(syscalls, sys_enter_sendmsg) {
-    if (!is_nginx()) return 0;
-    u64 t = bpf_get_current_pid_tgid();
-    struct nginx_ev_t ev = {};
-    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
-    ev.v2 = args->fd;
-    struct iovec iov = {}; struct msghdr msg = {};
-    if (args->msg) {
-        bpf_probe_read_user(&msg, sizeof(msg), args->msg);
-        if (msg.msg_iov && msg.msg_iovlen > 0) {
-            bpf_probe_read_user(&iov, sizeof(iov), msg.msg_iov);
-            ev.v1 = iov.iov_len;
-        }
+// ************ epoll_wait exit ****************************
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
+    u64 pid_tid   = bpf_get_current_pid_tgid();
+    u32 pid       = (u32)(pid_tid >> 32);
+    u32 tid       = (u32)pid_tid;
+    u64 *entry_ts = nginx_epoll_ts.lookup(&pid_tid);
+    if (!entry_ts) return 0;
+    nginx_epoll_ts.delete(&pid_tid);
+
+    u64 now = bpf_ktime_get_ns();
+
+    // nginx path
+    if (nginx_is_nginx() && args->ret > 0) {
+        struct kernel_event_t ev = {};
+        ev.timestamp_ns = now;
+        ev.pid          = pid;
+        ev.tid          = tid;
+        ev.duration_ns  = now - *entry_ts;
+        ev.value1       = args->ret;
+        __builtin_memcpy(ev.event_type, "nginx.epoll", 12);
+        kernel_events.perf_submit(args, &ev, sizeof(ev));
     }
-    __builtin_memcpy(ev.etype, "data_out", 9);
-    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
+
+    // asyncio path
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);
+    if (ctx && args->ret > 0) {
+        struct kernel_event_t ev = {};
+        ev.timestamp_ns = now;
+        ev.pid          = pid;
+        ev.tid          = tid;
+        ev.duration_ns  = now - *entry_ts;
+        ev.value1       = args->ret;
+        __builtin_memcpy(ev.event_type, "epoll.wait", 11);
+        __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);
+        __builtin_memcpy(ev.service,    ctx->service,  32);
+        kernel_events.perf_submit(args, &ev, sizeof(ev));
+    }
+
+    return 0;
 }
-TRACEPOINT_PROBE(syscalls, sys_exit_recvmsg) {
-    if (!is_nginx()) return 0;
+
+// *********** sendmsg exit ***********************************
+// Exit probe only: msghdr.msg_iov / msg_iovlen removed from BPF-visible
+// msghdr in kernel 6.x. args->ret gives actual bytes sent.
+TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
+    if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
-    u64 t = bpf_get_current_pid_tgid();
-    struct nginx_ev_t ev = {};
-    ev.ts_ns = bpf_ktime_get_ns(); ev.pid = t>>32; ev.tid = (u32)t;
-    ev.v1 = args->ret;
-    __builtin_memcpy(ev.etype, "data_in", 8);
-    nginx_events.perf_submit(args, &ev, sizeof(ev)); return 0;
+
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    struct kernel_event_t ev = {};
+    ev.timestamp_ns = bpf_ktime_get_ns();
+    ev.pid          = (u32)(pid_tid >> 32);
+    ev.tid          = (u32)pid_tid;
+    ev.value1       = args->ret;   // bytes sent
+    __builtin_memcpy(ev.event_type, "nginx.data_out", 15);
+    kernel_events.perf_submit(args, &ev, sizeof(ev));
+    return 0;
+}
+
+// ************ recvmsg exit ********************************
+TRACEPOINT_PROBE(syscalls, sys_exit_recvmsg) {
+    if (!nginx_is_nginx()) return 0;
+    if (args->ret <= 0) return 0;
+
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    struct kernel_event_t ev = {};
+    ev.timestamp_ns = bpf_ktime_get_ns();
+    ev.pid          = (u32)(pid_tid >> 32);
+    ev.tid          = (u32)pid_tid;
+    ev.value1       = args->ret;   // bytes received
+    __builtin_memcpy(ev.event_type, "nginx.data_in", 14);
+    kernel_events.perf_submit(args, &ev, sizeof(ev));
+    return 0;
 }
 """
 
-# ── Correlator ────────────────────────────────────────────────────────
+# ------------------ Register at import time -------------------------
+
+# This runs when the module is imported - before bridge.start() is called.
+# The BPFProgramPart wraps the private _NGINX_BPF string.
+
+register_bpf(
+    "nginx",
+    BPFProgramPart(
+        headers=[
+            "#include <linux/in.h>",
+            "#include <linux/socket.h>",
+        ],
+        structs=[],
+        maps=[
+            "BPF_HASH(nginx_pids,      u32, u8);",
+            "BPF_HASH(nginx_accept_ts, u64, u64);",
+            "BPF_HASH(nginx_epoll_ts,  u64, u64);",
+        ],
+        probes=[_NGINX_BPF],
+    ),
+)
+
+# ------------ Correlator ----------------------------
 
 
 class _NginxCorrelator:
@@ -419,7 +468,7 @@ class _NginxCorrelator:
         dur_ms = lua.get("duration_ms", 0)
         up_ms = lua.get("upstream_ms", -1)
         own_ms = lua.get("nginx_own_ms", -1)
-        from stacktracer.sdk.emitter import emit_direct
+        from origintracer.sdk.emitter import emit_direct
 
         emit_direct(
             NormalizedEvent.now(
@@ -487,65 +536,105 @@ class _NginxCorrelator:
                     del self._table[k]
 
 
-# ── kprobe layer ─────────────────────────────────────────────────────
+# ---------------- kprobe layer ------------------------------
 
 
 class _NginxKprobeMode:
-    def __init__(self, correlator: _NginxCorrelator):
+    """
+    Observes nginx syscall events via the shared bridge BPF object.
+
+    Does NOT own a BPF() object.
+    Does NOT attach tracepoints — BCC auto-attaches TRACEPOINT_PROBE macros
+    at compile time when BPF(text=...) is called in the bridge.
+
+    Responsibilities:
+      - populate nginx_pids BPF map  (so the kernel filter knows nginx pids)
+      - open kernel_events perf buffer
+      - poll in a daemon thread
+      - dispatch events to correlator + emitter
+    """
+
+    def __init__(self, bridge, correlator):
+        self._bridge = bridge
         self._corr = correlator
-        self._bpf = None
-        self._thread = None
+        self._thread: Optional[threading.Thread] = None
         self._running = False
 
-    def start(self) -> bool:
-        try:
-            from bcc import BPF
-        except ImportError:
-            return False
-        if os.geteuid() != 0:
-            return False
+    def _populate_nginx_pids(self) -> bool:
+        """
+        Populate the nginx_pids BPF map. Separated from start() so the
+        dispatcher pattern can call it without opening the perf buffer.
+        """
         pids = _find_nginx_pids()
         if not pids:
-            logger.warning("nginx kprobe: nginx not found")
+            logger.warning(
+                "nginx kprobe: no nginx processes found"
+            )
             return False
         try:
-            self._bpf = BPF(text=_NGINX_BPF)
-        except Exception as e:
-            logger.warning("nginx BPF compile: %s", e)
+            nginx_pids_map = self._bridge.bpf["nginx_pids"]
+            for pid in pids:
+                nginx_pids_map[ctypes.c_uint32(pid)] = (
+                    ctypes.c_uint8(1)
+                )
+            logger.info("nginx kprobe: tracking pids %s", pids)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "nginx kprobe: failed to populate nginx_pids: %s",
+                exc,
+            )
             return False
-        pm = self._bpf["nginx_pids"]
-        for p in pids:
-            pm[pm.Key(p)] = pm.Leaf(1)
-        self._bpf["nginx_events"].open_perf_buffer(
-            self._on_event
-        )
+
+    def start(self) -> bool:
+        if not self._bridge.available:
+            logger.info(
+                "nginx kprobe: bridge unavailable — skipping"
+            )
+            return False
+
+        if not self._populate_nginx_pids():
+            return False
+
+        try:
+            self._bridge.bpf["kernel_events"].open_perf_buffer(
+                self._handle_event
+            )
+        except Exception as exc:
+            logger.warning(
+                "nginx kprobe: open_perf_buffer failed: %s", exc
+            )
+            return False
+
         self._running = True
         self._thread = threading.Thread(
-            target=self._poll,
+            target=self._poll_loop,
             daemon=True,
             name="stacktracer-nginx-kprobe",
         )
         self._thread.start()
-        logger.info("nginx kprobe active pids=%s", pids)
+        logger.info("nginx kprobe: started")
         return True
 
-    def stop(self):
+    def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=2)
-        self._bpf = None
+            self._thread.join(timeout=2.0)
+            self._thread = None
 
-    def _poll(self):
-        while self._running and self._bpf:
+    def _poll_loop(self) -> None:
+        bpf = self._bridge.bpf
+        while self._running:
             try:
-                self._bpf.perf_buffer_poll(timeout=100)
-            except Exception:
-                pass
+                bpf.perf_buffer_poll(timeout=100)
+            except Exception as exc:
+                logger.debug("nginx kprobe poll error: %s", exc)
+                time.sleep(0.1)
 
-    def _on_event(self, cpu, data, size):
+    def _handle_event(self, cpu, data, size):
         if not self._bpf:
             return
-        from stacktracer.sdk.emitter import emit_direct
+        from origintracer.sdk.emitter import emit_direct
 
         try:
             ev = self._bpf["nginx_events"].event(data)
@@ -628,7 +717,7 @@ class _NginxKprobeMode:
             logger.debug("nginx kprobe event: %s", e)
 
 
-# ── Lua UDP receiver ──────────────────────────────────────────────────
+# -------------- Lua UDP receiver --------------------------------
 
 
 class _LuaHandler(socketserver.BaseRequestHandler):
@@ -690,7 +779,7 @@ class _NginxLuaMode:
             self._srv.shutdown()
 
 
-# ── Log tail fallback ─────────────────────────────────────────────────
+# ------------- Log tail fallback --------------------------------
 
 
 class _NginxLogMode:
@@ -767,7 +856,7 @@ class _NginxLogMode:
         )
         rt = float(r.get("request_time", 0))
         ut = r.get("upstream_response_time", "-")
-        from stacktracer.sdk.emitter import emit_direct
+        from origintracer.sdk.emitter import emit_direct
 
         emit_direct(
             NormalizedEvent.now(
@@ -788,16 +877,16 @@ class _NginxLogMode:
         )
 
 
-# ── NginxProbe ────────────────────────────────────────────────────────
+# ----------------- NginxProbe ---------------------------------
 
 
 class NginxProbe(BaseProbe):
     """
     nginx observation — three complementary layers:
 
-    kprobe  → kernel timing, connection identity, epoll state
-    Lua     → HTTP semantics, upstream timing, request_id
-    merged  → nginx.request.enriched when both fire for same connection
+    kprobe  >> kernel timing, connection identity, epoll state
+    Lua     >> HTTP semantics, upstream timing, request_id
+    merged  >> nginx.request.enriched when both fire for same connection
 
     Pre-fork topology events:
         On start(), the probe discovers nginx master + worker pids and parks
@@ -820,8 +909,8 @@ class NginxProbe(BaseProbe):
 
     def __init__(
         self,
-        log_path="/mnt/c/Users/humbulani/nginx-1.24.0/logs/access.log",
-        mode="log",
+        log_path="/var/log/nginx/access.log",
+        mode="kprobe",
         lua_host="127.0.0.1",
         lua_port=9119,
     ):
@@ -835,9 +924,11 @@ class NginxProbe(BaseProbe):
         self._log: Optional[_NginxLogMode] = None
 
     def start(self):
-        # ── 1. Discover nginx topology and park pre-fork events ───────────
+
+        # --------- 1. Discover nginx topology and park pre-fork events ----
         # Must happen before any fork() so the events are in _pre_fork_events
         # when the post-init callback drains them into the worker's engine.
+
         master_pid, worker_pids = (
             _find_nginx_master_and_workers()
         )
@@ -876,18 +967,20 @@ class NginxProbe(BaseProbe):
             )
 
         # Register drain callback — fires after init() completes in worker
-        from stacktracer import _register_post_init_callback
+        from origintracer import _register_post_init_callback
 
         _register_post_init_callback(_drain_pre_fork_events)
 
-        # ── 2. Start the appropriate observation layer ────────────────────
+        # ----- 2. Start the appropriate observation layer ---------------
         self._corr = _NginxCorrelator()
         wk = self._mode in ("auto", "kprobe", "combined")
         wl = self._mode in ("auto", "lua", "combined")
 
         kp_ok = lu_ok = False
         if wk and sys.platform == "linux":
-            self._kp = _NginxKprobeMode(self._corr)
+            bridge = get_bridge()
+            bridge.start()
+            self._kp = _NginxKprobeMode(bridge, self._corr)
             kp_ok = self._kp.start()
             if not kp_ok:
                 self._kp = None

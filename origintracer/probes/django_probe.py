@@ -41,6 +41,7 @@ TracerMiddleware is REQUIRED and must be first in MIDDLEWARE:
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from typing import Any, Callable, Optional
@@ -124,6 +125,25 @@ class TracerMiddleware:
                 service="django",
                 pattern=pattern,
             )
+        # ── wire trace_id into BPF map so epoll kprobe can attribute events ───
+        import threading
+        import time as _time
+
+        from origintracer.core.kprobe_bridge import get_bridge
+
+        bridge = get_bridge()
+        if bridge.available:
+            bridge.register_trace(
+                tid=threading.current_thread().ident
+                & 0xFFFFFFFF,
+                trace_id=trace_id,
+                service="django",
+                start_ns=int(_time.time_ns()),
+                pid=os.getpid(),
+            )
+        request._st_bridge_tid = (
+            threading.current_thread().ident & 0xFFFFFFFF
+        )
         emit(
             NormalizedEvent.now(
                 probe="request.entry",
@@ -166,6 +186,13 @@ class TracerMiddleware:
                     pattern,
                     span.duration_ms,
                 )
+        from origintracer.core.kprobe_bridge import get_bridge
+
+        bridge = get_bridge()
+        if bridge.available:
+            tid = getattr(request, "_st_bridge_tid", None)
+            if tid:
+                bridge.unregister_trace(tid)
 
     def _error(
         self, request: Any, exc: Exception, trace_id: str
