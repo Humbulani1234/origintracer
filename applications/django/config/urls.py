@@ -1,7 +1,7 @@
 """config/urls.py"""
 
 # In your Django project's urls.py
-import stacktracer
+import origintracer
 from django.http import JsonResponse
 from django.urls import include, path
 
@@ -11,7 +11,7 @@ urlpatterns = [
 
 
 def tracer_stats_view(request):
-    engine = stacktracer.get_engine()
+    engine = origintracer.get_engine()
     if not engine:
         return JsonResponse({"error": "No engine"}, status=500)
 

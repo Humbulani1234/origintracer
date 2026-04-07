@@ -13,7 +13,7 @@ SECRET_KEY = os.environ.get(
     "SECRET_KEY", "demo-secret-key-change-in-production"
 )
 DEBUG = True
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
 STACKTRACER_OTEL_MODE = (
     False  # True = OTel bridge, False = native probes
@@ -26,7 +26,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware",
+    "origintracer.probes.django_probe.TracerMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
 
@@ -56,10 +56,10 @@ TEMPLATES = [
 STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ── StackTracer ──────────────────────────────────────────────────────
-# Initialise StackTracer once at settings import time.
+# ── OriginTracer ──────────────────────────────────────────────────────
+# Initialise OriginTracer once at settings import time.
 # In production with gunicorn, re-init in gunicorn's post_fork hook
 # so each worker gets its own engine instance.
 
-# import stacktracer
-# stacktracer.init(config=str(BASE_DIR / "stacktracer.yaml"))
+# import origintracer
+# origintracer.init(config=str(BASE_DIR / "origintracer.yaml"))

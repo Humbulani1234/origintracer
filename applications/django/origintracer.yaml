@@ -4,10 +4,10 @@
 
 probes:
   - django
-  - asyncio
-  - uvicorn
   - gunicorn
-  - nginx          # auto-selects eBPF if root, log-tail otherwise
+  - uvicorn
+  - asyncio
+  # - nginx       # auto-selects eBPF if root, log-tail otherwise
 
 semantic:
   - label: http

@@ -92,15 +92,15 @@ import struct
 import threading
 from typing import Dict, List, Optional, Tuple
 
-from stacktracer.core.event_schema import (
+from origintracer.core.event_schema import (
     NormalizedEvent,
     ProbeTypes,
 )
-from stacktracer.core.kprobe_bridge import get_bridge
-from stacktracer.sdk.base_probe import BaseProbe
-from stacktracer.sdk.emitter import emit
+from origintracer.core.kprobe_bridge import get_bridge
+from origintracer.sdk.base_probe import BaseProbe
+from origintracer.sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.db_kprobe")
+logger = logging.getLogger("origintracer.probes.db_kprobe")
 
 ProbeTypes.register_many(
     {
@@ -192,7 +192,7 @@ struct db_event_t {
 BPF_PERF_OUTPUT(db_events);
 
 // ── Port lookup from socket fd ────────────────────────────────────────
-// Walk: fd → file → socket → sock → sk_dport
+// Walk: fd >> file >> socket >> sock >> sk_dport
 // This is a standard eBPF pattern used by tcptrace, bpftrace tcp_*, etc.
 
 static inline u16 get_dst_port_for_fd(u32 fd) {
@@ -514,7 +514,7 @@ class DBKprobe(BaseProbe):
         self._thread = threading.Thread(
             target=self._poll_loop,
             daemon=True,
-            name="stacktracer-db-kprobe",
+            name="origintracer-db-kprobe",
         )
         self._thread.start()
 
