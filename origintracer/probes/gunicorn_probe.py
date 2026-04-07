@@ -132,23 +132,23 @@ def ot_post_fork(server: Any, worker: Any) -> None:
             exc,
         )
 
-    import stacktracer
+    import origintracer
 
-    engine = stacktracer.get_engine()
+    engine = origintracer.get_engine()
     if engine is not None:
         _emit_worker_fork(
             trace_id, worker_class, worker_pid, master_pid
         )
         _drain_pre_fork_events(engine)
     else:
-        stacktracer._register_post_init_callback(
+        origintracer._register_post_init_callback(
             lambda: _emit_worker_fork(
                 trace_id, worker_class, worker_pid, master_pid
             )
         )
-        stacktracer._register_post_init_callback(
+        origintracer._register_post_init_callback(
             lambda: _drain_pre_fork_events(
-                stacktracer.get_engine()
+                origintracer.get_engine()
             )
         )
 

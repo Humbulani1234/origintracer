@@ -257,17 +257,17 @@ def span_to_event(span: "ReadableSpan") -> Optional[object]:
 # StackTracerSpanExporter
 
 
-class StackTracerSpanExporter:
+class OriginTracerSpanExporter:
     """
     OpenTelemetry SpanExporter that feeds spans into StackTracer's engine.
 
     Install as a span processor in your OTel setup:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from stacktracer.bridge.otel_bridge import StackTracerSpanExporter
+        from stacktracer.bridge.otel_bridge import OriginTracerSpanExporter
 
         provider.add_span_processor(
-            BatchSpanProcessor(StackTracerSpanExporter())
+            BatchSpanProcessor(OriginTracerSpanExporter())
         )
 
     Use BatchSpanProcessor not SimpleSpanProcessor — batch export runs
@@ -282,9 +282,9 @@ class StackTracerSpanExporter:
         except ImportError:
             return 0  # SUCCESS
 
-        import stacktracer
+        import origintracer
 
-        engine = stacktracer.get_engine()
+        engine = origintracer.get_engine()
 
         if engine is None:
             logger.debug(

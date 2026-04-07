@@ -274,7 +274,7 @@ class LocalQueryServer:
         #   TRACE <trace_id>
 
         try:
-            from stacktracer.query.parser import execute, parse
+            from origintracer.query.parser import execute, parse
 
             parsed = parse(query_str)
             result = execute(parsed, self._engine)

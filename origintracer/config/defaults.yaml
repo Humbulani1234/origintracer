@@ -20,11 +20,11 @@
 #   Only probes listed here are started — importing a module does not start it.
  
 builtin_probes:
-  - ".probes.asyncio_probe"
   - ".probes.django_probe"
   - ".probes.gunicorn_probe"
   - ".probes.uvicorn_probe"
-  - ".probes.nginx_probe"
+  - ".probes.asyncio_probe"
+  # - ".probes.ngisnx_probe"
  
 # ---- Event buffer -----------------------------------------
 
@@ -44,7 +44,7 @@ probes:
   - asyncio
   - uvicorn
   - gunicorn
-  - nginx
+  # - nginx
 
 # ------- Sampling ------------------------------------------
 

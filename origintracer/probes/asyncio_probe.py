@@ -95,7 +95,7 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
     if (args->ret <= 0) return 0;
 
     struct trace_entry_t *ctx = trace_context.lookup(&tid);
-    if (!ctx) return 0;
+    if: (!ctx) return 0;
 
     struct kernel_event_t ev = {};
     ev.timestamp_ns = bpf_ktime_get_ns();
@@ -112,10 +112,13 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
 """
 
 # Uncomment ONLY when deploying without the nginx probe:
-# register_bpf("asyncio", BPFProgramPart(
-#     maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
-#     probes=[_ASYNCIO_EPOLL_BPF],
-# ))
+register_bpf(
+    "asyncio",
+    BPFProgramPart(
+        maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
+        probes=[_ASYNCIO_EPOLL_BPF],
+    ),
+)
 
 
 class _EpollKprobe:
@@ -154,7 +157,6 @@ class _EpollKprobe:
                 "(may already be opened by nginx or dispatcher): %s",
                 exc,
             )
-
         self._running = True
         self._thread = threading.Thread(
             target=self._poll_loop,
@@ -188,13 +190,24 @@ class _EpollKprobe:
     def _handle_epoll_event(
         self, cpu: int, data: Any, size: int
     ) -> None:
-        if self._bpf is None:
+
+        import pdb
+
+        pdb.set_trace()
+
+        if self._bridge.bpf is None:
             return
         try:
-            ev = self._bpf["epoll_events"].event(data)
+            ev = self._bridge.bpf["kernel_events"].event(data)
 
             if ev.pid != self._our_pid:
                 return  # filter to our process
+
+            event_type = ev.event_type.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
+            if event_type != "epoll.wait":
+                return
 
             trace_id = ev.trace_id.decode(
                 "ascii", errors="replace"
@@ -207,13 +220,13 @@ class _EpollKprobe:
                 return
 
             # Decode ready fds
-            ready = [
-                {
-                    "fd": ev.ready_fds[i],
-                    "events": ev.ready_events[i],
-                }
-                for i in range(min(ev.fd_count, 8))
-            ]
+            # ready = [
+            #     {
+            #         "fd": ev.ready_fds[i],
+            #         "events": ev.ready_events[i],
+            #     }
+            #     for i in range(min(ev.fd_count, 8))
+            # ]
 
             emit(
                 NormalizedEvent.now(
@@ -224,8 +237,8 @@ class _EpollKprobe:
                     pid=ev.pid,
                     tid=ev.tid,
                     duration_ns=ev.duration_ns,
-                    n_events=ev.n_events,
-                    ready_fds=ready,
+                    n_events=int(ev.value1),
+                    ready_fds=[],
                     source="kprobe",
                 )
             )

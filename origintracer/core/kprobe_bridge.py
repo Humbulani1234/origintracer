@@ -121,12 +121,16 @@ class KprobeBridge:
 
     @property
     def bpf(self):
-        """The compiled BPF object — all probes use this to attach and poll."""
+        """
+        The compiled BPF object — all probes use this to attach and poll.
+        """
         return self._bpf
 
     @property
     def trace_map(self):
-        """The trace_context BPF hash map — Python writes trace IDs here."""
+        """
+        The trace_context BPF hash map — Python writes trace IDs here.
+        """
         return self._map
 
     def start(self) -> bool:

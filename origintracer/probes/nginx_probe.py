@@ -136,7 +136,7 @@ from ..core.kprobe_bridge import get_bridge
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.nginx")
+logger = logging.getLogger("origintracer.probes.nginx")
 
 ProbeTypes.register_many(
     {
@@ -164,7 +164,7 @@ _pre_fork_events: list = []
 
 def _drain_pre_fork_events() -> None:
     """Drain parked nginx topology events into the worker's live engine."""
-    from stacktracer.sdk.emitter import emit_direct
+    from origintracer.sdk.emitter import emit_direct
 
     for event in _pre_fork_events:
         emit_direct(event)
@@ -250,7 +250,7 @@ def _ip_str(ip_be: int) -> str:
 # ------- Ngnix BPF C source --------------------------------
 
 _NGINX_BPF = r"""
-// ********* nginx pid filter *********************
+/* ------------- nginx pid filter ---------------------- */
 static inline int nginx_is_nginx(void) {
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     return nginx_pids.lookup(&pid) != NULL;
@@ -355,7 +355,7 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
 // *********** sendmsg exit ***********************************
 // Exit probe only: msghdr.msg_iov / msg_iovlen removed from BPF-visible
 // msghdr in kernel 6.x. args->ret gives actual bytes sent.
-TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
+TRACEPOINT_PROBE(syscalls, sys_exit_write) {
     if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
 
@@ -371,7 +371,7 @@ TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
 }
 
 // ************ recvmsg exit ********************************
-TRACEPOINT_PROBE(syscalls, sys_exit_recvmsg) {
+TRACEPOINT_PROBE(syscalls, sys_exit_recvfrom) {
     if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
 
@@ -422,7 +422,7 @@ class _NginxCorrelator:
         t = threading.Thread(
             target=self._evict,
             daemon=True,
-            name="stacktracer-nginx-evict",
+            name="origintracer-nginx-evict",
         )
         t.start()
 
@@ -470,7 +470,7 @@ class _NginxCorrelator:
         own_ms = lua.get("nginx_own_ms", -1)
         from origintracer.sdk.emitter import emit_direct
 
-        emit_direct(
+        emit(
             NormalizedEvent.now(
                 probe="nginx.request.enriched",
                 trace_id=trace_id,
@@ -503,9 +503,9 @@ class _NginxCorrelator:
         )
         dur_ms = lua.get("duration_ms", 0)
         up_ms = lua.get("upstream_ms", -1)
-        from stacktracer.sdk.emitter import emit_direct
+        from origintracer.sdk.emitter import emit_direct
 
-        emit_direct(
+        emit(
             NormalizedEvent.now(
                 probe="nginx.request.complete",
                 trace_id=trace_id,
@@ -632,15 +632,18 @@ class _NginxKprobeMode:
                 time.sleep(0.1)
 
     def _handle_event(self, cpu, data, size):
-        if not self._bpf:
+        if not self._bridge.bpf:
             return
+
         from origintracer.sdk.emitter import emit_direct
 
         try:
-            ev = self._bpf["nginx_events"].event(data)
-            etype = ev.etype.decode(
-                "ascii", errors="replace"
-            ).rstrip("\x00")
+            ev = self._bridge.bpf["kernel_events"].event(data)
+            etype = (
+                ev.event_type.decode("ascii", errors="replace")
+                .rstrip("\x00")
+                .split(".")[1]
+            )
             ckey = f"{_NGINX_TRACE_PREFIX}{ev.pid}-{ev.tid}"
 
             if etype == "accept":
@@ -656,60 +659,60 @@ class _NginxKprobeMode:
                     conn_key=ckey,
                     client_ip=cip,
                     client_port=cport,
-                    accept_ns=ev.ts_ns,
-                    accept_dur_ns=ev.dur_ns,
+                    accept_ns=ev.timestamp_ns,
+                    accept_dur_ns=ev.duration_ns,
                     pid=ev.pid,
-                    fd=int(ev.v1),
+                    fd=int(ev.value1),
                 )
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.connection.accept",
                         trace_id=ckey,
                         service="nginx",
                         name="accept",
                         pid=ev.pid,
-                        fd=int(ev.v1),
+                        fd=int(ev.value1),
                         client_ip=cip,
                         client_port=cport,
-                        duration_ns=ev.dur_ns,
+                        duration_ns=ev.duration_ns,
                         source="kprobe",
                     )
                 )
             elif etype == "epoll":
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.epoll.tick",
                         trace_id=ckey,
                         service="nginx",
                         name="epoll_wait",
                         pid=ev.pid,
-                        n_events=int(ev.v1),
-                        duration_ns=ev.dur_ns,
+                        n_events=int(ev.value1),
+                        duration_ns=ev.duration_ns,
                         source="kprobe",
                     )
                 )
             elif etype == "data_out":
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.connection.data_out",
                         trace_id=ckey,
                         service="nginx",
                         name="sendmsg",
                         pid=ev.pid,
-                        fd=int(ev.v2),
-                        bytes_sent=int(ev.v1),
+                        fd=int(ev.value2),
+                        bytes_sent=int(ev.value1),
                         source="kprobe",
                     )
                 )
             elif etype == "data_in":
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.connection.data_in",
                         trace_id=ckey,
                         service="nginx",
                         name="recvmsg",
                         pid=ev.pid,
-                        bytes_received=int(ev.v1),
+                        bytes_received=int(ev.value1),
                         source="kprobe",
                     )
                 )
@@ -858,7 +861,7 @@ class _NginxLogMode:
         ut = r.get("upstream_response_time", "-")
         from origintracer.sdk.emitter import emit_direct
 
-        emit_direct(
+        emit(
             NormalizedEvent.now(
                 probe="nginx.request.complete",
                 trace_id=trace_id,
@@ -924,6 +927,10 @@ class NginxProbe(BaseProbe):
         self._log: Optional[_NginxLogMode] = None
 
     def start(self):
+
+        import pdb
+
+        pdb.set_trace()
 
         # --------- 1. Discover nginx topology and park pre-fork events ----
         # Must happen before any fork() so the events are in _pre_fork_events

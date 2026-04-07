@@ -36,7 +36,7 @@ from ..core.event_schema import NormalizedEvent
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.django")
+logger = logging.getLogger("origintracer.probes.django")
 
 
 class TracerMiddleware:

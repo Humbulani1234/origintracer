@@ -423,7 +423,6 @@ def _init_probes(
     """
     1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
        Side-effect: each module registers its BaseProbe subclass with ProbeRegistry.
-       No hardcoded list here — defaults.yaml owns it.
 
     2. Discover user probes from <app_root>/origintracer/probes/*_probe.py.
 
@@ -740,7 +739,7 @@ def init(
 
     _init_local_server(_engine)
 
-    if otel_mode:
+    if not otel_mode:
         _active_probes = _init_probes(_config, _engine, app_root)
         _engine.probes = _active_probes
 
