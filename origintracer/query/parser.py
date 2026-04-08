@@ -502,14 +502,14 @@ def _show_active(engine: Any) -> Dict:
 
 
 def _show_probes(engine: Any) -> Dict:
-    """List registered probe adapters by name."""
+    """
+    List registered probe adapters by name.
+    """
     probes = []
     probe_mgr = getattr(engine, "probes", None)
     if probe_mgr:
-        probes = (
-            list(probe_mgr.keys())
-            if isinstance(probe_mgr, dict)
-            else [getattr(p, "name", str(p)) for p in probe_mgr]
+        probes.append(
+            getattr(p, "name", str(p)) for p in probe_mgr
         )
     return {"metric": "probes", "data": probes}
 
