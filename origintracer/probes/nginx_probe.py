@@ -440,6 +440,19 @@ class _NginxCorrelator:
                 "_at": time.monotonic(),
             }
 
+    def _evict(self):
+        while self._alive:
+            time.sleep(30)
+            cutoff = time.monotonic() - self._TTL
+            with self._lock:
+                stale = [
+                    k
+                    for k, v in self._table.items()
+                    if v["_at"] < cutoff
+                ]
+                for k in stale:
+                    del self._table[k]
+
 
 # ---------------- kprobe layer ------------------------------
 
@@ -794,6 +807,7 @@ class NginxProbe(BaseProbe):
         self._mode = mode
         self._corr: Optional[_NginxCorrelator] = None
         self._kp: Optional[_NginxKprobeMode] = None
+        self._log: Optional[_NginxLogMode] = None
 
     def start(self):
         # --------- 1. Discover nginx topology and park pre-fork events ----
@@ -868,8 +882,8 @@ class NginxProbe(BaseProbe):
         else:
             logger.warning("nginx probe: no layer started")
 
-        def stop(self):
-            for x in (self._kp, self._log, self._corr):
-                if x:
-                    x.stop()
-            self._kp = self._log = self._corr = None
+    def stop(self):
+        for x in (self._kp, self._log, self._corr):
+            if x:
+                x.stop()
+        self._kp = self._log = self._corr = None
