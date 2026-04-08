@@ -508,9 +508,9 @@ def _show_probes(engine: Any) -> Dict:
     probes = []
     probe_mgr = getattr(engine, "probes", None)
     if probe_mgr:
-        probes.append(
-            getattr(p, "name", str(p)) for p in probe_mgr
-        )
+        for p in probe_mgr:
+            probes.append(getattr(p, "name", str(p)))
+
     return {"metric": "probes", "data": probes}
 
 
