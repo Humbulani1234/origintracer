@@ -115,6 +115,23 @@ def st_on_starting(server: Any) -> None:
 
 
 def ot_post_fork(server: Any, worker: Any) -> None:
+    import asyncio
+    import asyncio.tasks as tasks
+
+    # Force the standard selector-based event loop (native Python)
+    if hasattr(asyncio, "DefaultEventLoopPolicy"):
+        asyncio.set_event_loop_policy(
+            asyncio.DefaultEventLoopPolicy()
+        )
+    if hasattr(tasks, "_PyTask"):
+        tasks.Task = tasks._PyTask
+        asyncio.Task = tasks._PyTask
+        # Also patch the factory if it exists
+        if hasattr(asyncio, "create_task"):
+            # This ensures new tasks use the patched class
+            pass
+    loop = asyncio.get_event_loop()
+    print(loop)
     worker_pid = os.getpid()
     master_pid = os.getppid()
     worker_class = type(worker).__name__

@@ -25,11 +25,15 @@ TracerMiddleware is REQUIRED and must be first in MIDDLEWARE:
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import time
 import uuid
 from typing import Any, Callable, Optional
+
+import origintracer
+from origintracer.core.kprobe_bridge import get_bridge
 
 from ..context.vars import get_trace_id, reset_trace, set_trace
 from ..core.event_schema import NormalizedEvent
@@ -91,9 +95,6 @@ class TracerMiddleware:
         )
         token = set_trace(trace_id)
         request._st_t0 = time.perf_counter()
-
-        import origintracer
-
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
         if engine:
@@ -103,24 +104,34 @@ class TracerMiddleware:
                 pattern=pattern,
             )
         # --- wire trace_id into BPF map so epoll kprobe can attribute events
-        import threading
-        import time as _time
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        _SYS_gettid = 186  # x86_64 Linux
 
-        from origintracer.core.kprobe_bridge import get_bridge
+        def _get_os_tid() -> int:
+            return _libc.syscall(_SYS_gettid)
 
         bridge = get_bridge()
         if bridge.available:
+            handler_tid = (
+                _get_os_tid()
+            )  # 6556 — current handler thread
+            loop_tid = os.getpid()
             bridge.register_trace(
-                tid=threading.current_thread().ident
-                & 0xFFFFFFFF,
+                tid=loop_tid,
                 trace_id=trace_id,
                 service="django",
-                start_ns=int(_time.time_ns()),
+                start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
-        request._st_bridge_tid = (
-            threading.current_thread().ident & 0xFFFFFFFF
-        )
+            # Register handler thread for completeness
+            bridge.register_trace(
+                tid=handler_tid,
+                trace_id=trace_id,
+                service="django",
+                start_ns=int(time.time_ns()),
+                pid=os.getpid(),
+            )
+        request._st_bridge_tid = [loop_tid, handler_tid]
         emit(
             NormalizedEvent.now(
                 probe="request.entry",
@@ -167,8 +178,7 @@ class TracerMiddleware:
 
         bridge = get_bridge()
         if bridge.available:
-            tid = getattr(request, "_st_bridge_tid", None)
-            if tid:
+            for tid in getattr(request, "_st_bridge_tids", []):
                 bridge.unregister_trace(tid)
 
     def _error(

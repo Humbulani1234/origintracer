@@ -293,64 +293,53 @@ TRACEPOINT_PROBE(syscalls, sys_exit_accept4) {
 // Handles BOTH nginx and asyncio paths in one tracepoint.
 // asyncio_probe does NOT attach its own epoll tracepoints — there can only
 // be one BPF program attached to a given tracepoint at a time.
-TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait) {
-    u64 pid_tid = bpf_get_current_pid_tgid();
-    u32 tid     = (u32)pid_tid;
-    u64 ts      = bpf_ktime_get_ns();
 
-    if (nginx_is_nginx()) {
-        nginx_epoll_ts.update(&pid_tid, &ts);
-    }
-
-    // asyncio path: any thread registered in trace_context
-    struct trace_entry_t *ctx = trace_context.lookup(&tid);
-    if (ctx) {
-        nginx_epoll_ts.update(&pid_tid, &ts);
-    }
-
+// ── shared macro for both epoll_wait and epoll_pwait exit logic ───────────────
+#define HANDLE_EPOLL_EXIT(args)                                               \
+    u64 pid_tid   = bpf_get_current_pid_tgid();                              \
+    u32 pid       = (u32)(pid_tid >> 32);                                     \
+    u32 tid       = (u32)pid_tid;                                             \
+    u64 *entry_ts = nginx_epoll_ts.lookup(&pid_tid);                         \
+    if (!entry_ts) return 0;                                                  \
+    nginx_epoll_ts.delete(&pid_tid);                                          \
+    u64 now = bpf_ktime_get_ns();                                             \
+    if (nginx_is_nginx() && args->ret > 0) {                                 \
+        struct kernel_event_t ev = {};                                        \
+        ev.timestamp_ns = now;                                                \
+        ev.pid = pid; ev.tid = tid;                                           \
+        ev.duration_ns = now - *entry_ts;                                     \
+        ev.value1 = args->ret;                                                \
+        __builtin_memcpy(ev.event_type, "nginx.epoll", 12);                  \
+        kernel_events.perf_submit(args, &ev, sizeof(ev));                    \
+    }                                                                         \
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);                  \
+    if (ctx && args->ret > 0) {                                               \
+        struct kernel_event_t ev = {};                                        \
+        ev.timestamp_ns = now;                                                \
+        ev.pid = pid; ev.tid = tid;                                           \
+        ev.duration_ns = now - *entry_ts;                                     \
+        ev.value1 = args->ret;                                                \
+        __builtin_memcpy(ev.event_type, "epoll.wait", 11);                   \
+        __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);                  \
+        __builtin_memcpy(ev.service,    ctx->service,  32);                  \
+        kernel_events.perf_submit(args, &ev, sizeof(ev));                    \
+    }                                                                         \
     return 0;
-}
 
-// ************ epoll_wait exit ****************************
-TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
-    u64 pid_tid   = bpf_get_current_pid_tgid();
-    u32 pid       = (u32)(pid_tid >> 32);
-    u32 tid       = (u32)pid_tid;
-    u64 *entry_ts = nginx_epoll_ts.lookup(&pid_tid);
-    if (!entry_ts) return 0;
-    nginx_epoll_ts.delete(&pid_tid);
-
-    u64 now = bpf_ktime_get_ns();
-
-    // nginx path
-    if (nginx_is_nginx() && args->ret > 0) {
-        struct kernel_event_t ev = {};
-        ev.timestamp_ns = now;
-        ev.pid          = pid;
-        ev.tid          = tid;
-        ev.duration_ns  = now - *entry_ts;
-        ev.value1       = args->ret;
-        __builtin_memcpy(ev.event_type, "nginx.epoll", 12);
-        kernel_events.perf_submit(args, &ev, sizeof(ev));
-    }
-
-    // asyncio path
-    struct trace_entry_t *ctx = trace_context.lookup(&tid);
-    if (ctx && args->ret > 0) {
-        struct kernel_event_t ev = {};
-        ev.timestamp_ns = now;
-        ev.pid          = pid;
-        ev.tid          = tid;
-        ev.duration_ns  = now - *entry_ts;
-        ev.value1       = args->ret;
-        __builtin_memcpy(ev.event_type, "epoll.wait", 11);
-        __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);
-        __builtin_memcpy(ev.service,    ctx->service,  32);
-        kernel_events.perf_submit(args, &ev, sizeof(ev));
-    }
-
+#define HANDLE_EPOLL_ENTER()                                                  \
+    u64 pid_tid = bpf_get_current_pid_tgid();                                \
+    u32 tid     = (u32)pid_tid;                                               \
+    u64 ts      = bpf_ktime_get_ns();                                        \
+    if (nginx_is_nginx()) { nginx_epoll_ts.update(&pid_tid, &ts); }          \
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);                  \
+    if (ctx) { nginx_epoll_ts.update(&pid_tid, &ts); }                       \
     return 0;
-}
+
+// ── tracepoint stubs — one line each ─────────────────────────────────────────
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait)  { HANDLE_EPOLL_ENTER() }
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_pwait) { HANDLE_EPOLL_ENTER() }
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait)   { HANDLE_EPOLL_EXIT(args) }
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait)  { HANDLE_EPOLL_EXIT(args) }
 
 // *********** sendmsg exit ***********************************
 // Exit probe only: msghdr.msg_iov / msg_iovlen removed from BPF-visible

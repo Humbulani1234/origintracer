@@ -1,5 +1,8 @@
+import logging
 from dataclasses import dataclass, field
 from typing import List
+
+logger = logging.getLogger("origintracer.bpf_programs")
 
 
 @dataclass
@@ -171,10 +174,6 @@ def build_bpf_program() -> str:
     Map naming convention (probe_mapname) prevents false deduplication of
     distinct maps that happen to have similar declarations.
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     parts = [part for _, part in _registry]
 
     if not parts:
