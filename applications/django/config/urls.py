@@ -1,9 +1,10 @@
 """config/urls.py"""
 
 # In your Django project's urls.py
-import origintracer
 from django.http import JsonResponse
 from django.urls import include, path
+
+import origintracer
 
 urlpatterns = [
     path("", include("django_tracer.urls")),

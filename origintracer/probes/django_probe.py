@@ -25,7 +25,9 @@ TracerMiddleware is REQUIRED and must be first in MIDDLEWARE:
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
+import inspect
 import logging
 import os
 import time
@@ -51,12 +53,11 @@ class TracerMiddleware:
 
     def __init__(self, get_response: Callable) -> None:
         self.get_response = get_response
-        import asyncio
-        import inspect
-
         self._is_async = asyncio.iscoroutinefunction(
             get_response
-        ) or inspect.iscoroutinefunction(get_response)
+        ) or inspect.iscoroutinefunction(
+            get_response
+        )  # handles edge cases
 
     def __call__(self, request: Any) -> Any:
         if self._is_async:
@@ -103,7 +104,7 @@ class TracerMiddleware:
                 service="django",
                 pattern=pattern,
             )
-        # --- wire trace_id into BPF map so epoll kprobe can attribute events
+        # add trace_id into BPF map so epoll kprobe can attribute events
         _libc = ctypes.CDLL("libc.so.6", use_errno=True)
         _SYS_gettid = 186  # x86_64 Linux
 
@@ -112,9 +113,7 @@ class TracerMiddleware:
 
         bridge = get_bridge()
         if bridge.available:
-            handler_tid = (
-                _get_os_tid()
-            )  # 6556 — current handler thread
+            handler_tid = _get_os_tid()
             loop_tid = os.getpid()
             bridge.register_trace(
                 tid=loop_tid,
@@ -123,7 +122,7 @@ class TracerMiddleware:
                 start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
-            # Register handler thread for completeness
+            # Also register handler thread
             bridge.register_trace(
                 tid=handler_tid,
                 trace_id=trace_id,
@@ -131,7 +130,7 @@ class TracerMiddleware:
                 start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
-        request._st_bridge_tid = [loop_tid, handler_tid]
+            request._st_bridge_tid = [loop_tid, handler_tid]
         emit(
             NormalizedEvent.now(
                 probe="request.entry",
@@ -161,8 +160,6 @@ class TracerMiddleware:
                 duration_ns=duration_ns,
             )
         )
-        import origintracer
-
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
         if engine:
@@ -174,8 +171,6 @@ class TracerMiddleware:
                     pattern,
                     span.duration_ms,
                 )
-        from origintracer.core.kprobe_bridge import get_bridge
-
         bridge = get_bridge()
         if bridge.available:
             for tid in getattr(request, "_st_bridge_tids", []):
@@ -201,7 +196,7 @@ class TracerMiddleware:
         )
 
 
-# ------------------ View.dispatch patch — CBV observation ----------
+# ------------- View.dispatch patch — CBV observation ----------
 
 _originals: dict = {}
 _patched: bool = False
@@ -226,7 +221,7 @@ def _patch_view_dispatch() -> None:
         from django.views import View
     except ImportError:
         logger.debug(
-            "django probe: Django not installed — skipping dispatch patch"
+            "django probe: Django not installed - skipping dispatch patch"
         )
         return
 
@@ -267,7 +262,7 @@ def _patch_view_dispatch() -> None:
 
     View.dispatch = _traced_dispatch
     logger.info(
-        "django probe: View.dispatch patched — all CBVs observed"
+        "django probe: View.dispatch patched - all CBVs observed"
     )
 
 
@@ -284,7 +279,7 @@ def _unpatch_view_dispatch() -> None:
         pass
 
 
-# Database execute_wrapper
+# ----------------- Database execute_wrapper ------------------
 
 
 def _make_db_wrapper():
