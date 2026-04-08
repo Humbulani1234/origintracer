@@ -111,13 +111,13 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait) {
 """
 
 # Uncomment ONLY when deploying without the nginx probe:
-register_bpf(
-    "asyncio",
-    BPFProgramPart(
-        maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
-        probes=[_ASYNCIO_EPOLL_BPF],
-    ),
-)
+# register_bpf(
+#     "asyncio",
+#     BPFProgramPart(
+#         maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
+#         probes=[_ASYNCIO_EPOLL_BPF],
+#     ),
+# )
 
 
 class _EpollKprobe:
@@ -189,6 +189,7 @@ class _EpollKprobe:
     def _handle_epoll_event(
         self, cpu: int, data: Any, size: int
     ) -> None:
+        print(">>>>>IM HERE")
         if self._bridge.bpf is None:
             return
         try:
@@ -208,7 +209,9 @@ class _EpollKprobe:
 
             if not trace_id:
                 return
-
+            print(
+                f">>>>> epoll event: pid={ev.pid} tid={ev.tid} trace_id='{bytes(ev.trace_id).decode('ascii', errors='replace').rstrip(chr(0))}'"
+            )
             emit(
                 NormalizedEvent.now(
                     probe="asyncio.loop.epoll_wait",

@@ -130,6 +130,18 @@ class TracerMiddleware:
                 start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
+            print(
+                f">>>>> _BEGIN tid={loop_tid} pid={handler_tid} trace_id={trace_id[:8]}"
+            )
+            print(
+                f">>>>> _BEGIN tid={loop_tid} pid={handler_tid} trace_id={trace_id[:8]}"
+            )
+            print(
+                f">>>>> _BEGIN tid={loop_tid} pid={handler_tid} trace_id={trace_id[:8]}"
+            )
+            print(
+                f">>>>> _BEGIN tid={loop_tid} pid={handler_tid} trace_id={trace_id[:8]}"
+            )
             request._st_bridge_tid = [loop_tid, handler_tid]
         emit(
             NormalizedEvent.now(

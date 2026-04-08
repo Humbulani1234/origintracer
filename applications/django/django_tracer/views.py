@@ -186,11 +186,10 @@ class NPlusOneView(View):
     def get(self, request):
         # adjust to your app
         # Query 1 — fetch all authors
-        from stacktracer.context.vars import get_trace_id
-
         from django_tracer.models import (
             Author,
         )
+        from origintracer.context.vars import get_trace_id
 
         print(f">>> trace_id in view: {get_trace_id()}")
         authors = list(Author.objects.all())

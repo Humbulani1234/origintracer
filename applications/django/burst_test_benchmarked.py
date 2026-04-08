@@ -161,9 +161,6 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
 
 
 def main():
-    import pdb
-
-    pdb.set_trace()
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_BASE_URL)
     parser.add_argument(

@@ -256,6 +256,58 @@ static inline int nginx_is_nginx(void) {
     return nginx_pids.lookup(&pid) != NULL;
 }
 
+// ************ Internal Helpers (Replaces Macros) ************
+
+static inline int handle_epoll_enter(void) {
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u64 ts      = bpf_ktime_get_ns();
+    // Unconditional — save for ALL processes
+    nginx_epoll_ts.update(&pid_tid, &ts);
+    return 0;
+}
+
+static inline int handle_epoll_exit(void *args, int ret_val) {
+    u64 pid_tid   = bpf_get_current_pid_tgid();
+    u32 pid       = (u32)(pid_tid >> 32);
+    u32 tid       = (u32)pid_tid;
+
+    u64 *entry_ts = nginx_epoll_ts.lookup(&pid_tid);
+    if (!entry_ts) return 0;
+
+    u64 now = bpf_ktime_get_ns();
+
+    // nginx path — no trace_id, correlation happens in Python
+    if (nginx_is_nginx() && ret_val > 0) {
+        struct kernel_event_t ev = {};
+        ev.timestamp_ns = now;
+        ev.pid          = pid;
+        ev.tid          = tid;
+        ev.duration_ns  = now - *entry_ts;
+        ev.value1       = ret_val;
+        __builtin_memcpy(ev.event_type, "nginx.epoll", 12);
+        // no trace_id copy — nginx doesn't have it
+        kernel_events.perf_submit(args, &ev, sizeof(ev));
+    }
+
+    // Logic for Asyncio/Tracing context
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);
+    if (ctx && ret_val > 0) {
+        struct kernel_event_t ev = {};
+        ev.timestamp_ns = now;
+        ev.pid = pid;
+        ev.tid = tid;
+        ev.duration_ns = now - *entry_ts;
+        ev.value1 = ret_val;
+        __builtin_memcpy(ev.event_type, "epoll.wait", 11);
+        __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);
+        __builtin_memcpy(ev.service,    ctx->service,  32);
+        kernel_events.perf_submit(args, &ev, sizeof(ev));
+    }
+
+    nginx_epoll_ts.delete(&pid_tid);
+    return 0;
+}
+
 // ******** accept4 enter ***********************
 TRACEPOINT_PROBE(syscalls, sys_enter_accept4) {
     if (!nginx_is_nginx()) return 0;
@@ -266,9 +318,6 @@ TRACEPOINT_PROBE(syscalls, sys_enter_accept4) {
 }
 
 // *********** accept4 exit ********************
-// Note: upeer_sockaddr removed from sys_exit_accept4 args in kernel 6.x.
-// Client IP/port capture requires a dedicated enter-side map — omitted here
-// for kernel compatibility. Add if you need it and are on kernel < 6.0.
 TRACEPOINT_PROBE(syscalls, sys_exit_accept4) {
     if (!nginx_is_nginx()) return 0;
     if (args->ret < 0) return 0;
@@ -289,61 +338,14 @@ TRACEPOINT_PROBE(syscalls, sys_exit_accept4) {
     return 0;
 }
 
-// ************ epoll_wait enter ************************
-// Handles BOTH nginx and asyncio paths in one tracepoint.
-// asyncio_probe does NOT attach its own epoll tracepoints — there can only
-// be one BPF program attached to a given tracepoint at a time.
+// ************ epoll_wait Probes ************************
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait)  { return handle_epoll_enter(); }
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_pwait) { return handle_epoll_enter(); }
 
-// ── shared macro for both epoll_wait and epoll_pwait exit logic ───────────────
-#define HANDLE_EPOLL_EXIT(args)                                               \
-    u64 pid_tid   = bpf_get_current_pid_tgid();                              \
-    u32 pid       = (u32)(pid_tid >> 32);                                     \
-    u32 tid       = (u32)pid_tid;                                             \
-    u64 *entry_ts = nginx_epoll_ts.lookup(&pid_tid);                         \
-    if (!entry_ts) return 0;                                                  \
-    nginx_epoll_ts.delete(&pid_tid);                                          \
-    u64 now = bpf_ktime_get_ns();                                             \
-    if (nginx_is_nginx() && args->ret > 0) {                                 \
-        struct kernel_event_t ev = {};                                        \
-        ev.timestamp_ns = now;                                                \
-        ev.pid = pid; ev.tid = tid;                                           \
-        ev.duration_ns = now - *entry_ts;                                     \
-        ev.value1 = args->ret;                                                \
-        __builtin_memcpy(ev.event_type, "nginx.epoll", 12);                  \
-        kernel_events.perf_submit(args, &ev, sizeof(ev));                    \
-    }                                                                         \
-    struct trace_entry_t *ctx = trace_context.lookup(&tid);                  \
-    if (ctx && args->ret > 0) {                                               \
-        struct kernel_event_t ev = {};                                        \
-        ev.timestamp_ns = now;                                                \
-        ev.pid = pid; ev.tid = tid;                                           \
-        ev.duration_ns = now - *entry_ts;                                     \
-        ev.value1 = args->ret;                                                \
-        __builtin_memcpy(ev.event_type, "epoll.wait", 11);                   \
-        __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);                  \
-        __builtin_memcpy(ev.service,    ctx->service,  32);                  \
-        kernel_events.perf_submit(args, &ev, sizeof(ev));                    \
-    }                                                                         \
-    return 0;
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait)   { return handle_epoll_exit(args, args->ret); }
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait)  { return handle_epoll_exit(args, args->ret); }
 
-#define HANDLE_EPOLL_ENTER()                                                  \
-    u64 pid_tid = bpf_get_current_pid_tgid();                                \
-    u32 tid     = (u32)pid_tid;                                               \
-    u64 ts      = bpf_ktime_get_ns();                                        \
-    if (nginx_is_nginx()) { nginx_epoll_ts.update(&pid_tid, &ts); }          \
-    struct trace_entry_t *ctx = trace_context.lookup(&tid);                  \
-    if (ctx) { nginx_epoll_ts.update(&pid_tid, &ts); }                       \
-    return 0;
-
-// ── tracepoint stubs — one line each ─────────────────────────────────────────
-TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait)  { HANDLE_EPOLL_ENTER() }
-TRACEPOINT_PROBE(syscalls, sys_enter_epoll_pwait) { HANDLE_EPOLL_ENTER() }
-TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait)   { HANDLE_EPOLL_EXIT(args) }
-TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait)  { HANDLE_EPOLL_EXIT(args) }
-
-// *********** sendmsg exit ***********************************
-// Exit probe only: msghdr.msg_iov / msg_iovlen removed from BPF-visible
-// msghdr in kernel 6.x. args->ret gives actual bytes sent.
+// *********** write exit ***********************************
 TRACEPOINT_PROBE(syscalls, sys_exit_write) {
     if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
@@ -359,7 +361,7 @@ TRACEPOINT_PROBE(syscalls, sys_exit_write) {
     return 0;
 }
 
-// ************ recvmsg exit ********************************
+// ************ recvfrom exit ********************************
 TRACEPOINT_PROBE(syscalls, sys_exit_recvfrom) {
     if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
@@ -545,6 +547,7 @@ class _NginxKprobeMode:
 
     def __init__(self, bridge, correlator):
         self._bridge = bridge
+        self._our_pid = os.getpid()
         self._corr = correlator
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -621,20 +624,24 @@ class _NginxKprobeMode:
                 time.sleep(0.1)
 
     def _handle_event(self, cpu, data, size):
-        if not self._bridge.bpf:
+        if self._bridge.bpf is None:
             return
 
         from origintracer.sdk.emitter import emit_direct
 
         try:
             ev = self._bridge.bpf["kernel_events"].event(data)
+            event_type_full = ev.event_type.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
+            parts = event_type_full.split(".")
             etype = (
-                ev.event_type.decode("ascii", errors="replace")
-                .rstrip("\x00")
-                .split(".")[1]
+                parts[1] if len(parts) > 1 else event_type_full
             )
             ckey = f"{_NGINX_TRACE_PREFIX}{ev.pid}-{ev.tid}"
-
+            print(
+                f">>>>> nginx epoll: ev.pid={ev.pid} ev.tid={ev.tid} etype={etype}"
+            )
             if etype == "accept":
                 cip = (
                     _ip_str(ev.client_ip) if ev.client_ip else ""
@@ -705,6 +712,31 @@ class _NginxKprobeMode:
                         source="kprobe",
                     )
                 )
+            elif event_type_full == "epoll.wait":
+                # asyncio epoll event — dispatch to asyncio handler
+                trace_id = (
+                    bytes(ev.trace_id)
+                    .decode("ascii", errors="replace")
+                    .rstrip("\x00")
+                )
+                if trace_id:
+                    service = ev.service.decode(
+                        "ascii", errors="replace"
+                    ).rstrip("\x00")
+                    emit(
+                        NormalizedEvent.now(
+                            probe="asyncio.loop.epoll_wait",
+                            trace_id=trace_id,
+                            service=service or "asyncio",
+                            name="epoll_wait",
+                            pid=ev.pid,
+                            tid=ev.tid,
+                            duration_ns=ev.duration_ns,
+                            n_events=int(ev.value1),
+                            ready_fds=[],
+                            source="kprobe",
+                        )
+                    )
         except Exception as e:
             logger.debug("nginx kprobe event: %s", e)
 
@@ -714,6 +746,9 @@ class _NginxKprobeMode:
 
 class _LuaHandler(socketserver.BaseRequestHandler):
     def handle(self):
+        import pdb
+
+        pdb.set_trace()
         try:
             d = json.loads(
                 self.request[0].decode("utf-8", errors="replace")
@@ -902,7 +937,7 @@ class NginxProbe(BaseProbe):
     def __init__(
         self,
         log_path="/var/log/nginx/access.log",
-        mode="kprobe",
+        mode="lua",
         lua_host="127.0.0.1",
         lua_port=9119,
     ):
@@ -916,11 +951,6 @@ class NginxProbe(BaseProbe):
         self._log: Optional[_NginxLogMode] = None
 
     def start(self):
-
-        import pdb
-
-        pdb.set_trace()
-
         # --------- 1. Discover nginx topology and park pre-fork events ----
         # Must happen before any fork() so the events are in _pre_fork_events
         # when the post-init callback drains them into the worker's engine.
