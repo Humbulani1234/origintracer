@@ -105,15 +105,11 @@ Layer A — kprobe (accept4, epoll_wait, sendmsg, recvmsg):
     Knows: fd, client_ip, client_port, kernel duration, bytes, epoll state.
     Does NOT know: URI, method, status, upstream timing.
 
-Layer B — Lua UDP receiver (log_by_lua → UDP port 9119):
-    Knows: URI, method, status, upstream timing, request_id, remote_addr.
-    Does NOT know: fd numbers, accept latency, epoll state.
+Layer C — access log tail: as a fallback.
 
 Correlation: (client_ip, client_port) == (remote_addr, remote_port).
 When both fire for the same connection, they are merged into
 nginx.request.enriched — one event with kernel + HTTP fields combined.
-
-Layer C — access log tail: zero-privilege fallback.
 """
 
 from __future__ import annotations
@@ -444,88 +440,6 @@ class _NginxCorrelator:
                 "_at": time.monotonic(),
             }
 
-    def on_lua_event(self, d: dict):
-        addr = d.get("remote_addr", "")
-        port = int(d.get("remote_port", 0))
-        with self._lock:
-            conn = self._table.pop((addr, port), None)
-        if conn:
-            self._emit_enriched(d, conn)
-        else:
-            self._emit_lua_only(d)
-
-    def _emit_enriched(self, lua, conn):
-        trace_id = lua.get("trace_id") or conn["conn_key"]
-        dur_ms = lua.get("duration_ms", 0)
-        up_ms = lua.get("upstream_ms", -1)
-        own_ms = lua.get("nginx_own_ms", -1)
-        from origintracer.sdk.emitter import emit_direct
-
-        emit(
-            NormalizedEvent.now(
-                probe="nginx.request.enriched",
-                trace_id=trace_id,
-                service="nginx",
-                name=lua.get("uri", "unknown"),
-                method=lua.get("method", ""),
-                status_code=lua.get("status", 0),
-                bytes_sent=lua.get("bytes_sent", 0),
-                upstream_addr=lua.get("upstream_addr", ""),
-                duration_ns=int(dur_ms * 1e6),
-                upstream_duration_ns=(
-                    int(up_ms * 1e6) if up_ms > 0 else None
-                ),
-                nginx_own_duration_ns=(
-                    int(own_ms * 1e6) if own_ms > 0 else None
-                ),
-                accept_duration_ns=conn["accept_dur_ns"],
-                client_ip=conn["client_ip"],
-                client_port=conn["client_port"],
-                worker_pid=conn["pid"],
-                fd=conn["fd"],
-                source="kprobe+lua",
-            )
-        )
-
-    def _emit_lua_only(self, lua):
-        trace_id = (
-            lua.get("trace_id")
-            or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
-        )
-        dur_ms = lua.get("duration_ms", 0)
-        up_ms = lua.get("upstream_ms", -1)
-        from origintracer.sdk.emitter import emit_direct
-
-        emit(
-            NormalizedEvent.now(
-                probe="nginx.request.complete",
-                trace_id=trace_id,
-                service="nginx",
-                name=lua.get("uri", "unknown"),
-                method=lua.get("method", ""),
-                status_code=lua.get("status", 0),
-                duration_ns=int(dur_ms * 1e6),
-                upstream_duration_ns=(
-                    int(up_ms * 1e6) if up_ms > 0 else None
-                ),
-                client_ip=lua.get("remote_addr", ""),
-                source="lua",
-            )
-        )
-
-    def _evict(self):
-        while self._alive:
-            time.sleep(30)
-            cutoff = time.monotonic() - self._TTL
-            with self._lock:
-                stale = [
-                    k
-                    for k, v in self._table.items()
-                    if v["_at"] < cutoff
-                ]
-                for k in stale:
-                    del self._table[k]
-
 
 # ---------------- kprobe layer ------------------------------
 
@@ -741,71 +655,6 @@ class _NginxKprobeMode:
             logger.debug("nginx kprobe event: %s", e)
 
 
-# -------------- Lua UDP receiver --------------------------------
-
-
-class _LuaHandler(socketserver.BaseRequestHandler):
-    def handle(self):
-        import pdb
-
-        pdb.set_trace()
-        try:
-            d = json.loads(
-                self.request[0].decode("utf-8", errors="replace")
-            )
-            self.server.corr.on_lua_event(d)
-        except Exception:
-            pass
-
-
-class _LuaServer(socketserver.UDPServer):
-    allow_reuse_address = True
-
-    def __init__(self, corr, host, port):
-        self.corr = corr
-        super().__init__((host, port), _LuaHandler)
-
-
-class _NginxLuaMode:
-    def __init__(
-        self, corr: _NginxCorrelator, host="127.0.0.1", port=9119
-    ):
-        self._corr = corr
-        self._host = host
-        self._port = port
-        self._srv = None
-
-    def start(self) -> bool:
-        try:
-            self._srv = _LuaServer(
-                self._corr, self._host, self._port
-            )
-        except OSError as e:
-            logger.warning(
-                "nginx Lua UDP bind %s:%d failed: %s",
-                self._host,
-                self._port,
-                e,
-            )
-            return False
-        t = threading.Thread(
-            target=self._srv.serve_forever,
-            daemon=True,
-            name="stacktracer-nginx-lua-udp",
-        )
-        t.start()
-        logger.info(
-            "nginx Lua UDP receiver on %s:%d",
-            self._host,
-            self._port,
-        )
-        return True
-
-    def stop(self):
-        if self._srv:
-            self._srv.shutdown()
-
-
 # ------------- Log tail fallback --------------------------------
 
 
@@ -937,18 +786,14 @@ class NginxProbe(BaseProbe):
     def __init__(
         self,
         log_path="/var/log/nginx/access.log",
-        mode="lua",
+        mode="kprobe",
         lua_host="127.0.0.1",
         lua_port=9119,
     ):
         self._log_path = log_path
         self._mode = mode
-        self._lua_host = lua_host
-        self._lua_port = lua_port
         self._corr: Optional[_NginxCorrelator] = None
         self._kp: Optional[_NginxKprobeMode] = None
-        self._lua: Optional[_NginxLuaMode] = None
-        self._log: Optional[_NginxLogMode] = None
 
     def start(self):
         # --------- 1. Discover nginx topology and park pre-fork events ----
@@ -999,10 +844,9 @@ class NginxProbe(BaseProbe):
 
         # ----- 2. Start the appropriate observation layer ---------------
         self._corr = _NginxCorrelator()
-        wk = self._mode in ("auto", "kprobe", "combined")
-        wl = self._mode in ("auto", "lua", "combined")
+        wk = self._mode in ("auto", "kprobe")
 
-        kp_ok = lu_ok = False
+        kp_ok = False
         if wk and sys.platform == "linux":
             bridge = get_bridge()
             bridge.start()
@@ -1010,35 +854,22 @@ class NginxProbe(BaseProbe):
             kp_ok = self._kp.start()
             if not kp_ok:
                 self._kp = None
-        if wl:
-            self._lua = _NginxLuaMode(
-                self._corr, self._lua_host, self._lua_port
-            )
-            lu_ok = self._lua.start()
-            if not lu_ok:
-                self._lua = None
-        if not kp_ok and not lu_ok:
+
+        if not kp_ok:
             self._log = _NginxLogMode(self._log_path)
             if not self._log.start():
                 self._log = None
 
-        active = (
-            (["kprobe"] if kp_ok else [])
-            + (["lua"] if lu_ok else [])
-            + (["log"] if self._log else [])
+        active = (["kprobe"] if kp_ok else []) + (
+            ["log"] if self._log else []
         )
         if active:
             logger.info("nginx probe: %s", "+".join(active))
-            if kp_ok and lu_ok:
-                logger.info(
-                    "nginx: kprobe+lua combined — emitting "
-                    "nginx.request.enriched on correlated connections"
-                )
         else:
             logger.warning("nginx probe: no layer started")
 
-    def stop(self):
-        for x in (self._kp, self._lua, self._log, self._corr):
-            if x:
-                x.stop()
-        self._kp = self._lua = self._log = self._corr = None
+        def stop(self):
+            for x in (self._kp, self._log, self._corr):
+                if x:
+                    x.stop()
+            self._kp = self._log = self._corr = None
