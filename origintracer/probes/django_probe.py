@@ -136,6 +136,7 @@ class TracerMiddleware:
     def _end(
         self, request: Any, response: Any, trace_id: str
     ) -> None:
+
         duration_ns = int(
             (time.perf_counter() - request._st_t0) * 1e9
         )
@@ -439,14 +440,11 @@ class DjangoProbe(BaseProbe):
 
     def start(self, observe_modules=None) -> None:
 
-        # import pdb
-        # pdb.set_trace()
-
         global _patched
 
         if _patched:
             logger.warning(
-                "django probe: already installed — skipping"
+                "django probe: already installed - skipping"
             )
             return
 

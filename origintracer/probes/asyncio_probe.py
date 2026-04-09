@@ -138,7 +138,7 @@ class _EpollKprobe:
     def start(self) -> bool:
         if not self._bridge.available:
             logger.info(
-                "asyncio epoll kprobe: bridge unavailable — skipping"
+                "asyncio epoll kprobe: bridge unavailable - skipping"
             )
             return False
 
@@ -155,17 +155,19 @@ class _EpollKprobe:
                 exc,
             )
 
-        self._running = True
         self._thread = threading.Thread(
             target=self._poll_loop,
             daemon=True,
-            name="stacktracer-epoll-kprobe",
+            name="origintracer-epoll-kprobe",
         )
+
         self._thread.start()
         logger.info(
             "asyncio epoll kprobe: started (our_pid=%d)",
             self._our_pid,
         )
+
+        self._running = True
         return True
 
     def stop(self) -> None:
@@ -383,7 +385,9 @@ class AsyncioProbe(BaseProbe):
     def start(
         self, observe_modules: Optional[List[str]] = None
     ) -> None:
+
         global _originals, _patched, _original_step
+
         if _patched:
             logger.warning(
                 "asyncio probe already installed - skipping"
@@ -444,12 +448,12 @@ class AsyncioProbe(BaseProbe):
                 _original_step.pop("task_step"),
             )
 
+        if "create_task" in _originals:
+            asyncio.create_task = _originals.pop("create_task")
+
         if self._epoll_kprobe:
             self._epoll_kprobe.stop()
             self._epoll_kprobe = None
-
-        if "create_task" in _originals:
-            asyncio.create_task = _originals.pop("create_task")
 
         _patched = False
         logger.info("asyncio probe removed")

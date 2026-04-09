@@ -153,8 +153,7 @@ ProbeTypes.register_many(
 
 _NGINX_TRACE_PREFIX = "nginx-"
 
-# ── Pre-fork event parking ─────────────────────────────────────────────────
-#
+# -------------------- Pre-fork event parking ------------------------------
 # Events emitted here would land in the master's engine — which is discarded
 # after fork. We park them in this list and drain them after init() completes
 # in the worker, so the worker's engine receives the full nginx topology.
@@ -164,16 +163,14 @@ _pre_fork_events: list = []
 
 def _drain_pre_fork_events() -> None:
     """Drain parked nginx topology events into the worker's live engine."""
-    from stacktracer.sdk.emitter import emit_direct
+    from origintracer.sdk.emitter import emit_direct
 
     for event in _pre_fork_events:
         emit_direct(event)
     _pre_fork_events.clear()
 
 
-# ── pid discovery ─────────────────────────────────────────────────────
-
-
+# pid discovery
 def _find_nginx_pids() -> List[int]:
     pids = []
     for pid_file in ["/var/run/nginx.pid", "/run/nginx.pid"]:
@@ -206,7 +203,7 @@ def _find_nginx_master_and_workers() -> (
     """
     Returns (master_pid_or_None, [worker_pids]).
     Separates master from workers so structural edges can be drawn:
-        nginx::master ──spawned──► nginx::worker-{pid}
+        nginx::master - spawned >> nginx::worker-{pid}
     """
     for pid_file in ["/var/run/nginx.pid", "/run/nginx.pid"]:
         if os.path.exists(pid_file):
@@ -247,16 +244,16 @@ def _ip_str(ip_be: int) -> str:
     )
 
 
-# ------- Ngnix BPF C source --------------------------------
+# ------------------------ Ngnix BPF C source -----------------------------
 
 _NGINX_BPF = r"""
-// ********* nginx pid filter *********************
+/* ----------- nginx pid filter ------------------ */
 static inline int nginx_is_nginx(void) {
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     return nginx_pids.lookup(&pid) != NULL;
 }
 
-// ******** accept4 enter ***********************
+/* ------------- accept4 enter ----------------- */
 TRACEPOINT_PROBE(syscalls, sys_enter_accept4) {
     if (!nginx_is_nginx()) return 0;
     u64 pid_tid = bpf_get_current_pid_tgid();
@@ -312,6 +309,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait) {
 }
 
 // ************ epoll_wait exit ****************************
+
 TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
     u64 pid_tid   = bpf_get_current_pid_tgid();
     u32 pid       = (u32)(pid_tid >> 32);
@@ -326,10 +324,10 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
     if (nginx_is_nginx() && args->ret > 0) {
         struct kernel_event_t ev = {};
         ev.timestamp_ns = now;
-        ev.pid          = pid;
-        ev.tid          = tid;
-        ev.duration_ns  = now - *entry_ts;
-        ev.value1       = args->ret;
+        ev.pid = pid;
+        ev.tid = tid;
+        ev.duration_ns = now - *entry_ts;
+        ev.value1 = args->ret;
         __builtin_memcpy(ev.event_type, "nginx.epoll", 12);
         kernel_events.perf_submit(args, &ev, sizeof(ev));
     }
@@ -353,6 +351,7 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
 }
 
 // *********** sendmsg exit ***********************************
+
 // Exit probe only: msghdr.msg_iov / msg_iovlen removed from BPF-visible
 // msghdr in kernel 6.x. args->ret gives actual bytes sent.
 TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
@@ -362,15 +361,16 @@ TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
     u64 pid_tid = bpf_get_current_pid_tgid();
     struct kernel_event_t ev = {};
     ev.timestamp_ns = bpf_ktime_get_ns();
-    ev.pid          = (u32)(pid_tid >> 32);
-    ev.tid          = (u32)pid_tid;
-    ev.value1       = args->ret;   // bytes sent
+    ev.pid = (u32)(pid_tid >> 32);
+    ev.tid = (u32)pid_tid;
+    ev.value1 = args->ret;   // bytes sent
     __builtin_memcpy(ev.event_type, "nginx.data_out", 15);
     kernel_events.perf_submit(args, &ev, sizeof(ev));
     return 0;
 }
 
 // ************ recvmsg exit ********************************
+
 TRACEPOINT_PROBE(syscalls, sys_exit_recvmsg) {
     if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
@@ -380,7 +380,7 @@ TRACEPOINT_PROBE(syscalls, sys_exit_recvmsg) {
     ev.timestamp_ns = bpf_ktime_get_ns();
     ev.pid          = (u32)(pid_tid >> 32);
     ev.tid          = (u32)pid_tid;
-    ev.value1       = args->ret;   // bytes received
+    ev.value1       = args->ret; // bytes received
     __builtin_memcpy(ev.event_type, "nginx.data_in", 14);
     kernel_events.perf_submit(args, &ev, sizeof(ev));
     return 0;
@@ -401,9 +401,9 @@ register_bpf(
         ],
         structs=[],
         maps=[
-            "BPF_HASH(nginx_pids,      u32, u8);",
+            "BPF_HASH(nginx_pids, u32, u8);",
             "BPF_HASH(nginx_accept_ts, u64, u64);",
-            "BPF_HASH(nginx_epoll_ts,  u64, u64);",
+            "BPF_HASH(nginx_epoll_ts, u64, u64);",
         ],
         probes=[_NGINX_BPF],
     ),
@@ -503,7 +503,7 @@ class _NginxCorrelator:
         )
         dur_ms = lua.get("duration_ms", 0)
         up_ms = lua.get("upstream_ms", -1)
-        from stacktracer.sdk.emitter import emit_direct
+        from origintracer.sdk.emitter import emit_direct
 
         emit_direct(
             NormalizedEvent.now(
@@ -894,12 +894,12 @@ class NginxProbe(BaseProbe):
         These are drained into the live engine after init() completes in each
         gunicorn worker, giving every worker's graph the correct nginx topology:
 
-            nginx::master ──spawned──► nginx::worker-{pid}
-            nginx::worker-{pid} ──handled──► nginx::{uri}
+            nginx::master - spawned >> nginx::worker-{pid}
+            nginx::worker-{pid} - handled >> nginx::{uri}
 
     Configure:
         nginx:
-          mode: auto       # auto | kprobe | lua | log | combined
+          mode: auto # auto | kprobe | lua | log | combined
           log_path: /var/log/nginx/access.log
           lua_host: 127.0.0.1
           lua_port: 9119
