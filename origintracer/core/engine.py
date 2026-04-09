@@ -8,11 +8,9 @@ from typing import Any, Dict, List, Optional
 from ..query.parser import execute, parse
 from ..sdk.base_probe import BaseProbe
 from .active_requests import ActiveRequestTracker
-from .causal import (
-    CausalMatch,
-    PatternRegistry,
-    build_default_registry,
-)
+from .causal import CausalMatch, CausalRule, PatternRegistry
+
+# build_default_registry,
 from .event_schema import NormalizedEvent, ProbeTypes
 from .graph_compactor import GraphCompactor
 from .graph_normalizer import GraphNormalizer
@@ -61,7 +59,7 @@ class Engine:
             GraphCompactor()
         )  # overwridden in init()
         self.semantic = semantic_layer or SemanticLayer()
-        self.causal = causal_registry or build_default_registry()
+        self.causal: Optional[dict[str, CausalRule]] = None
         # System active probes - overridden during init()
         self.probes: Optional[List[BaseProbe]] = None
 

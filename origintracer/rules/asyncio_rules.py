@@ -1,9 +1,11 @@
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..core.active_requests import ActiveRequestTracker
-from ..core.causal import CausalRule
-from ..core.runtime_graph import RuntimeGraph
-from ..core.temporal import TemporalStore
+from origintracer.core.active_requests import (
+    ActiveRequestTracker,
+)
+from origintracer.core.causal import CausalRule, PatternRegistry
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.temporal import TemporalStore
 
 # ------------- New synchronous call after deployment -----------
 
@@ -92,3 +94,6 @@ LOOP_STARVATION = CausalRule(
     confidence=0.80,
     tags=["asyncio", "latency", "blocking"],
 )
+
+PatternRegistry.register(NEW_SYNC_CALL)
+PatternRegistry.register(LOOP_STARVATION)

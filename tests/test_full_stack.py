@@ -32,40 +32,6 @@ import pytest
 # ------------------------------------------------------------------ #
 
 
-@pytest.fixture
-def engine():
-    from origintracer.core.causal import build_default_registry
-    from origintracer.core.engine import Engine
-    from origintracer.core.semantic import (
-        SemanticAlias,
-        SemanticLayer,
-    )
-    from origintracer.sdk.emitter import bind_engine
-
-    sem = SemanticLayer()
-    sem.register(
-        SemanticAlias(
-            label="export",
-            description="Export pipeline",
-            node_patterns=["django::handle_export"],
-            services=["exporter"],
-        )
-    )
-
-    e = Engine(
-        causal_registry=build_default_registry(),
-        semantic_layer=sem,
-        snapshot_interval_s=9999,  # disable periodic snapshots in tests
-    )
-    bind_engine(e)
-    return e
-
-
-@pytest.fixture
-def trace_id():
-    return str(uuid.uuid4())
-
-
 def make_event(
     probe: str,
     service: str = "django",
@@ -350,7 +316,7 @@ class TestPatternRegistry:
         def always_match(g, t, a):
             return True, {"evidence": "always"}
 
-        registry = PatternRegistry()
+        registry = PatternRegistry
         registry.register(
             CausalRule(
                 "test_rule", "Always matches", always_match, 0.9
@@ -376,7 +342,7 @@ class TestPatternRegistry:
         def broken_rule(g, t):
             raise RuntimeError("oops")
 
-        registry = PatternRegistry()
+        registry = PatternRegistry
         registry.register(
             CausalRule("broken", "Broken rule", broken_rule, 0.5)
         )

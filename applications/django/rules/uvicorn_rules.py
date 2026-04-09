@@ -1,9 +1,11 @@
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..core.active_requests import ActiveRequestTracker
-from ..core.causal import CausalRule
-from ..core.runtime_graph import RuntimeGraph
-from ..core.temporal import TemporalStore
+from origintracer.core.active_requests import (
+    ActiveRequestTracker,
+)
+from origintracer.core.causal import CausalRule, PatternRegistry
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.temporal import TemporalStore
 
 # ---------------------- Request duration anomaly --------------------------
 
@@ -109,14 +111,21 @@ def _request_duration_anomaly(
     }
 
 
-REQUEST_DURATION_ANOMALY = CausalRule(
-    name="request_duration_anomaly",
-    description=(
-        "Recent request latency has diverged from the historical baseline "
-        "by 3x or more. Check probe_sequence of slow in-flight requests "
-        "to identify the new bottleneck."
-    ),
-    predicate=_request_duration_anomaly,
-    confidence=0.85,
-    tags=["latency", "anomaly", "live"],
-)
+def register(registry: PatternRegistry) -> None:
+    """
+    Called automatically when this file is loaded.
+    Register all rules from this file here.
+    """
+    registry.register(
+        CausalRule(
+            name="request_duration_anomaly",
+            description=(
+                "Recent request latency has diverged from the historical baseline "
+                "by 3x or more. Check probe_sequence of slow in-flight requests "
+                "to identify the new bottleneck."
+            ),
+            predicate=_request_duration_anomaly,
+            confidence=0.85,
+            tags=["latency", "anomaly", "live"],
+        )
+    )

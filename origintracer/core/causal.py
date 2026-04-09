@@ -29,6 +29,7 @@ v2: learn weights from confirmed incidents.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -39,6 +40,8 @@ from origintracer.core.active_requests import (
 
 from .runtime_graph import RuntimeGraph
 from .temporal import TemporalStore
+
+logger = logging.getLogger("origintracer.causal")
 
 
 @dataclass
@@ -79,19 +82,23 @@ class PatternRegistry:
     """
     Register causal rules and evaluate them over the live graph.
 
-        registry = PatternRegistry()
-        registry.register(N_PLUS_ONE)
-        matches = registry.evaluate(graph, temporal)
+        PatternRegistry.register(N_PLUS_ONE)
+        matches = PatternRegistry.evaluate(graph, temporal)
     """
 
-    def __init__(self) -> None:
-        self._rules: Dict[str, CausalRule] = {}
+    _rules: Dict[str, CausalRule] = {}
 
-    def register(self, rule: CausalRule) -> None:
-        self._rules[rule.name] = rule
+    @classmethod
+    def register(cls, rule: CausalRule) -> None:
+        cls._rules[rule.name] = rule
 
+    @classmethod
+    def deregister(cls, name: str) -> None:
+        cls._rules.pop(name, None)
+
+    @classmethod
     def evaluate(
-        self,
+        cls,
         graph: RuntimeGraph,
         temporal: TemporalStore,
         tracker: Optional[ActiveRequestTracker] = None,
@@ -100,7 +107,7 @@ class PatternRegistry:
         """Run all registered rules, optionally filtered by tag."""
         results: List[CausalMatch] = []
 
-        for rule in self._rules.values():
+        for rule in cls._rules.values():
             if tags and not set(tags) & set(rule.tags):
                 continue
             try:
@@ -129,8 +136,29 @@ class PatternRegistry:
         results.sort(key=lambda m: m.confidence, reverse=True)
         return results
 
-    def rule_names(self) -> List[str]:
-        return list(self._rules.keys())
+    @classmethod
+    def rule_names(cls) -> List[str]:
+        return list(cls._rules.keys())
+
+    @classmethod
+    def apply_filter(cls, allowed: List[str]) -> None:
+        """
+        If allowed is non-empty, deregister any rule not in that set.
+        Empty list = no filtering (all rules remain active).
+        """
+        if not allowed:
+            return
+        allowed_set = set(allowed)
+        unknown = allowed_set - set(cls._rules)
+        if unknown:
+            logger.warning(
+                "cfg.rules references unknown rules: %s", unknown
+            )
+        for name in set(cls._rules) - allowed_set:
+            cls.deregister(name)
+            logger.debug(
+                "Rule deregistered (not in cfg.rules): %s", name
+            )
 
 
 def _is_db_node(node) -> bool:
@@ -621,40 +649,41 @@ REQUEST_DURATION_ANOMALY = CausalRule(
     tags=["latency", "anomaly", "live"],
 )
 
+pattern_registry = PatternRegistry()
 
 # Registry builder
 
 
-def build_default_registry(tracker=None) -> PatternRegistry:
-    """
-    Build and return the default PatternRegistry with all built-in rules.
+# def build_default_registry(tracker=None) -> PatternRegistry:
+#     """
+#     Build and return the default PatternRegistry with all built-in rules.
 
-    Parameters
-    ----------
-    tracker : ActiveRequestTracker | None
-        If provided, the request_duration_anomaly rule is included.
-        If None, that rule is omitted — all other rules are unaffected.
+#     Parameters
+#     ----------
+#     tracker : ActiveRequestTracker | None
+#         If provided, the request_duration_anomaly rule is included.
+#         If None, that rule is omitted — all other rules are unaffected.
 
-    Usage in Engine.__init__():
-        self._tracker  = ActiveRequestTracker()
-        self._registry = build_default_registry(tracker=self._tracker)
-    """
-    registry = PatternRegistry()
+#     Usage in Engine.__init__():
+#         self._tracker  = ActiveRequestTracker()
+#         self._registry = build_default_registry(tracker=self._tracker)
+#     """
+#     registry = PatternRegistry()
 
-    registry.register(N_PLUS_ONE)  # 0.90 — highest confidence
-    registry.register(
-        NEW_SYNC_CALL
-    )  # 0.85 — deployment correlation
-    registry.register(LOOP_STARVATION)  # 0.80 — asyncio blocking
-    registry.register(
-        WORKER_IMBALANCE
-    )  # 0.80 — gunicorn topology
-    registry.register(
-        RETRY_AMPLIFICATION
-    )  # 0.75 — edge retry counts
-    registry.register(DB_HOTSPOT)  # 0.70 — query call share
-    registry.register(
-        REQUEST_DURATION_ANOMALY
-    )  # 0.85 — live P99
+#     registry.register(N_PLUS_ONE)  # 0.90 — highest confidence
+#     registry.register(
+#         NEW_SYNC_CALL
+#     )  # 0.85 — deployment correlation
+#     registry.register(LOOP_STARVATION)  # 0.80 — asyncio blocking
+#     registry.register(
+#         WORKER_IMBALANCE
+#     )  # 0.80 — gunicorn topology
+#     registry.register(
+#         RETRY_AMPLIFICATION
+#     )  # 0.75 — edge retry counts
+#     registry.register(DB_HOTSPOT)  # 0.70 — query call share
+#     registry.register(
+#         REQUEST_DURATION_ANOMALY
+#     )  # 0.85 — live P99
 
-    return registry
+#     return registry

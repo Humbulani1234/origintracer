@@ -1,9 +1,16 @@
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..core.active_requests import ActiveRequestTracker
-from ..core.causal import CausalRule, _is_db_node, _is_view_node
-from ..core.runtime_graph import RuntimeGraph
-from ..core.temporal import TemporalStore
+from origintracer.core.active_requests import (
+    ActiveRequestTracker,
+)
+from origintracer.core.causal import (
+    CausalRule,
+    PatternRegistry,
+    _is_db_node,
+    _is_view_node,
+)
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.temporal import TemporalStore
 
 # ------------------------- N+1 query detection --------------------------
 
@@ -147,3 +154,6 @@ DB_HOTSPOT = CausalRule(
     confidence=0.70,
     tags=["db", "performance"],
 )
+
+PatternRegistry.register(N_PLUS_ONE)
+PatternRegistry.register(DB_HOTSPOT)

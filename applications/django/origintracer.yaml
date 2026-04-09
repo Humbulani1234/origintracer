@@ -9,6 +9,15 @@ probes:
   - django
   - nginx
 
+rules:
+  - worker_imbalance
+  - new_sync_call_after_deployment
+  - asyncio_event_loop_starvation
+  - n_plus_one_queries
+  - db_query_hotspot
+  - retry_amplification
+  - request_duration_anomaly
+
 semantic:
   - label: http
     description: Full HTTP request lifecycle across all layers

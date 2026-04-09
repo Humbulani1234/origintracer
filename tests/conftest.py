@@ -20,7 +20,7 @@ import pytest
 from origintracer.core.active_requests import (
     ActiveRequestTracker,
 )
-from origintracer.core.causal import build_default_registry
+from origintracer.core.causal import PatternRegistry
 from origintracer.core.engine import Engine
 from origintracer.core.event_schema import NormalizedEvent
 from origintracer.core.semantic import (
@@ -65,6 +65,32 @@ def tracker() -> ActiveRequestTracker:
     return ActiveRequestTracker(ttl_s=30.0, max_size=1000)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def load_builtin_rules():
+    import importlib
+    import pkgutil
+
+    import origintracer.rules
+
+    for _, module_name, _ in pkgutil.iter_modules(
+        origintracer.rules.__path__
+    ):
+        importlib.import_module(
+            f"origintracer.rules.{module_name}"
+        )
+    # User rules that need to be available in tests
+    from applications.django.rules import gunicorn_rules
+
+    gunicorn_rules.register(PatternRegistry)
+
+
+@pytest.fixture(autouse=True, scope="function")
+def reset_registry(load_builtin_rules):
+    snapshot = dict(PatternRegistry._rules)
+    yield
+    PatternRegistry._rules = snapshot
+
+
 @pytest.fixture
 def engine(tracker) -> Engine:
     """
@@ -99,11 +125,11 @@ def engine(tracker) -> Engine:
     )
 
     e = Engine(
-        causal_registry=build_default_registry(tracker=tracker),
         semantic_layer=sem,
         snapshot_interval_s=9999,  # never fires during tests
     )
     e.tracker = tracker
+    e.causal = PatternRegistry
     bind_engine(e)
     return e
 

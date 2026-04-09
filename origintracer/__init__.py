@@ -26,10 +26,12 @@ from typing import Any, Callable, Dict, List, Optional
 import yaml
 
 from .context.vars import get_trace_id
+from .core.causal import CausalRule, PatternRegistry
 from .core.engine import Engine
 from .core.event_schema import NormalizedEvent
+from .core.runtime_graph import RuntimeGraph
 from .sdk.base_probe import BaseProbe, ProbeRegistry
-from .sdk.emitter import emit
+from .sdk.emitter import bind_engine, emit
 from .sdk.uploader import Uploader
 
 logger = logging.getLogger("origintracer")
@@ -37,6 +39,7 @@ logger = logging.getLogger("origintracer")
 # Package-level variables
 _config: Optional["ResolvedConfig"] = None
 _engine: Optional[Engine] = None
+_active_rules: dict[str, CausalRule] = {}
 _active_probes: List[BaseProbe] = []
 _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
@@ -223,7 +226,9 @@ class ResolvedConfig:
     flush_interval: int
     snapshot_interval: float
     probes: List[str]
+    rules: List[str]
     builtin_probes: List[str]
+    builtin_rules: List[str]
     semantic: List[Dict]
     normalize: List[Dict]
     compactor: Dict[str, Any]
@@ -249,6 +254,7 @@ def _build_resolved_config(
     api_key: str,
     endpoint: str,
     probes: Optional[List[str]],
+    rules: Optional[List[str]],
     semantic: Optional[List[Dict]],
     snapshot_interval: Optional[float],
     flush_interval: Optional[int],
@@ -291,7 +297,13 @@ def _build_resolved_config(
             if probes is not None
             else merged_yaml.get("probes", [])
         ),
+        rules=(
+            rules
+            if rules is not None
+            else merged_yaml.get("rules", [])
+        ),
         builtin_probes=merged_yaml.get("builtin_probes", []),
+        builtin_rules=merged_yaml.get("builtin_rules", []),
         semantic=resolved_semantic,
         normalize=resolved_normalize,
         compactor=_deep_merge(
@@ -361,28 +373,16 @@ def _init_tracker(cfg: ResolvedConfig) -> Any:
     )
 
 
-def _init_pattern_registry(tracker: Any) -> Any:
-    from .core.causal import build_default_registry
-
-    return build_default_registry(tracker=tracker)
-
-
 def _init_engine(
     cfg: ResolvedConfig,
     normalizer: Any,
     compactor: Any,
     semantic: Any,
-    registry: Any,
     tracker: Any,
-    repository: Optional[Any],
-) -> Any:
-    from .core.engine import Engine
-    from .core.runtime_graph import RuntimeGraph
-    from .sdk.emitter import bind_engine
-
+    repository: Optional[Uploader],
+) -> Engine:
     graph = RuntimeGraph()
     engine = Engine(
-        causal_registry=registry,
         semantic_layer=semantic,
         snapshot_interval_s=cfg.snapshot_interval,
     )
@@ -490,7 +490,38 @@ def _discover_user_probes(app_root: str) -> None:
             sys.modules.pop(module_name, None)
 
 
-def _discover_user_rules(registry: Any, app_root: str) -> None:
+def _init_rules(
+    cfg: ResolvedConfig, engine: Any, app_root: str
+) -> List[Any]:
+    """
+    1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
+       Side-effect: each module registers its BaseProbe subclass with ProbeRegistry.
+
+    2. Discover user probes from <app_root>/origintracer/probes/*_probe.py.
+
+    3. Start probes named in cfg.probes (user origintracer.yaml takes precedence
+       over defaults.yaml probes list via _deep_merge).
+    """
+    # 1. Builtins — import triggers PatternRegistry.registry.register(...)
+    for module_path in cfg.builtin_rules:
+        try:
+            importlib.import_module(module_path)
+        except ImportError as exc:
+            logger.debug(
+                "Builtin rule not available: %s — %s",
+                module_path,
+                exc,
+            )
+
+    # 2. User rules — also registers into PatternRegistry.registry
+    _discover_user_rules(app_root)
+
+    # 3. Filter to intersection with cfg.rules
+    PatternRegistry._apply_rule_filter(cfg.rules)
+    return PatternRegistry._rules
+
+
+def _discover_user_rules(app_root: str) -> None:
     """
     Auto-discover *_rules.py files from <app_root>/origintracer/rules/.
     Each file must expose register(registry) which adds CausalRule instances.
@@ -518,17 +549,17 @@ def _discover_user_rules(registry: Any, app_root: str) -> None:
             register_fn = getattr(module, "register", None)
             if register_fn is None:
                 logger.warning(
-                    "User rules file %s has no register(registry) — skipped",
+                    "User rules file %s has no register(registry) - skipped",
                     fname,
                 )
                 sys.modules.pop(module_name, None)
                 continue
 
-            register_fn(registry)
+            register_fn(PatternRegistry)
             logger.info(
                 "User rules loaded from %s (registry now has %d rules)",
                 fname,
-                len(registry.rule_names()),
+                len(PatternRegistry.rule_names()),
             )
         except Exception:
             logger.warning(
@@ -594,6 +625,7 @@ def init(
     endpoint: str = "http://localhost:8000",
     config: Optional[str] = None,
     probes: Optional[List[str]] = None,
+    rules: Optional[List[str]] = None,
     semantic: Optional[List[Dict]] = None,
     snapshot_interval: Optional[float] = None,
     flush_interval: Optional[int] = None,
@@ -671,7 +703,7 @@ def init(
         Override ActiveRequestTracker settings.
         MERGES key-by-key.  Keys: ttl_s, max_size
     """
-    global _config, _engine, _active_probes
+    global _config, _engine, _active_probes, _active_rules
 
     # 1. Load and merge
     package_defaults = _load_package_defaults()
@@ -686,6 +718,7 @@ def init(
         api_key=api_key,
         endpoint=endpoint,
         probes=probes,
+        rules=rules,
         semantic=semantic,
         snapshot_interval=snapshot_interval,
         flush_interval=flush_interval,
@@ -705,21 +738,20 @@ def init(
     compactor_ = _init_compactor(_config)
     semantic_layer = _init_semantic(_config)
     tracker = _init_tracker(_config)
-    registry = _init_pattern_registry(tracker)
-
-    _discover_user_rules(registry, app_root)
 
     _engine = _init_engine(
         cfg=_config,
         normalizer=normalizer,
         compactor=compactor_,
         semantic=semantic_layer,
-        registry=registry,
         tracker=tracker,
         repository=repository,
     )
 
     _init_local_server(_engine)
+
+    _active_rules = _init_rules(_config, _engine, app_root)
+    _engine.causal = _active_rules
 
     if not otel_mode:
         _active_probes = _init_probes(_config, _engine, app_root)

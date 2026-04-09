@@ -20,7 +20,7 @@ These rules are queried via:
 
 from __future__ import annotations
 
-from stacktracer.core.causal import CausalRule, PatternRegistry
+from origintracer.core.causal import CausalRule, PatternRegistry
 
 
 def register(registry: PatternRegistry) -> None:

@@ -503,7 +503,6 @@ def _show_rules(engine: Any) -> Dict:
     registry = getattr(engine, "causal", None)
 
     # Get the rules from the registry.
-    # If it's a PatternRegistry, we saw the data is in ._rules.keys()
     if registry and hasattr(registry, "_rules"):
         rules = list(registry._rules.keys())
     else:

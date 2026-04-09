@@ -34,7 +34,6 @@ from origintracer.__init__ import ResolvedConfig
 from origintracer.core.active_requests import (
     ActiveRequestTracker,
 )
-from origintracer.core.causal import build_default_registry
 from origintracer.core.engine import Engine
 from origintracer.core.event_schema import NormalizedEvent
 from origintracer.sdk.emitter import (
@@ -60,17 +59,8 @@ class TestNginxDjangoPostgresTrace:
 
     def setup_method(self):
         enable_sync_mode()
-        tracker = ActiveRequestTracker()
-        self.engine = Engine(
-            causal_registry=build_default_registry(
-                tracker=tracker
-            ),
-            snapshot_interval_s=9999,
-        )
-        self.engine.tracker = tracker
-        bind_engine(self.engine)
 
-    def test_topology_built_correctly(self):
+    def test_topology_built_correctly(self, engine):
         tid = str(uuid.uuid4())
 
         # nginx accepts the connection
@@ -130,7 +120,7 @@ class TestNginxDjangoPostgresTrace:
                 "request.exit", tid, "nginx", "upstream"
             )
         )
-        g = self.engine.graph
+        g = engine.graph
 
         # All services present
         services = {n.service for n in g.all_nodes()}
@@ -151,7 +141,7 @@ class TestNginxDjangoPostgresTrace:
             in reachable_from_nginx
         )
 
-    def test_critical_path_returns_ordered_stages(self):
+    def test_critical_path_returns_ordered_stages(self, engine):
         tid = str(uuid.uuid4())
         stages = [
             ("request.entry", "nginx", "upstream"),
@@ -161,13 +151,13 @@ class TestNginxDjangoPostgresTrace:
         for probe, service, name in stages:
             emit(NormalizedEvent.now(probe, tid, service, name))
 
-        path = self.engine.critical_path(tid)
+        path = engine.critical_path(tid)
         assert len(path) == 3
         assert path[0]["service"] == "nginx"
         assert path[1]["service"] == "django"
         assert path[2]["service"] == "postgres"
 
-    def test_dsl_hotspot_returns_most_called_node(self):
+    def test_dsl_hotspot_returns_most_called_node(self, engine):
         """After many requests, the most-called node tops the hotspot list."""
         from origintracer.query.parser import execute, parse
 
@@ -186,18 +176,18 @@ class TestNginxDjangoPostgresTrace:
                     "function.call", tid, "django", "quiet_view"
                 )
             )
-        result = execute(parse("HOTSPOT TOP 5"), self.engine)
+        result = execute(parse("HOTSPOT TOP 5"), engine)
         data = result.get("data")
         top_node = data[0]["node"]
         assert top_node == "django::busy_view"
 
-    def test_tracker_records_probe_sequence(self):
+    def test_tracker_records_probe_sequence(self, engine):
         """
         Django probe would call tracker.start() and tracker.complete().
         Simulate that lifecycle and verify the probe_sequence accumulates.
         """
         tid = str(uuid.uuid4())
-        self.engine.tracker.start(
+        engine.tracker.start(
             tid, service="django", pattern="/api/orders/"
         )
 
@@ -212,10 +202,10 @@ class TestNginxDjangoPostgresTrace:
             )
         )
 
-        self.engine.tracker.complete(tid)
+        engine.tracker.complete(tid)
 
         # Span is now in completions — tracker.all_patterns_summary() should show it
-        summary = self.engine.tracker.all_patterns_summary()
+        summary = engine.tracker.all_patterns_summary()
         assert "/api/orders/" in summary
 
 
@@ -232,17 +222,8 @@ class TestDeploymentCorrelation:
 
     def setup_method(self):
         enable_sync_mode()
-        tracker = ActiveRequestTracker()
-        self.engine = Engine(
-            causal_registry=build_default_registry(
-                tracker=tracker
-            ),
-            snapshot_interval_s=9999,
-        )
-        self.engine.tracker = tracker
-        bind_engine(self.engine)
 
-    def test_new_edge_after_deployment_fires_rule(self):
+    def test_new_edge_after_deployment_fires_rule(self, engine):
         # Some baseline traffic before deployment
         for i in range(3):
             tid = str(uuid.uuid4())
@@ -254,9 +235,9 @@ class TestDeploymentCorrelation:
                     "existing_view",
                 )
             )
-        self.engine.snapshot()
+        engine.snapshot()
         # Deployment happens
-        self.engine.mark_deployment("deployment")
+        engine.mark_deployment("deployment")
         time.sleep(0.01)
 
         # NEW synchronous call appears post-deploy
@@ -274,16 +255,18 @@ class TestDeploymentCorrelation:
                 "call_feature_flags",
             )
         )
-        self.engine.snapshot()
+        engine.snapshot()
 
-        matches = self.engine.evaluate()
+        matches = engine.evaluate()
         rule_names = [m.rule_name for m in matches]
         assert "new_sync_call_after_deployment" in rule_names
 
-    def test_deployment_marker_survives_snapshot_cycle(self):
-        self.engine.mark_deployment("v3.0.0")
-        self.engine.snapshot()  # temporal store captures the marker
-        found = self.engine.temporal.label_diff("v3.0.0")
+    def test_deployment_marker_survives_snapshot_cycle(
+        self, engine
+    ):
+        engine.mark_deployment("v3.0.0")
+        engine.snapshot()  # temporal store captures the marker
+        found = engine.temporal.label_diff("v3.0.0")
         assert found is not None
 
 
@@ -460,18 +443,12 @@ class TestNPlusOneEndToEnd:
 
     def setup_method(self):
         enable_sync_mode()
-        tracker = ActiveRequestTracker()
-        self.engine = Engine(
-            causal_registry=build_default_registry(
-                tracker=tracker
-            ),
-            snapshot_interval_s=9999,
-        )
-        self.engine.tracker = tracker
-        bind_engine(self.engine)
 
     def _emit_nplusone_request(
-        self, n_authors: int = 1, books_per_author: int = 10
+        self,
+        engine,
+        n_authors: int = 1,
+        books_per_author: int = 10,
     ):
         tid = str(uuid.uuid4())
 
@@ -481,7 +458,7 @@ class TestNPlusOneEndToEnd:
         )
 
         # 2. Tell the engine this is the ROOT of the trace
-        self.engine.process(view_enter)
+        engine.process(view_enter)
 
         # 3. For the queries, we want them to all point to 'view_enter'
         # If your Engine/Tracker doesn't handle this automatically,
@@ -494,7 +471,7 @@ class TestNPlusOneEndToEnd:
                 "SELECT ... author",
                 duration_ns=8_000_000,
             )
-            self.engine.graph.add_from_event(
+            engine.graph.add_from_event(
                 author_q, parent_event=view_enter
             )
 
@@ -506,8 +483,8 @@ class TestNPlusOneEndToEnd:
                 "SELECT ... book ...",
                 duration_ns=2_500_000,
             )
-            # CRITICAL: Point back to the view_enter, NOT the author query
-            self.engine.graph.add_from_event(
+            # Point back to the view_enter, NOT the author query
+            engine.graph.add_from_event(
                 book_q, parent_event=view_enter
             )
 
@@ -519,25 +496,25 @@ class TestNPlusOneEndToEnd:
             "NPlusOneView",
             duration_ns=50_000_000,
         )
-        self.engine.process(view_exit)
+        engine.process(view_exit)
 
-    def test_n_plus_one_rule_fires_via_causal(self):
+    def test_n_plus_one_rule_fires_via_causal(self, engine):
         self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
+            engine, n_authors=1, books_per_author=10
         )
-        matches = self.engine.evaluate()
+        matches = engine.evaluate()
         rule_names = [m.rule_name for m in matches]
         assert "n_plus_one_queries" in rule_names, (
             f"Expected n_plus_one_queries in causal matches. Got: {rule_names}. "
             f"Graph nodes: {[n.id for n in self.engine.graph.all_nodes()]}"
         )
 
-    def test_n_plus_one_confidence_above_threshold(self):
+    def test_n_plus_one_confidence_above_threshold(self, engine):
         self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
+            engine, n_authors=1, books_per_author=10
         )
 
-        matches = self.engine.evaluate()
+        matches = engine.evaluate()
         m = next(
             (
                 m
@@ -549,12 +526,14 @@ class TestNPlusOneEndToEnd:
         assert m is not None
         assert m.confidence >= 0.85
 
-    def test_n_plus_one_evidence_names_query_and_ratio(self):
+    def test_n_plus_one_evidence_names_query_and_ratio(
+        self, engine
+    ):
         self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
+            engine, n_authors=1, books_per_author=10
         )
 
-        matches = self.engine.evaluate()
+        matches = engine.evaluate()
         m = next(
             m
             for m in matches
@@ -577,20 +556,22 @@ class TestNPlusOneEndToEnd:
         assert "query" in first_pattern
         assert first_pattern["ratio"] >= 5
 
-    def test_n_plus_one_dsl_causal_query_returns_it(self):
+    def test_n_plus_one_dsl_causal_query_returns_it(
+        self, engine
+    ):
         """End-to-end through the DSL layer, same as the REPL CAUSAL command."""
         from origintracer.query.parser import execute, parse
 
         self._emit_nplusone_request(
-            n_authors=1, books_per_author=10
+            engine, n_authors=1, books_per_author=10
         )
 
-        result = execute(parse("CAUSAL"), self.engine)
+        result = execute(parse("CAUSAL"), engine)
         assert "data" in result
         rule_names = [m["rule"] for m in result["data"]]
         assert "n_plus_one_queries" in rule_names
 
-    def test_n_plus_one_silent_with_prefetch(self):
+    def test_n_plus_one_silent_with_prefetch(self, engine):
         """
         After adding prefetch_related the book query fires once, not 10 times.
         The rule should go silent — ratio drops below threshold.
@@ -625,7 +606,7 @@ class TestNPlusOneEndToEnd:
             )
         )
 
-        matches = self.engine.evaluate()
+        matches = engine.evaluate()
         n1_matches = [
             m
             for m in matches
@@ -653,13 +634,10 @@ class TestGunicornTopologyEndToEnd:
 
     def setup_method(self):
         enable_sync_mode()
-        self.engine = Engine(
-            causal_registry=build_default_registry(),
-            snapshot_interval_s=9999,
-        )
-        bind_engine(self.engine)
 
-    def test_master_worker_spawned_edge_built_via_emit(self):
+    def test_master_worker_spawned_edge_built_via_emit(
+        self, engine
+    ):
         emit(
             NormalizedEvent.now(
                 "gunicorn.master.start",
@@ -678,7 +656,7 @@ class TestGunicornTopologyEndToEnd:
             )
         )
 
-        g = self.engine.graph
+        g = engine.graph
         assert "gunicorn::master" in [
             n.id for n in g.all_nodes()
         ]
@@ -698,7 +676,7 @@ class TestGunicornTopologyEndToEnd:
             "_add_structural_edges for gunicorn.worker.fork events."
         )
 
-    def test_worker_handled_edge_built_on_request(self):
+    def test_worker_handled_edge_built_on_request(self, engine):
         """Worker→request 'handled' edge appears when uvicorn processes a request."""
         emit(
             NormalizedEvent.now(
@@ -727,7 +705,7 @@ class TestGunicornTopologyEndToEnd:
             )
         )
 
-        g = self.engine.graph
+        g = engine.graph
         handled = [
             e
             for e in g.neighbors("gunicorn::UvicornWorker")
@@ -738,7 +716,7 @@ class TestGunicornTopologyEndToEnd:
             "Check _add_structural_edges for uvicorn.request.receive events."
         )
 
-    def test_worker_imbalance_fires_via_causal(self):
+    def test_worker_imbalance_fires_via_causal(self, engine):
         """
         Two workers where worker-0 handles all requests and worker-1 is idle
         should fire WORKER_IMBALANCE through the causal registry.
@@ -779,7 +757,7 @@ class TestGunicornTopologyEndToEnd:
             )
         )
 
-        matches = self.engine.evaluate()
+        matches = engine.evaluate()
         rule_names = [m.rule_name for m in matches]
         assert "worker_imbalance" in rule_names
 
@@ -816,6 +794,7 @@ class TestConfigMergePipeline:
                 "endpoint", "https://api.origintracer.app"
             ),
             probes=kwargs.pop("probes", None),
+            rules=kwargs.pop("rules", None),
             semantic=kwargs.pop("semantic", None),
             snapshot_interval=kwargs.pop(
                 "snapshot_interval", None

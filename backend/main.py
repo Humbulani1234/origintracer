@@ -75,16 +75,12 @@ class _BackendEngine:
     """
 
     def __init__(self, graph):
-        from origintracer.core.causal import (
-            build_default_registry,
-        )
         from origintracer.core.semantic import SemanticLayer
         from origintracer.core.temporal import TemporalStore
 
         self.graph = graph
         self.semantic = SemanticLayer()
         self.temporal = TemporalStore()
-        self.causal = build_default_registry(tracker=None)
         self.repository = None
 
 
@@ -561,14 +557,14 @@ async def causal(
         [t.strip() for t in tags.split(",")] if tags else None
     )
 
-    from origintracer.core.causal import build_default_registry
+    from origintracer.core.causal import PatternRegistry
     from origintracer.core.temporal import TemporalStore
 
     # No tracker — backend has no live requests.
     # build_default_registry(tracker=None) registers the anomaly rule
     # but its predicate returns False immediately, which is correct.
-    registry = build_default_registry(tracker=None)
-    temporal = TemporalStore()  # empty — backend has no diffs
+    registry = PatternRegistry
+    temporal = TemporalStore()  # empty - backend has no diffs
     matches = registry.evaluate(graph, temporal, tags=tag_list)
 
     return {

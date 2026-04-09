@@ -31,7 +31,27 @@ probes:
   - gunicorn
   - nginx
 
+# ---------------- Rules activation ---------------------------
+
+# builtin_probes: Python module paths to import at init() time.
+#   Side-effect of import: registers the BaseProbe subclass with ProbeRegistry.
+#   All built-in probes are listed here. User origintracer.yaml should NOT
+#   override this unless adding a completely custom module path.
+
+# probes: Names of probes to actually start.
+#   User origintracer.yaml REPLACES this list entirely.
+#   Only probes listed here are started - importing a module does not start it.
  
+builtin_rules:
+  - ".probes.asyncio_rule"
+  - ".probes.django_rule"
+
+rules:
+  - new_sync_call_after_deployment
+  - asyncio_event_loop_starvation
+  - n_plus_one_queries
+  - db_query_hotspot
+
 # ---- Event buffer -----------------------------------------
 
 buffer_size: 10000
