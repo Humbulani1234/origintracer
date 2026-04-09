@@ -1,19 +1,18 @@
 """
-FastAPI service — persistence, query, and UI surface for StackTracer.
+FastAPI service - persistence, query, and UI surface for OriginTracer.
 
 Surfaces:
-    POST /api/v1/graph/snapshot  — receive serialised graph from agent
-    POST /api/v1/events          — receive raw events for persistence
-    POST /api/v1/ingest          — alias for /events (backward compat)
-    GET  /api/v1/graph           — current graph (from latest snapshot)
-    GET  /api/v1/traces/{id}     — critical path from event store
-    GET  /api/v1/causal          — causal rules on latest snapshot
-    GET  /api/v1/hotspots        — top N busiest nodes
-    GET  /api/v1/diff            — graph diff since marker
-    POST /api/v1/deployment      — store deployment marker
-    GET  /api/v1/status          — snapshot metadata + system info
-    POST /api/v1/query           — raw DSL query on latest snapshot
-    GET  /health                 — liveness probe
+    POST /api/v1/graph/snapshot - receive serialised graph from agent
+    POST /api/v1/events - receive raw events for persistence
+    GET  /api/v1/graph - current graph (from latest snapshot)
+    GET  /api/v1/traces/{id} - critical path from event store
+    GET  /api/v1/causal - causal rules on latest snapshot
+    GET  /api/v1/hotspots - top N busiest nodes
+    GET  /api/v1/diff - graph diff since marker
+    POST /api/v1/deployment - store deployment marker
+    GET  /api/v1/status - snapshot metadata + system info
+    POST /api/v1/query - raw DSL query on latest snapshot
+    GET  /health - liveness probe
 
 Architecture:
     The agent owns the authoritative graph and builds it locally.
@@ -485,20 +484,7 @@ async def ingest_events(
     return {"status": "ok", "stored": stored, "errors": errors}
 
 
-@app.post("/api/v1/ingest")
-async def ingest_events_compat(
-    request: Request,
-    authorization: Optional[str] = Header(None),
-) -> Dict:
-    """Backward-compatible alias for /api/v1/events."""
-    return await ingest_events(request, authorization)
-
-
-# ====================================================================== #
-# Routes: Graph queries (all read from deserialised snapshot)
-# ====================================================================== #
-
-
+# ------------ Graph queries (all read from deserialised snapshot) --------
 @app.post("/api/v1/query")
 async def query(
     request: QueryRequest,

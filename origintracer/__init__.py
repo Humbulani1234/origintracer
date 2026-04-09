@@ -6,9 +6,9 @@ Minimal usage, most settings come from defaults:
     MIDDLEWARE = ["origintracer.probes.django_probe.TracerMiddleware", ...]
 
 Config merge order:
-    1. Package defaults — stacktracer/config/defaults.yaml
-    2. User yaml file — searched from cwd upward, or explicit config= path
-    3. init() kwargs — highest priority, overrides everything
+    1. Package defaults - origintracer/config/defaults.yaml
+    2. User yaml file - searched from cwd upward, or explicit config= path
+    3. init() kwargs - highest priority, overrides everything
 """
 
 from __future__ import annotations
@@ -25,12 +25,12 @@ from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
-from .context.vars import get_trace_id  # noqa: F401
-from .core.engine import Engine  # noqa: F401
-from .core.event_schema import NormalizedEvent  # noqa: F401
+from .context.vars import get_trace_id
+from .core.engine import Engine
+from .core.event_schema import NormalizedEvent
 from .sdk.base_probe import BaseProbe, ProbeRegistry
-from .sdk.emitter import emit  # noqa: F401
-from .sdk.uploader import Uploader  # noqa: F401
+from .sdk.emitter import emit
+from .sdk.uploader import Uploader
 
 logger = logging.getLogger("origintracer")
 
@@ -42,6 +42,7 @@ _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
 
 
+# Used for probes that construct structural topology of the system
 def _register_post_init_callback(fn: Callable) -> None:
     """
     Register a function to call once after init() completes.
@@ -59,8 +60,7 @@ def _load_package_defaults() -> Dict[str, Any]:
     """
     Load the package-shipped defaults.yaml.
     Lives at origintracer/config/defaults.yaml.
-    If missing (broken install) returns empty dict and logs a warning.
-    All values the system needs must be in defaults.yaml.
+    If missing, returns empty dict and logs a warning.
     """
     defaults_path = os.path.join(
         os.path.dirname(__file__), "config", "defaults.yaml"
@@ -69,7 +69,7 @@ def _load_package_defaults() -> Dict[str, Any]:
         logger.warning(
             "origintracer: defaults.yaml missing from package installation at %s. "
             "Reinstall: pip install --force-reinstall origintracer. "
-            "Running with empty defaults — some features may be unavailable.",
+            "Running with empty defaults - some features may be unavailable.",
             defaults_path,
         )
         return {}
@@ -85,12 +85,12 @@ def _find_user_config(
     explicit_path: Optional[str],
 ) -> Optional[str]:
     """
-    Locate the user's stacktracer.yaml.
+    Locate the user's origintracer.yaml.
 
     Search order:
         1. explicit_path if provided
         2. ORIGINTRACER_CONFIG environment variable
-        3. Walk up from cwd looking for origintracer.yaml (max 5 levels)
+        3. Walk up from cwd looking for origintracer.yaml
     """
     if explicit_path:
         if os.path.exists(explicit_path):
@@ -100,7 +100,7 @@ def _find_user_config(
         )
         return None
 
-    env_path = os.getenv("STACKTRACER_CONFIG")
+    env_path = os.getenv("ORIGINTRACER_CONFIG")
     if env_path and os.path.exists(env_path):
         return env_path
 
@@ -223,9 +223,7 @@ class ResolvedConfig:
     flush_interval: int
     snapshot_interval: float
     probes: List[str]
-    builtin_probes: List[
-        str
-    ]  # module paths — from defaults.yaml
+    builtin_probes: List[str]
     semantic: List[Dict]
     normalize: List[Dict]
     compactor: Dict[str, Any]
@@ -240,8 +238,8 @@ class ResolvedConfig:
             and not self.debug
         ):
             logger.info(
-                "StackTracer: DJANGO_DEBUG=True — disabling. "
-                "Pass debug=True to stacktracer.init() to enable in dev."
+                "OriginTracer: DJANGO_DEBUG=True - disabling. "
+                "Pass debug=True to origintracer.init() to enable in dev."
             )
             self.enabled = False
 
@@ -508,7 +506,7 @@ def _discover_user_rules(registry: Any, app_root: str) -> None:
         if not fname.endswith("_rules.py"):
             continue
         full_path = os.path.join(rules_dir, fname)
-        module_name = f"_stacktracer_user_rule_{fname[:-3]}"
+        module_name = f"_origintracer_user_rule_{fname[:-3]}"
         try:
             spec = importlib.util.spec_from_file_location(
                 module_name, full_path
@@ -626,7 +624,7 @@ def init(
     Parameters
     ----------
     api_key
-        API key for remote upload to StackTracer backend.
+        API key for remote upload to OriginTracer backend.
         Omit or pass "" to run in local-only mode (no upload).
 
     endpoint

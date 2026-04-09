@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-StackTracer REPL — connects to a running agent via Unix socket.
+StackTracer REPL - connects to a running agent via Unix socket.
 
 Run from any terminal while gunicorn is running:
     python scripts/repl.py
 
 The REPL auto-discovers /tmp/stacktracer-{pid}.sock and connects.
 All queries run against the live engine in the worker process.
-No engine is bootstrapped here — this file has zero stacktracer imports.
+No engine is bootstrapped here — this file has zero origintracer imports.
 
 Protocol: newline-delimited JSON over Unix domain socket.
-    Send:    {"id": "1", "query": "SHOW NODES"}\\n
+    Send: {"id": "1", "query": "SHOW NODES"}\\n
     Receive: {"id": "1", "ok": true, "data": {...}}\\n
 
 DSL queries (forwarded verbatim to engine.query()):
@@ -27,16 +27,16 @@ DSL queries (forwarded verbatim to engine.query()):
     TRACE <trace_id>
 
 REPL meta-commands (prefixed with \\):
-    \\status                    engine stats (graph size, uptime, etc.)
-    \\probes                    registered probe adapters
-    \\rules                     registered causal rules
-    \\semantic                  semantic aliases
-    \\emit <probe> <svc> <n>    inject a synthetic event
-    \\snapshot [label]          capture a temporal diff snapshot
-    \\active                    in-flight requests
-    \\reconnect                 pick a different worker socket
-    \\help                      this message
-    \\quit  or  Ctrl+C          exit
+    \\status - engine stats (graph size, uptime, etc.)
+    \\probes - registered probe adapters
+    \\rules - registered causal rules
+    \\semantic - semantic aliases
+    \\emit <probe> <svc> <n> - inject a synthetic event
+    \\snapshot [label] - capture a temporal diff snapshot
+    \\active - in-flight requests
+    \\reconnect - pick a different worker socket
+    \\help - this message
+    \\quit  or  Ctrl+C - exit
 """
 
 from __future__ import annotations
@@ -61,11 +61,7 @@ sys.path.insert(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 
-
-# ------------------------------------------------------------------ #
 # Colour helpers
-# ------------------------------------------------------------------ #
-
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -86,25 +82,22 @@ def header(text):
 
 
 def ok(text):
-    print(c(f"  ✓ {text}", GREEN))
+    print(c(f"  OK {text}", GREEN))
 
 
 def warn(text):
-    print(c(f"  ⚠ {text}", YELLOW))
+    print(c(f"  WARN {text}", YELLOW))
 
 
 def err(text):
-    print(c(f"  ✗ {text}", RED))
+    print(c(f"  FAIL {text}", RED))
 
 
 def dim(text):
     print(c(f"  {text}", DIM))
 
 
-# ------------------------------------------------------------------ #
 # Unix socket client
-# ------------------------------------------------------------------ #
-
 _SOCKET_PREFIX = "/tmp/stacktracer-"
 _SOCKET_SUFFIX = ".sock"
 
@@ -139,7 +132,7 @@ def pick_socket() -> str:
     sockets = discover_sockets()
 
     if not sockets:
-        err("No StackTracer agent found.")
+        err("No OriginTracer agent found.")
         dim("Start your Django app with gunicorn first:")
         dim(
             "  gunicorn -c gunicorn.conf.py config.asgi:application \\"
@@ -207,24 +200,20 @@ def query(sock_path: str, query_str: str) -> dict:
     except FileNotFoundError:
         return {
             "ok": False,
-            "error": f"Socket gone: {sock_path} — did the worker restart?",
+            "error": f"Socket gone: {sock_path} - did the worker restart?",
         }
     except socket.timeout:
         return {"ok": False, "error": "Query timed out (>10 s)"}
     except ConnectionRefusedError:
         return {
             "ok": False,
-            "error": "Connection refused — worker may have restarted",
+            "error": "Connection refused - worker may have restarted",
         }
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
 
-# ------------------------------------------------------------------ #
-# Result rendering  (all original logic preserved)
-# ------------------------------------------------------------------ #
-
-
+# Result rendering
 def render(result: dict) -> None:
     """Pretty-print a query result returned by the agent."""
 
@@ -235,13 +224,13 @@ def render(result: dict) -> None:
 
     data = result.get("data")
 
-    # Unwrap executor envelope — executor returns {"metric": "...", "data": <payload>}
+    # Unwrap executor - executor returns {"metric": "...", "data": <payload>}
     # local_server wraps that in {"ok": True, "data": <executor_result>}
     # So result["data"] is the executor result, and the real payload is inside that.
     if isinstance(data, dict) and "data" in data:
         verb = data.get("verb", "")
         metric = data.get("metric", "")
-        data = data["data"]  # ← unwrap to actual payload
+        data = data["data"]  # unwrap to actual payload
     else:
         verb = result.get("verb", "")
         metric = result.get("metric", "")
@@ -255,7 +244,7 @@ def render(result: dict) -> None:
         err(data["error"])
         return
 
-    # ── CAUSAL ────────────────────────────────────────────────────
+    # CAUSAL
     if verb == "CAUSAL":
         matches = (
             data
@@ -291,7 +280,7 @@ def render(result: dict) -> None:
             print()
         return
 
-    # ── DIFF ──────────────────────────────────────────────────────
+    # DIFF
     if verb == "DIFF":
         d = data if isinstance(data, dict) else {}
         new = d.get("new_edges", [])
@@ -318,7 +307,7 @@ def render(result: dict) -> None:
         print()
         return
 
-    # ── HOTSPOT / generic tabular list ────────────────────────────
+    # HOTSPOT/generic tabular list
     if verb == "HOTSPOT" or (
         isinstance(data, list)
         and data
@@ -335,7 +324,7 @@ def render(result: dict) -> None:
         _render_table(rows)
         return
 
-    # ── TRACE / critical path ─────────────────────────────────────
+    # TRACE/critical path
     if verb == "TRACE":
         path = (
             data
@@ -380,7 +369,7 @@ def render(result: dict) -> None:
         print()
         return
 
-    # ── BLAME ─────────────────────────────────────────────────────
+    # BLAME
     if verb == "BLAME":
         d = data if isinstance(data, dict) else {}
         rows = (
@@ -408,7 +397,7 @@ def render(result: dict) -> None:
         print()
         return
 
-    # ── SHOW STATUS ───────────────────────────────────────────────
+    # SHOW STATUS
     if verb == "STATUS" or (
         isinstance(data, dict) and "graph_nodes" in data
     ):
@@ -418,7 +407,7 @@ def render(result: dict) -> None:
         print()
         return
 
-    # ── SHOW GRAPH ────────────────────────────────────────────────
+    # SHOW GRAPH
     if metric == "graph" or (
         isinstance(data, dict)
         and "nodes" in data
@@ -465,7 +454,7 @@ def render(result: dict) -> None:
         print()
         return
 
-    # ── SNAPSHOT result ───────────────────────────────────────────
+    # SNAPSHOT result
     if isinstance(data, dict) and "added_nodes" in data:
         new_n = len(data.get("added_nodes", []))
         new_e = len(data.get("added_edges", []))
@@ -477,7 +466,7 @@ def render(result: dict) -> None:
         print()
         return
 
-    # ── Plain list of strings (e.g. SHOW PROBES, SHOW RULES) ──────
+    # Plain list of strings (e.g. SHOW PROBES, SHOW RULES)
     if (
         isinstance(data, list)
         and data
@@ -489,12 +478,12 @@ def render(result: dict) -> None:
         print()
         return
 
-    # ── Empty list ────────────────────────────────────────────────
+    # Empty list
     if isinstance(data, list) and not data:
         dim("No results.")
         return
 
-    # ── Fallback: raw JSON ────────────────────────────────────────
+    # Fallback: raw JSON
     print(
         json.dumps(
             data if data is not None else result,
@@ -547,11 +536,7 @@ def _render_table(rows: list) -> None:
     print()
 
 
-# ------------------------------------------------------------------ #
-# Meta-command handlers  (all go through the socket now)
-# ------------------------------------------------------------------ #
-
-
+# Meta-command handlers
 def cmd_status(sock_path: str) -> None:
     render(query(sock_path, "SHOW STATUS"))
 
@@ -619,7 +604,7 @@ def cmd_emit(sock_path: str, args: str) -> None:
     """
     Inject a synthetic event into the live engine.
     Usage: \\emit <probe> <service> <name>
-    Mirrors the original cmd_emit signature exactly — same three-part syntax.
+    Mirrors the original cmd_emit signature exactly - same three-part syntax.
     """
     parts = args.split()
     if len(parts) < 3:
@@ -901,14 +886,14 @@ def main():
         except Exception:
             pass
 
-        # ── REPL meta-commands ─────────────────────────────────────
+        # REPL meta-commands
         if raw.startswith("\\"):
             parts = raw[1:].split(None, 1)
             cmd = parts[0].lower()
             args = parts[1] if len(parts) > 1 else ""
 
             if cmd in ("quit", "exit", "q"):
-                ok("Bye.")
+                ok("Finished.")
                 break
             elif cmd == "help":
                 cmd_help()
@@ -941,7 +926,7 @@ def main():
                 err(f"Unknown command: \\{cmd}  (try \\help)")
             continue
 
-        # DSL query — forwarded to the live engine
+        # DSL query - forwarded to the live engine
         t0 = time.perf_counter()
         result = query(sock_path, raw)
         print(f"DEBUG raw: {result}")  # add this temporarily

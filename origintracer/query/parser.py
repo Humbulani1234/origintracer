@@ -3,14 +3,14 @@ A simple but graph-aware query DSL.
 
 Grammar:
     QUERY := VERB METRIC [WHERE FILTERS] [LIMIT N] [AS system LABEL]
-    VERB    := SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL
-    METRIC  := latency | events | path | graph | nodes | edges |
-               status | active | probes | rules | semantic |
+    VERB := SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL
+    METRIC := latency | events | path | graph | nodes | edges |
+            status | active | probes | rules | semantic |
     FILTERS := FILTER [AND FILTER]*
-    FILTER  := FIELD OP VALUE
-    OP      := = | > | < | >= | <= | LIKE # currently supports only: =
-    FIELD   := service | probe | system | trace_id | node | name | tags
-    VALUE   := quoted string | number
+    FILTER := FIELD OP VALUE
+    OP := = | > | < | >= | <= | LIKE # currently supports only: =
+    FIELD := service | probe | system | trace_id | node | name | tags
+    VALUE := quoted string | number
 
 Examples:
     SHOW latency WHERE service = "django"
@@ -72,7 +72,7 @@ def parse(query_str: str) -> ParsedQuery:
 
     verb = tokens[0].upper()
 
-    # --- TRACE <trace_id> ---
+    # TRACE <trace_id>
     if verb == "TRACE":
         if len(tokens) < 2:
             raise ValueError(
@@ -85,7 +85,7 @@ def parse(query_str: str) -> ParsedQuery:
             raw=original,
         )
 
-    # --- BLAME WHERE system = "..." ---
+    # BLAME WHERE system = "..."
     if verb == "BLAME":
         filters = _parse_filters(tokens[1:])
         return ParsedQuery(
@@ -95,7 +95,7 @@ def parse(query_str: str) -> ParsedQuery:
             raw=original,
         )
 
-    # --- HOTSPOT [TOP N] ---
+    # HOTSPOT [TOP N]
     if verb == "HOTSPOT":
         limit = 10
         if len(tokens) >= 3 and tokens[1].upper() == "TOP":
@@ -110,7 +110,7 @@ def parse(query_str: str) -> ParsedQuery:
             raw=original,
         )
 
-    # --- DIFF SINCE <label|timestamp> ---
+    # DIFF SINCE <label|timestamp>
     if verb == "DIFF":
         if len(tokens) >= 3 and tokens[1].upper() == "SINCE":
             return ParsedQuery(
@@ -123,7 +123,7 @@ def parse(query_str: str) -> ParsedQuery:
             verb="DIFF", metric="edges", raw=original
         )
 
-    # --- CAUSAL [WHERE tags = "..."] ---
+    # CAUSAL [WHERE tags = "..."]
     if verb == "CAUSAL":
         filters = _parse_filters(tokens[1:])
         return ParsedQuery(
@@ -133,7 +133,7 @@ def parse(query_str: str) -> ParsedQuery:
             raw=original,
         )
 
-    # --- SHOW <metric> [WHERE ...] [LIMIT N] ---
+    # SHOW <metric> [WHERE ...] [LIMIT N]
     if verb == "SHOW":
         if len(tokens) < 2:
             raise ValueError(
@@ -231,24 +231,17 @@ def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
         return {"error": str(exc), "query": query.raw}
 
 
-# ====================================================================== #
-# SHOW — dispatch by metric
-# ====================================================================== #
-
-
+# SHOW - dispatch by metric
 def _exec_show(
     query: ParsedQuery, engine: Any
 ) -> Dict[str, Any]:
-
-    # import pdb
-    # pdb.set_trace()
 
     metric = query.metric
     filters = query.filters
 
     node_scope = None
 
-    # NEW — handles system=, service=, node= all through the same semantic layer
+    # Handles system=, service=, node= all through the same semantic layer
     node_scope = None
     candidate = (
         filters.get("system")
@@ -263,12 +256,11 @@ def _exec_show(
         if resolved:
             node_scope = resolved
         elif "system" in filters:
-            # system= is always a semantic label — hard error if not found
+            # system= is always a semantic label - hard error if not found
             return {
                 "error": f"Unknown semantic label '{candidate}'",
                 "available": engine.semantic.all_labels(),
             }
-        # service= and node= fall through silently — handled as literal filters below
 
     handlers = {
         "latency": lambda: _show_latency(
@@ -297,11 +289,7 @@ def _exec_show(
     return handler()
 
 
-# ====================================================================== #
-# SHOW metric handlers
-# ====================================================================== #
-
-
+# ----------------------- SHOW metric handlers ---------------------------
 def _show_latency(
     engine: Any,
     filters: Dict,
@@ -442,7 +430,7 @@ def _show_nodes(
 
 def _show_edges(engine: Any, node_scope: Optional[set]) -> Dict:
     """
-    Full edge listing — same fields as the old built-in SHOW EDGES.
+    Full edge listing - same fields as the old built-in SHOW EDGES.
     """
     edges = list(engine.graph.all_edges())
 
@@ -461,7 +449,7 @@ def _show_edges(engine: Any, node_scope: Optional[set]) -> Dict:
 
 def _show_status(engine: Any) -> Dict:
     """
-    Engine health snapshot — same fields as the old built-in SHOW STATUS.
+    Engine health snapshot - same fields as the old built-in SHOW STATUS.
     """
     graph = engine.graph
     tracker = getattr(engine, "tracker", None)
@@ -548,11 +536,7 @@ def _show_semantic(engine: Any) -> Dict:
     return {"metric": "semantic", "data": labels}
 
 
-# ====================================================================== #
-# Other verb handlers
-# ====================================================================== #
-
-
+# ---------------------- Other verb handlers -----------------------------
 def _exec_trace(query: ParsedQuery, engine: Any) -> Dict:
     trace_id = query.filters.get("trace_id")
     if not trace_id:
@@ -616,7 +600,7 @@ def _exec_hotspot(query: ParsedQuery, engine: Any) -> Dict:
             "data": engine.hotspots(top_n=top_n),
         }
 
-    # Fallback — sort all_nodes() by call_count directly
+    # Fallback - ssort all_nodes() by call_count directly
     nodes = sorted(
         engine.graph.all_nodes(),
         key=lambda n: n.call_count,
@@ -662,7 +646,7 @@ def _exec_diff(query: ParsedQuery, engine: Any) -> Dict:
     else:
         since_ts = time.time() - 60  # default: last 60 seconds
 
-    # temporal methods may not all exist yet — degrade gracefully
+    # temporal methods may not all exist yet - degrade gracefully
     new_edges = (
         list(engine.temporal.new_edges_since(since_ts))
         if hasattr(engine.temporal, "new_edges_since")
@@ -706,13 +690,10 @@ def _exec_causal(query: ParsedQuery, engine: Any) -> Dict:
     }
 
 
-# ====================================================================== #
-# Shared serialisers
-# ====================================================================== #
-
-
 def _node_dict(n) -> Dict:
-    """Full node representation — used by SHOW NODES and SHOW GRAPH."""
+    """
+    Full node representation - used by SHOW NODES and SHOW GRAPH.
+    """
     return {
         "id": n.id,
         "service": n.service,
@@ -730,7 +711,9 @@ def _node_dict(n) -> Dict:
 
 
 def _edge_dict(e) -> Dict:
-    """Full edge representation — used by SHOW EDGES and SHOW GRAPH."""
+    """
+    Full edge representation - used by SHOW EDGES and SHOW GRAPH.
+    """
     return {
         "source": e.source,
         "target": e.target,

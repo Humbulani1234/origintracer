@@ -9,29 +9,19 @@ Approach:
 
     The user wraps their application once:
         # asgi.py
-        from stacktracer.probes.uvicorn_probe import OriginTracerASGIMiddleware
+        from origintracer.probes.uvicorn_probe import OriginTracerASGIMiddleware
         application = OriginTracerASGIMiddleware(get_asgi_application())
 
     What we observe in ASGI middleware:
-        scope["type"] == "http"          HTTP request lifecycle
-        scope["method"], scope["path"]   Request details
-        scope["headers"]                 For X-Request-ID propagation
-        The receive() callable           Request body stream
-        The send() callable              Response headers + body
-
-    What we observe via kprobe on sys_epoll_wait (from asyncio probe):
-        The actual I/O wait inside the uvicorn event loop.
-        uvicorn uses asyncio's event loop — the asyncio epoll kprobe
-        already covers this. No separate uvicorn epoll probe needed.
-
-ASGI scope types:
-    "http"      HTTP request (what we care about)
-    "websocket" WebSocket connection (skip for now)
-    "lifespan"  Startup/shutdown (skip)
+        scope["type"] == "http" - HTTP request lifecycle
+        scope["method"], scope["path"] - Request details
+        scope["headers"] - For X-Request-ID propagation
+        The receive() callable - Request body stream
+        The send() callable - Response headers + body
 
 send() message types:
-    "http.response.start"   Response headers, status code
-    "http.response.body"    Response body bytes
+    "http.response.start" - Response headers, status code
+    "http.response.body" - Response body bytes
 
 X-Request-ID propagation:
     If nginx forwards X-Request-ID, it arrives in scope["headers"] as
@@ -39,10 +29,10 @@ X-Request-ID propagation:
     events share the same trace automatically.
 
 ProbeTypes:
-    uvicorn.request.receive     ASGI scope ready, app call starting
-    uvicorn.response.start      Response headers and status code sent
-    uvicorn.response.body       Response body sent (final chunk)
-    uvicorn.request.complete    Full request/response cycle complete
+    uvicorn.request.receive - ASGI scope ready, app call starting
+    uvicorn.response.start - Response headers and status code sent
+    uvicorn.response.body - Response body sent (final chunk)
+    uvicorn.request.complete - Full request/response cycle complete
 """
 
 from __future__ import annotations
@@ -81,7 +71,7 @@ class OriginTracerASGIMiddleware:
     """
     Pure ASGI middleware that wraps the application callable.
 
-    This is not monkey patching. ASGI middleware is the documented
+    This is not monkey patching. ASGI middleware is the most adopted
     standard for wrapping ASGI applications.
 
     Usage — Django:
@@ -125,7 +115,7 @@ class OriginTracerASGIMiddleware:
         receive: Callable,
         send: Callable,
     ) -> None:
-        # ── Extract request info from ASGI scope ──
+        # Extract request info from ASGI scope
         headers = dict(scope.get("headers", []))
 
         # Prefer X-Request-ID from nginx if present
@@ -169,7 +159,6 @@ class OriginTracerASGIMiddleware:
         status_code = 0
         response_size = 0
 
-        # ── Wrap send() to capture response events ──
         # Wrapping the send callable is clean — we are not replacing any
         # internal method, just wrapping the callable passed to us by uvicorn.
         async def _capturing_send(message: dict) -> None:
@@ -207,7 +196,7 @@ class OriginTracerASGIMiddleware:
 
             await send(message)
 
-        # ── Call the wrapped application ──
+        # Call the wrapped application
         try:
             await self.app(scope, receive, _capturing_send)
         finally:
@@ -256,7 +245,7 @@ class UvicornProbe(BaseProbe):
 
     Unlike probes that self-install via class patching, this probe
     works by having the user wrap their ASGI application with
-    StackTracerASGIMiddleware. This is the standard ASGI pattern.
+    OriginTracerASGIMiddleware. This is the standard ASGI pattern.
 
     The UvicornProbe.start() emits a reminder if the middleware
     is not detected in the application.
@@ -264,18 +253,11 @@ class UvicornProbe(BaseProbe):
     I/O visibility:
         uvicorn's event loop IS asyncio's event loop.
         The asyncio epoll kprobe (from AsyncioProbe) observes epoll_wait
-        calls from uvicorn workers with the same fidelity as from a pure
-        asyncio application. No separate uvicorn epoll probe is needed.
+        calls from uvicorn workers with the similar as from a pure
+        asyncio application.
 
     Per-request timing:
-        StackTracerASGIMiddleware captures start→end with status code.
-
-    Combined with AsyncioProbe, you get:
-        uvicorn.request.receive    → ASGI scope ready
-        asyncio.loop.epoll_wait    → actual I/O waits inside the handler
-        asyncio.loop.coro_call     → coroutine execution (sys.monitoring)
-        uvicorn.response.start     → headers sent
-        uvicorn.request.complete   → full cycle with duration
+        OriginTracerASGIMiddleware captures start:end with status code.
     """
 
     name = "uvicorn"
@@ -285,7 +267,7 @@ class UvicornProbe(BaseProbe):
             import uvicorn  # noqa: F401
         except ImportError:
             logger.info(
-                "uvicorn not installed — uvicorn probe inactive"
+                "uvicorn not installed - uvicorn probe inactive"
             )
             return
 

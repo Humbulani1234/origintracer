@@ -1,5 +1,7 @@
 """
-Makes StackTracer an optional OpenTelemetry SpanExporter.
+NOTE: Must be thoroughly tested.
+
+Makes OriginTracer an optional OpenTelemetry SpanExporter.
 
 When this bridge is active, OTel is the source of truth for spans.
 StackTracer's own probes are disabled and the engine receives
@@ -29,17 +31,17 @@ What is gained when using OTel mode:
 
 Architecture:
     OTel SDK (in Django)
-        → StackTracerSpanExporter (this file)
-        → span_to_event() converts OTel Span → NormalizedEvent
-        → engine.process(event) feeds the StackTracer graph
+        >> StackTracerSpanExporter (this file)
+        >> span_to_event() converts OTel Span → NormalizedEvent
+        >> engine.process(event) feeds the StackTracer graph
 
     The engine, graph, causal rules, REPL, and React UI are unchanged.
     Only the event source changes from native probes to OTel spans.
 
-Usage — Django:
+Usage - Django:
 
     # settings.py
-    STACKTRACER_OTEL_MODE = True   # disables native probes
+    ORIGINTRACER_OTEL_MODE = True # disables native probes
 
     # apps.py
     from opentelemetry import trace
@@ -75,17 +77,17 @@ Usage — Django:
     spans flow to StackTracerSpanExporter, StackTracer builds the
     causal graph, REPL and React UI work as normal.
 
-OTel span → NormalizedEvent mapping:
-    span.name                    → name
-    span.kind                    → probe (server=request, client=call, internal=function)
-    span.context.trace_id        → trace_id (hex string)
-    span.context.span_id         → span_id
-    span.parent.span_id          → parent_span_id
-    span.attributes["http.route"]→ name (for HTTP spans)
-    span.attributes["db.statement"] → name (for DB spans)
-    span.attributes["peer.service"] → service
-    span.start_time / end_time   → wall_time, duration_ns
-    span.status.status_code      → metadata["status_code"]
+OTel span >> NormalizedEvent mapping:
+    span.name >> name
+    span.kind >> probe (server=request, client=call, internal=function)
+    span.context.trace_id >> trace_id (hex string)
+    span.context.span_id >> span_id
+    span.parent.span_id >> parent_span_id
+    span.attributes["http.route"] >> name (for HTTP spans)
+    span.attributes["db.statement"] >> name (for DB spans)
+    span.attributes["peer.service"] >> service
+    span.start_time/end_time >> wall_time, duration_ns
+    span.status.status_code >> metadata["status_code"]
 """
 
 from __future__ import annotations
@@ -93,7 +95,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Sequence
 
-logger = logging.getLogger("stacktracer.bridge.otel")
+logger = logging.getLogger("origintracer.bridge.otel")
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace import ReadableSpan
@@ -103,13 +105,13 @@ if TYPE_CHECKING:
 
 _SPAN_KIND_TO_PROBE = {
     0: "otel.internal",  # INTERNAL
-    1: "otel.server",  # SERVER  — incoming HTTP request
-    2: "otel.client",  # CLIENT  — outgoing HTTP/DB/Redis call
-    3: "otel.producer",  # PRODUCER — message queue publish
-    4: "otel.consumer",  # CONSUMER — message queue consume
+    1: "otel.server",  # SERVER - incoming HTTP request
+    2: "otel.client",  # CLIENT - outgoing HTTP/DB/Redis call
+    3: "otel.producer",  # PRODUCER - message queue publish
+    4: "otel.consumer",  # CONSUMER - message queue consume
 }
 
-# OTel semantic convention attributes → StackTracer service names
+# OTel semantic convention attributes >> StackTracer service names
 _SERVICE_HINTS = {
     "db.system": lambda v: v,  # "postgresql", "redis", etc.
     "http.scheme": lambda v: "http",
@@ -153,11 +155,11 @@ def _extract_name(span: "ReadableSpan") -> str:
     Prefer semantic convention attributes over the raw span name.
     """
     attrs = span.attributes or {}
-    # HTTP server spans — use the route, not the raw URL
+    # HTTP server spans - use the route, not the raw URL
     if "http.route" in attrs:
         method = attrs.get("http.method", "")
         return f"{method} {attrs['http.route']}".strip()
-    # DB spans — use the statement (truncated)
+    # DB spans - use the statement (truncated)
     if "db.statement" in attrs:
         stmt = str(attrs["db.statement"])
         return stmt[:120]
@@ -334,7 +336,7 @@ def extract_trace_id_from_traceparent(
     Extract the trace_id from a W3C traceparent header.
 
     traceparent format: 00-{trace_id}-{span_id}-{flags}
-    Example: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+    Example: 00-4a3ce96-00f067aa902b7-01
 
     Use this in TracerMiddleware to share trace_id with OTel spans:
 

@@ -19,8 +19,8 @@ Layer 2 - Patched Task._Task__step at the class level. Fragile on 3.12+
     This approach is not yet stable because it accesses private methods
     and attributes. It will be improved using sys.monitoring
 
-Layer 3 — asyncio.create_task() wrap (public API, all versions)
-    Wraps the public create_task() function — not a method on Task,
+Layer 3 - asyncio.create_task() wrap (public API, all versions)
+    Wraps the public create_task() function - not a method on Task,
     not a private attribute. This is the approved way to observe
     task creation. Stable across all versions.
 

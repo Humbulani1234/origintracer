@@ -87,14 +87,6 @@ class TestEventIngest:
         assert data["stored"] == 1
         assert data["errors"] == 0
 
-    async def test_ingest_compat_alias_works(self, client):
-        """POST /api/v1/ingest is a backward-compatible alias for /events."""
-        payload = {"events": []}
-        r = await client.post(
-            "/api/v1/ingest", json=payload, headers=AUTH
-        )
-        assert r.status_code == 200
-
     async def test_ingest_with_empty_events(self, client):
         r = await client.post(
             "/api/v1/events", json={"events": []}, headers=AUTH
