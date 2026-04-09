@@ -11,7 +11,7 @@ import django
 from django.core.asgi import get_asgi_application
 
 from origintracer.probes.uvicorn_probe import (
-    StackTracerASGIMiddleware,
+    OriginTracerASGIMiddleware,
 )
 
 os.environ.setdefault(
@@ -20,4 +20,4 @@ os.environ.setdefault(
 
 django.setup()
 django_app = get_asgi_application()
-application = StackTracerASGIMiddleware(django_app)
+application = OriginTracerASGIMiddleware(django_app)

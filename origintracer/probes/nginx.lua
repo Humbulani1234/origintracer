@@ -7,15 +7,18 @@ local STACKTRACER_HOST = os.getenv("STACKTRACER_LUA_HOST") or "127.0.0.1"
 local STACKTRACER_PORT = tonumber(os.getenv("STACKTRACER_LUA_PORT") or "9119")
 
 local _udp = nil
+-- Replace get_udp() with this:
 local function get_udp()
-    if _udp == nil then
-        local sock = ngx.socket.udp()
-        if not sock then return nil end
-        local ok = sock:setpeername(STACKTRACER_HOST, STACKTRACER_PORT)
-        if not ok then return nil end
-        _udp = sock
+    -- Reuse socket stored in context from access phase
+    if ngx.ctx._st_udp then
+        return ngx.ctx._st_udp
     end
-    return _udp
+    -- Fallback: create a simple socket using luasocket (available in log phase)
+    local socket = require("socket")
+    local sock = socket.udp()
+    sock:setpeername("127.0.0.1", STACKTRACER_PORT)
+    ngx.ctx._st_udp = sock
+    return sock
 end
 
 local ok_cjson, cjson = pcall(require, "cjson.safe")
@@ -100,18 +103,3 @@ end
 local phase = ngx.get_phase()
 if     phase == "rewrite" then on_rewrite()
 elseif phase == "log"     then on_log() end
-
-
-
-http {
-  lua_package_path "/etc/nginx/lua/?.lua;;";
-
-  server {
-    location / {
-      rewrite_by_lua_file /etc/nginx/lua/nginx.lua;
-      proxy_pass          http://uvicorn_upstream;
-      proxy_set_header    X-Request-ID $request_id;  # trace_id shared with uvicorn
-    }
-    log_by_lua_file /etc/nginx/lua/nginx.lua;
-  }
-}

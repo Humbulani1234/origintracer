@@ -2,18 +2,18 @@
 Observes Django using stable, version-safe extension points.
 
 Extension points used:
-    TracerMiddleware              Official MIDDLEWARE hook — request lifecycle
-    connection.execute_wrapper()  Official DB profiling API
-    View.dispatch() patch         Single patch on the public CBV base class
-    got_request_exception signal  Official Django signal — unhandled exceptions
+    TracerMiddleware - MIDDLEWARE hook - request lifecycle
+    connection.execute_wrapper() - DB profiling API
+    View.dispatch() patch - Single patch on the public CBV base class
+    got_request_exception signal - Django signal - unhandled exceptions
 
 Probes:
     request.entry - every HTTP request enters middleware
     request.exit - every HTTP response leaves middleware
-    django.view.enter  — CBV dispatch entered (class name, e.g. AsyncView)
-    django.view.exit   — CBV dispatch returned
-    django.db.query    — every ORM / raw SQL query with duration
-    django.exception   — unhandled exceptions
+    django.view.enter - CBV dispatch entered (class name, e.g. AsyncView)
+    django.view.exit - CBV dispatch returned
+    django.db.query - every ORM/raw SQL query with duration
+    django.exception - unhandled exceptions
 
 TracerMiddleware is REQUIRED and must be first in MIDDLEWARE:
     MIDDLEWARE = [
@@ -25,18 +25,24 @@ TracerMiddleware is REQUIRED and must be first in MIDDLEWARE:
 
 from __future__ import annotations
 
+import asyncio
+import ctypes
+import inspect
 import logging
 import os
 import time
 import uuid
 from typing import Any, Callable, Optional
 
+import origintracer
+from origintracer.core.kprobe_bridge import get_bridge
+
 from ..context.vars import get_trace_id, reset_trace, set_trace
 from ..core.event_schema import NormalizedEvent
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.django")
+logger = logging.getLogger("origintracer.probes.django")
 
 
 class TracerMiddleware:
@@ -47,12 +53,11 @@ class TracerMiddleware:
 
     def __init__(self, get_response: Callable) -> None:
         self.get_response = get_response
-        import asyncio
-        import inspect
-
         self._is_async = asyncio.iscoroutinefunction(
             get_response
-        ) or inspect.iscoroutinefunction(get_response)
+        ) or inspect.iscoroutinefunction(
+            get_response
+        )  # handles edge cases
 
     def __call__(self, request: Any) -> Any:
         if self._is_async:
@@ -91,36 +96,42 @@ class TracerMiddleware:
         )
         token = set_trace(trace_id)
         request._st_t0 = time.perf_counter()
-
-        import origintracer
-
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
+        # start the ActiveRequest tracker
         if engine:
             engine.tracker.start(
                 trace_id=trace_id,
                 service="django",
                 pattern=pattern,
             )
-        # --- wire trace_id into BPF map so epoll kprobe can attribute events
-        import threading
-        import time as _time
+        # add trace_id into BPF map so epoll kprobe can attribute events
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        _SYS_gettid = 186  # x86_64 Linux
 
-        from origintracer.core.kprobe_bridge import get_bridge
+        def _get_os_tid() -> int:
+            return _libc.syscall(_SYS_gettid)
 
         bridge = get_bridge()
         if bridge.available:
+            handler_tid = _get_os_tid()
+            loop_tid = os.getpid()
             bridge.register_trace(
-                tid=threading.current_thread().ident
-                & 0xFFFFFFFF,
+                tid=loop_tid,
                 trace_id=trace_id,
                 service="django",
-                start_ns=int(_time.time_ns()),
+                start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
-        request._st_bridge_tid = (
-            threading.current_thread().ident & 0xFFFFFFFF
-        )
+            # also register handler thread
+            bridge.register_trace(
+                tid=handler_tid,
+                trace_id=trace_id,
+                service="django",
+                start_ns=int(time.time_ns()),
+                pid=os.getpid(),
+            )
+            request._st_bridge_tid = [loop_tid, handler_tid]
         emit(
             NormalizedEvent.now(
                 probe="request.entry",
@@ -151,8 +162,6 @@ class TracerMiddleware:
                 duration_ns=duration_ns,
             )
         )
-        import origintracer
-
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
         if engine:
@@ -164,12 +173,10 @@ class TracerMiddleware:
                     pattern,
                     span.duration_ms,
                 )
-        from origintracer.core.kprobe_bridge import get_bridge
-
+        # remove the or deregister the bridge context
         bridge = get_bridge()
         if bridge.available:
-            tid = getattr(request, "_st_bridge_tid", None)
-            if tid:
+            for tid in getattr(request, "_st_bridge_tids", []):
                 bridge.unregister_trace(tid)
 
     def _error(
@@ -177,14 +184,14 @@ class TracerMiddleware:
     ) -> None:
         duration_ns = int(
             (time.perf_counter() - request._st_t0) * 1e9
-        )
+        )  # how long before exception
         emit(
             NormalizedEvent.now(
                 probe="django.exception",
                 trace_id=trace_id,
                 service="django",
                 name=request.path,
-                duration_ns=duration_ns,  # ← how long before it blew up
+                duration_ns=duration_ns,
                 exception_type=type(exc).__name__,
                 exception_msg=str(exc)[:200],
                 source="middleware",
@@ -192,20 +199,19 @@ class TracerMiddleware:
         )
 
 
-# ------------------ View.dispatch patch — CBV observation ----------
+# ------------- View.dispatch: CBV observation ----------
 
 _originals: dict = {}
 _patched: bool = False
 
 
-def _patch_view_dispatch() -> None:
+def _instrument_view_dispatch() -> None:
     """
-    Patch View.dispatch() to emit django.view.enter / django.view.exit
+    View.dispatch() emits django.view.enter/django.view.exit
     for every class-based view.
 
     View.dispatch() is the single entry point for all CBVs. One patch
-    captures every CBV automatically — AsyncView, SlowView, DbView etc.
-    No filtering needed. Works on all Python versions.
+    captures every CBV automatically - AsyncView, SlowView, DbView etc.
 
     Note on async views: dispatch() itself is sync even for async views.
     Django routes the request to get()/post() which may be async, but
@@ -217,7 +223,7 @@ def _patch_view_dispatch() -> None:
         from django.views import View
     except ImportError:
         logger.debug(
-            "django probe: Django not installed — skipping dispatch patch"
+            "django probe: Django not installed - skipping dispatch patch"
         )
         return
 
@@ -258,11 +264,11 @@ def _patch_view_dispatch() -> None:
 
     View.dispatch = _traced_dispatch
     logger.info(
-        "django probe: View.dispatch patched — all CBVs observed"
+        "django probe: View.dispatch patched - all CBVs observed"
     )
 
 
-def _unpatch_view_dispatch() -> None:
+def _uninstrument_view_dispatch() -> None:
     original = _originals.pop("View.dispatch", None)
     if original is None:
         return
@@ -275,7 +281,7 @@ def _unpatch_view_dispatch() -> None:
         pass
 
 
-# Database execute_wrapper
+# ----------------- Database execute_wrapper ------------------
 
 
 def _make_db_wrapper():
@@ -324,7 +330,7 @@ def _make_db_wrapper():
 
 def _install_db_wrapper() -> None:
     """
-    Install via connection_created signal — fires the first time each
+    Install via connection_created signal - fires the first time each
     database connection is opened, which is after AppConfig.ready().
     This avoids the empty connections.all() problem at startup.
     """
@@ -438,7 +444,7 @@ class DjangoProbe(BaseProbe):
 
     name = "django"
 
-    def start(self, observe_modules=None) -> None:
+    def start(self) -> None:
 
         global _patched
 
@@ -448,7 +454,7 @@ class DjangoProbe(BaseProbe):
             )
             return
 
-        _patch_view_dispatch()
+        _instrument_view_dispatch()
         _install_db_wrapper()
         _install_signals()
 
@@ -461,7 +467,7 @@ class DjangoProbe(BaseProbe):
         if not _patched:
             return
 
-        _unpatch_view_dispatch()
+        _uninstrument_view_dispatch()
         _uninstall_db_wrapper()
         _uninstall_signals()
 

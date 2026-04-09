@@ -72,36 +72,35 @@ ProbeTypes.register_many(
 
 _ASYNCIO_EPOLL_BPF = r"""
 // ********** epoll_wait enter **********
-TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait) {
+// ── epoll_pwait enter (what uvicorn/gunicorn actually uses) ───────────────────
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_pwait) {
     u64 pid_tid = bpf_get_current_pid_tgid();
-    u32 tid     = (u32)pid_tid;
     u64 ts      = bpf_ktime_get_ns();
-
-    struct trace_entry_t *ctx = trace_context.lookup(&tid);
-    if (ctx) {
-        asyncio_epoll_ts.update(&pid_tid, &ts);
-    }
+    asyncio_epoll_ts.update(&pid_tid, &ts);
     return 0;
 }
 
-// *********** epoll_wait exit (asyncio-only) *****************
-TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
+// ── epoll_pwait exit (mirrors epoll_wait exit exactly) ───────────────────────
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait) {
     u64 pid_tid   = bpf_get_current_pid_tgid();
     u32 pid       = (u32)(pid_tid >> 32);
     u32 tid       = (u32)pid_tid;
+
     u64 *entry_ts = asyncio_epoll_ts.lookup(&pid_tid);
     if (!entry_ts) return 0;
+
+    u64 now  = bpf_ktime_get_ns();
+    u64 diff = now - *entry_ts;
     asyncio_epoll_ts.delete(&pid_tid);
-    if (args->ret <= 0) return 0;
 
     struct trace_entry_t *ctx = trace_context.lookup(&tid);
     if (!ctx) return 0;
 
     struct kernel_event_t ev = {};
-    ev.timestamp_ns = bpf_ktime_get_ns();
+    ev.timestamp_ns = now;
     ev.pid          = pid;
     ev.tid          = tid;
-    ev.duration_ns  = ev.timestamp_ns - *entry_ts;
+    ev.duration_ns  = diff;
     ev.value1       = args->ret;
     __builtin_memcpy(ev.event_type, "epoll.wait", 11);
     __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);
@@ -112,10 +111,13 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
 """
 
 # Uncomment ONLY when deploying without the nginx probe:
-# register_bpf("asyncio", BPFProgramPart(
-#     maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
-#     probes=[_ASYNCIO_EPOLL_BPF],
-# ))
+# register_bpf(
+#     "asyncio",
+#     BPFProgramPart(
+#         maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
+#         probes=[_ASYNCIO_EPOLL_BPF],
+#     ),
+# )
 
 
 class _EpollKprobe:
@@ -154,7 +156,7 @@ class _EpollKprobe:
                 "(may already be opened by nginx or dispatcher): %s",
                 exc,
             )
-
+        self._running = True
         self._thread = threading.Thread(
             target=self._poll_loop,
             daemon=True,
@@ -166,8 +168,6 @@ class _EpollKprobe:
             "asyncio epoll kprobe: started (our_pid=%d)",
             self._our_pid,
         )
-
-        self._running = True
         return True
 
     def stop(self) -> None:
@@ -190,14 +190,17 @@ class _EpollKprobe:
     def _handle_epoll_event(
         self, cpu: int, data: Any, size: int
     ) -> None:
-        if self._bpf is None:
+        print(">>>>>IM HERE")
+        if self._bridge.bpf is None:
             return
         try:
-            ev = self._bpf["epoll_events"].event(data)
+            ev = self._bridge.bpf["kernel_events"].event(data)
 
-            if ev.pid != self._our_pid:
-                return  # filter to our process
-
+            event_type = ev.event_type.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
+            if event_type != "epoll.wait":
+                return
             trace_id = ev.trace_id.decode(
                 "ascii", errors="replace"
             ).rstrip("\x00")
@@ -207,16 +210,9 @@ class _EpollKprobe:
 
             if not trace_id:
                 return
-
-            # Decode ready fds
-            ready = [
-                {
-                    "fd": ev.ready_fds[i],
-                    "events": ev.ready_events[i],
-                }
-                for i in range(min(ev.fd_count, 8))
-            ]
-
+            print(
+                f">>>>> epoll event: pid={ev.pid} tid={ev.tid} trace_id='{bytes(ev.trace_id).decode('ascii', errors='replace').rstrip(chr(0))}'"
+            )
             emit(
                 NormalizedEvent.now(
                     probe="asyncio.loop.epoll_wait",
@@ -226,8 +222,8 @@ class _EpollKprobe:
                     pid=ev.pid,
                     tid=ev.tid,
                     duration_ns=ev.duration_ns,
-                    n_events=ev.n_events,
-                    ready_fds=ready,
+                    n_events=int(ev.value1),
+                    ready_fds=[],
                     source="kprobe",
                 )
             )

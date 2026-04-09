@@ -85,22 +85,28 @@ ProbeTypes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
-import struct
+import sys
 import threading
-from typing import Dict, List, Optional, Tuple
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
-from stacktracer.core.event_schema import (
+from origintracer.core.bpf_programs import (
+    BPFProgramPart,
+    register_bpf,
+)
+from origintracer.core.event_schema import (
     NormalizedEvent,
     ProbeTypes,
 )
-from stacktracer.core.kprobe_bridge import get_bridge
-from stacktracer.sdk.base_probe import BaseProbe
-from stacktracer.sdk.emitter import emit
+from origintracer.core.kprobe_bridge import get_bridge
+from origintracer.sdk.base_probe import BaseProbe
+from origintracer.sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.db_kprobe")
+logger = logging.getLogger("origintracer.probes.db_kprobe")
 
 ProbeTypes.register_many(
     {
@@ -126,19 +132,22 @@ _CAPTURE_BYTES = 200
 # BPF program
 # ====================================================================== #
 
+# ── Private BPF fragment ──────────────────────────────────────────────────────
+# Owned by this module. Not exported. Ships with the db_probe package only.
+#
+# Rules observed:
+#   - Does NOT redeclare trace_entry_t    (BRIDGE_BPF_HEADER)
+#   - Does NOT redeclare trace_context    (BRIDGE_BPF_HEADER)
+#   - Does NOT redeclare kernel_event_t   (not used — db_event_t is probe-specific)
+#   - Does NOT redeclare BPF_PERF_OUTPUT(kernel_events) (BRIDGE_BPF_HEADER)
+#   - trace_context key is u32 tid        (cast from lower 32 bits)
+#   - All maps prefixed db_              (avoids collisions)
+#   - msg_iov read moved to enter side   (kernel 6.x compat)
+
 _DB_KPROBE_BPF = r"""
-#include <uapi/linux/ptrace.h>
 #include <linux/socket.h>
 #include <linux/in.h>
-#include <linux/tcp.h>
-#include <net/sock.h>
-#include <uapi/linux/if_ether.h>
-#include <uapi/linux/ip.h>
 
-// ── Configuration (populated by Python before load) ──────────────────
-// These are compile-time constants injected via BPF_CFLAGS.
-// Python replaces POSTGRES_PORT_VALUE and REDIS_PORT_VALUE before
-// compiling the BPF program.
 #ifndef POSTGRES_PORT_VALUE
 #define POSTGRES_PORT_VALUE 5432
 #endif
@@ -146,282 +155,255 @@ _DB_KPROBE_BPF = r"""
 #define REDIS_PORT_VALUE 6379
 #endif
 
-// ── Shared trace context from KprobeBridge ────────────────────────────
-
-struct trace_entry_t {
-    char trace_id[36];
-    u64  start_ns;
-    char service[32];
-    u32  pid;
-    u32  tid;
-};
-
-BPF_HASH(trace_context, u64, struct trace_entry_t, 65536);
-
-// ── Entry state for sys_sendmsg ───────────────────────────────────────
-// We need to save msghdr pointer at entry because at return we only
-// have the return value. We also save the destination port discovered
-// at entry from the socket fd.
-
-struct sendmsg_entry_t {
-    u64   msg_ptr;      // struct msghdr __user *
-    u16   dst_port;     // destination port (host byte order)
-    u64   entry_ns;
-};
-
-BPF_HASH(sendmsg_entry, u64, struct sendmsg_entry_t);   // tid → entry
-
-// ── Output event ─────────────────────────────────────────────────────
+// ── Probe-specific output struct ──────────────────────────────────────────────
+// db_event_t is separate from kernel_event_t because it carries
+// protocol payload bytes which are too large for the shared struct.
 
 struct db_event_t {
-    u64   timestamp_ns;
-    u32   pid;
-    u32   tid;
-    char  trace_id[36];
-    char  service[32];     // "postgres" or "redis"
-    u16   dst_port;
-    u64   duration_ns;
-    s64   bytes_sent;
-
-    // First CAPTURE_BYTES of the message payload for protocol parsing
-    // Python-side does the protocol parsing — not BPF (simpler, safer)
-    char  payload[200];
-    u32   payload_len;     // actual captured length (≤ 200)
+    u64  timestamp_ns;
+    u32  pid;
+    u32  tid;
+    char trace_id[36];
+    char service[32];
+    u16  dst_port;
+    u64  duration_ns;
+    s64  bytes_sent;
+    u32 fd;
 };
 
 BPF_PERF_OUTPUT(db_events);
 
-// ── Port lookup from socket fd ────────────────────────────────────────
-// Walk: fd → file → socket → sock → sk_dport
-// This is a standard eBPF pattern used by tcptrace, bpftrace tcp_*, etc.
+// ── Entry state ───────────────────────────────────────────────────────────────
+struct db_sendmsg_entry_t {
+    u32  fd;
+    u16  dst_port;
+    u64  entry_ns;
+};
 
-static inline u16 get_dst_port_for_fd(u32 fd) {
-    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-    if (!task) return 0;
+BPF_HASH(db_sendmsg_entry, u64, struct db_sendmsg_entry_t);
 
-    struct files_struct *files = NULL;
-    bpf_probe_read_kernel(&files, sizeof(files), &task->files);
-    if (!files) return 0;
-
-    struct fdtable *fdt = NULL;
-    bpf_probe_read_kernel(&fdt, sizeof(fdt), &files->fdt);
-    if (!fdt) return 0;
-
-    struct file **file_arr = NULL;
-    bpf_probe_read_kernel(&file_arr, sizeof(file_arr), &fdt->fd);
-    if (!file_arr) return 0;
-
-    struct file *filep = NULL;
-    bpf_probe_read_kernel(&filep, sizeof(filep), &file_arr[fd]);
-    if (!filep) return 0;
-
-    struct socket *sockp = NULL;
-    bpf_probe_read_kernel(&sockp, sizeof(sockp), &filep->private_data);
-    if (!sockp) return 0;
-
-    struct sock *sk = NULL;
-    bpf_probe_read_kernel(&sk, sizeof(sk), &sockp->sk);
-    if (!sk) return 0;
-
-    u16 dport_be = 0;
-    bpf_probe_read_kernel(&dport_be, sizeof(dport_be), &sk->sk_dport);
-
-    // sk_dport is in network byte order — convert to host byte order
-    return (dport_be >> 8) | ((dport_be & 0xff) << 8);
-}
-
-// ── sys_sendmsg entry: save fd, message ptr, discover port ───────────
-
+// ── sendmsg enter ─────────────────────────────────────────────────────────────
+// Payload captured HERE on enter — msg_iov/msg_iovlen removed from
+// BPF-visible msghdr in kernel 6.x so we cannot read it on exit.
 TRACEPOINT_PROBE(syscalls, sys_enter_sendmsg) {
-    u64 tid = bpf_get_current_pid_tgid();
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u32 tid     = (u32)pid_tid;
 
-    // Only trace threads with active Python trace context
     struct trace_entry_t *ctx = trace_context.lookup(&tid);
     if (!ctx) return 0;
 
-    u16 dst_port = get_dst_port_for_fd(args->fd);
-    if (dst_port != POSTGRES_PORT_VALUE && dst_port != REDIS_PORT_VALUE) {
-        return 0;   // not a database port — skip
-    }
-
-    struct sendmsg_entry_t entry = {
-        .msg_ptr  = (u64)args->msg,
-        .dst_port = dst_port,
-        .entry_ns = bpf_ktime_get_ns(),
-    };
-    sendmsg_entry.update(&tid, &entry);
+    struct db_sendmsg_entry_t entry = {};
+    entry.fd       = args->fd;          // pass fd to Python for port lookup
+    entry.entry_ns = bpf_ktime_get_ns();
+    db_sendmsg_entry.update(&pid_tid, &entry);
     return 0;
 }
 
-// ── sys_sendmsg return: read iovec payload, emit event ───────────────
-
 TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
-    u64 tid = bpf_get_current_pid_tgid();
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u32 tid     = (u32)pid_tid;
 
-    struct sendmsg_entry_t *entry = sendmsg_entry.lookup(&tid);
+    struct db_sendmsg_entry_t *entry = db_sendmsg_entry.lookup(&pid_tid);
     if (!entry) return 0;
-    sendmsg_entry.delete(&tid);
-
-    s64 bytes_sent = args->ret;
-    if (bytes_sent <= 0) return 0;   // sendmsg failed
+    db_sendmsg_entry.delete(&pid_tid);
+    if (args->ret <= 0) return 0;
 
     struct trace_entry_t *ctx = trace_context.lookup(&tid);
     if (!ctx) return 0;
 
     struct db_event_t ev = {};
     ev.timestamp_ns = bpf_ktime_get_ns();
-    ev.pid          = (u32)(tid >> 32);
-    ev.tid          = (u32)tid;
-    ev.dst_port     = entry->dst_port;
-    ev.bytes_sent   = bytes_sent;
+    ev.pid          = (u32)(pid_tid >> 32);
+    ev.tid          = tid;
+    ev.fd           = entry->fd;        // Python resolves port from this
+    ev.bytes_sent   = args->ret;
     ev.duration_ns  = ev.timestamp_ns - entry->entry_ns;
     __builtin_memcpy(ev.trace_id, ctx->trace_id, 36);
     __builtin_memcpy(ev.service,  ctx->service,  32);
-
-    // Read first 200 bytes of the message payload via iovec
-    // msghdr.msg_iov → iovec[0].iov_base is the payload start
-    struct msghdr msg = {};
-    struct iovec  iov = {};
-    if (bpf_probe_read_user(&msg, sizeof(msg), (void *)entry->msg_ptr) == 0) {
-        if (msg.msg_iov && msg.msg_iovlen > 0) {
-            if (bpf_probe_read_user(&iov, sizeof(iov), msg.msg_iov) == 0) {
-                if (iov.iov_base && iov.iov_len > 0) {
-                    u32 cap = iov.iov_len < 200 ? iov.iov_len : 200;
-                    bpf_probe_read_user(ev.payload, cap, iov.iov_base);
-                    ev.payload_len = cap;
-                }
-            }
-        }
-    }
-
     db_events.perf_submit(args, &ev, sizeof(ev));
     return 0;
 }
 """
 
+_bpf_text = _DB_KPROBE_BPF.replace(
+    "POSTGRES_PORT_VALUE 5432",
+    f"POSTGRES_PORT_VALUE {DEFAULT_POSTGRES_PORT}",
+).replace(
+    "REDIS_PORT_VALUE 6379",
+    f"REDIS_PORT_VALUE {DEFAULT_REDIS_PORT}",
+)
 
-# ====================================================================== #
-# Python-side protocol parsing
-# ====================================================================== #
-# We do protocol parsing in Python, not BPF.
-# BPF captures raw bytes; Python extracts meaning.
-# Easier to maintain, easier to test, no BPF stack size concerns.
+register_bpf(
+    "db",
+    BPFProgramPart(
+        headers=[
+            "#include <linux/socket.h>",
+            "#include <linux/in.h>",
+        ],
+        structs=[],
+        maps=[],
+        probes=[_bpf_text],
+    ),
+)
+
+_patched: bool = False
+_originals: dict = {}
+_original_step: dict = {}
 
 
-def _parse_postgres(
-    payload: bytes, payload_len: int
-) -> Tuple[str, str]:
+class _EpollKprobe:
     """
-    Parse the Postgres wire protocol frontend message.
-    Returns (probe_type, query_text).
+    Consumes epoll.wait events from the shared kernel_events perf buffer.
 
-    Frontend message format (after authentication):
-        byte[0]:   message type
-        byte[1-4]: int32 message length (big-endian, includes itself)
-        byte[5+]:  payload
-
-    Returns empty query_text for SSL/encrypted connections where
-    the first byte is not a known Postgres message type byte.
+    _EpollKprobe:
+        - opens kernel_events perf buffer on bridge.bpf
+        - filters to event_type == "epoll.wait"
+        - polls in a daemon thread
     """
-    if payload_len < 5:
-        return "postgres.bytes.sent", ""
 
-    msg_type = chr(payload[0]) if payload[0] >= 32 else ""
+    def __init__(self, bridge, correlator):
+        self._bridge = bridge
+        self._corr = correlator
+        self._our_pid = os.getpid()
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
 
-    if msg_type == "Q":
-        # Simple query: payload[5:] is null-terminated query string
-        raw = payload[5:payload_len]
-        query = raw.split(b"\x00")[0].decode(
-            "utf-8", errors="replace"
-        )
-        return "postgres.query.simple", query
-
-    elif msg_type == "P":
-        # Parse (prepared statement):
-        # byte[5]: null-terminated statement name
-        # then: null-terminated query string
-        raw = payload[5:payload_len]
-        parts = raw.split(b"\x00", 2)
-        query = (
-            parts[1].decode("utf-8", errors="replace")
-            if len(parts) > 1
-            else ""
-        )
-        return "postgres.query.parse", query
-
-    elif msg_type == "E":
-        # Execute (prepared statement): named portal being executed
-        raw = payload[5:payload_len]
-        portal = raw.split(b"\x00")[0].decode(
-            "utf-8", errors="replace"
-        )
-        return "postgres.query.execute", f"EXECUTE {portal}"
-
-    elif msg_type == "X":
-        # Terminate — not interesting for causal analysis
-        return "postgres.bytes.sent", ""
-
-    else:
-        # SSL, unknown, or startup message — record bytes only
-        return "postgres.bytes.sent", ""
-
-
-def _parse_redis(
-    payload: bytes, payload_len: int
-) -> Tuple[str, str]:
-    """
-    Parse the Redis RESP protocol.
-    Returns (probe_type, command_name).
-
-    RESP2/3 format for commands:
-        *<count>\r\n          bulk array start
-        $<len>\r\n            first element (command name) length
-        <command>\r\n         command name bytes (GET, SET, HGET, ...)
-        ...
-
-    Example: *2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n
-    """
-    if payload_len < 4:
-        return "redis.command.execute", ""
-
-    try:
-        text = payload[:payload_len].decode(
-            "utf-8", errors="replace"
-        )
-
-        if text[0] == "*":
-            # Bulk array format — standard redis-py encoding
-            lines = text.split("\r\n")
-            # Count line: *3 → 3 elements
-            count_str = lines[0][1:]
-            count = int(count_str) if count_str.isdigit() else 0
-
-            if count >= 2:
-                # Pipeline: multiple commands in one write
-                # We take the first command name as representative
-                probe_type = (
-                    "redis.pipeline.sent"
-                    if count > 2
-                    else "redis.command.execute"
-                )
-            else:
-                probe_type = "redis.command.execute"
-
-            # lines[1] = $<len>, lines[2] = command name
-            if len(lines) >= 3:
-                command = lines[2].strip().upper()
-                return probe_type, command
-            return probe_type, ""
-
-        else:
-            # Inline command format: "SET foo bar\r\n"
-            command = (
-                text.split()[0].upper() if text.strip() else ""
+    def start(self) -> bool:
+        if not self._bridge.available:
+            logger.info(
+                "asyncio epoll kprobe: bridge unavailable — skipping"
             )
-            return "redis.command.execute", command
+            return False
 
-    except Exception:
-        return "redis.command.execute", ""
+        try:
+            self._bridge.bpf["kernel_events"].open_perf_buffer(
+                self._handle_epoll_event
+            )
+        except Exception as exc:
+            # Already opened by nginx kprobe or dispatcher — log and continue.
+            # Events still flow if the opener dispatches epoll.wait events here.
+            logger.warning(
+                "asyncio epoll kprobe: open_perf_buffer failed "
+                "(may already be opened by nginx or dispatcher): %s",
+                exc,
+            )
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._poll_loop,
+            daemon=True,
+            name="stacktracer-epoll-kprobe",
+        )
+        self._thread.start()
+        logger.info(
+            "asyncio epoll kprobe: started (our_pid=%d)",
+            self._our_pid,
+        )
+        return True
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+
+    def _poll_loop(self) -> None:
+        bpf = self._bridge.bpf
+        while self._running:
+            try:
+                bpf.perf_buffer_poll(timeout=100)
+            except Exception as exc:
+                logger.debug(
+                    "asyncio epoll kprobe poll error: %s", exc
+                )
+                time.sleep(0.1)
+
+    def _handle_event(
+        self, cpu: int, data: Any, size: int
+    ) -> None:
+        if self._bridge.bpf is None:
+            return
+        try:
+            ev = self._bridge.bpf["db_events"].event(data)
+
+            if ev.pid != self._our_pid:
+                return
+
+            trace_id = ev.trace_id.decode(
+                "ascii", errors="replace"
+            ).rstrip("\x00")
+            if not trace_id:
+                return
+
+            # Port resolved from /proc — BPF no longer does sock walking
+            dst_port = self._get_dst_port(ev.pid, ev.fd)
+            if dst_port == 0:
+                return  # not a socket we care about
+
+            if dst_port == DEFAULT_POSTGRES_PORT:
+                # Payload capture dropped (kernel 6.x msg_iov removed)
+                # Query text comes from Django execute_wrapper instead
+                probe_type = "postgres.bytes.sent"
+                emit(
+                    NormalizedEvent.now(
+                        probe=probe_type,
+                        trace_id=trace_id,
+                        service="postgres",
+                        name="unknown",
+                        pid=ev.pid,
+                        tid=ev.tid,
+                        duration_ns=ev.duration_ns,
+                        bytes_sent=ev.bytes_sent,
+                        port=dst_port,
+                        source="kprobe",
+                    )
+                )
+
+            elif dst_port == DEFAULT_REDIS_PORT:
+                probe_type = "redis.command.execute"
+                emit(
+                    NormalizedEvent.now(
+                        probe=probe_type,
+                        trace_id=trace_id,
+                        service="redis",
+                        name="UNKNOWN",
+                        pid=ev.pid,
+                        tid=ev.tid,
+                        duration_ns=ev.duration_ns,
+                        bytes_sent=ev.bytes_sent,
+                        port=dst_port,
+                        source="kprobe",
+                    )
+                )
+
+        except Exception as exc:
+            logger.debug(
+                "db_kprobe event handling error: %s", exc
+            )
+
+    def _get_dst_port(self, pid: int, fd: int) -> int:
+        """Resolve destination port for a socket fd via /proc."""
+        try:
+            link = os.readlink(f"/proc/{pid}/fd/{fd}")
+            if not link.startswith("socket:"):
+                return 0
+            inode = link[8:-1]  # strip "socket:[" and "]"
+
+            for proto in ("tcp", "tcp6"):
+                try:
+                    with open(f"/proc/{pid}/net/{proto}") as f:
+                        for line in f:
+                            parts = line.split()
+                            if (
+                                len(parts) > 9
+                                and parts[9] == inode
+                            ):
+                                port_hex = parts[2].split(":")[1]
+                                return int(port_hex, 16)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        return 0
 
 
 # ====================================================================== #
@@ -463,149 +445,46 @@ class DBKprobe(BaseProbe):
 
     name = "db_probe"
 
-    def __init__(
-        self,
-        postgres_port: int = DEFAULT_POSTGRES_PORT,
-        redis_port: int = DEFAULT_REDIS_PORT,
-    ) -> None:
-        self._postgres_port = postgres_port
-        self._redis_port = redis_port
-        self._bpf = None
-        self._thread = None
-        self._running = False
-        self._our_pid = os.getpid()
+    def __init__(self) -> None:
+        self._epoll_kprobe: Optional[_EpollKprobe] = None
 
     def start(self) -> None:
-        bridge = get_bridge()
-        if not bridge.available:
-            logger.info(
-                "db_probe: KprobeBridge not available — "
-                "Postgres/Redis kprobes inactive. "
-                "Django execute_wrapper still provides ORM query visibility."
-            )
-            return
-
-        try:
-            from bcc import BPF
-        except ImportError:
-            logger.info(
-                "db_kprobe: bcc not installed — inactive"
-            )
-            return
-
-        # Inject port constants into BPF at compile time
-        cflags = [
-            f"-DPOSTGRES_PORT_VALUE={self._postgres_port}",
-            f"-DREDIS_PORT_VALUE={self._redis_port}",
-        ]
-
-        try:
-            self._bpf = BPF(text=_DB_KPROBE_BPF, cflags=cflags)
-        except Exception as exc:
+        global _originals, _patched, _original_step
+        if _patched:
             logger.warning(
-                "db_probe BPF compile failed: %s", exc
+                "asyncio probe already installed - skipping"
             )
             return
 
-        self._bpf["db_events"].open_perf_buffer(
-            self._handle_event
-        )
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._poll_loop,
-            daemon=True,
-            name="stacktracer-db-kprobe",
-        )
-        self._thread.start()
-
-        logger.info(
-            "db_probe active — observing port %d (postgres) and port %d (redis) "
-            "via sys_sendmsg tracepoint",
-            self._postgres_port,
-            self._redis_port,
-        )
+        # Layer 1: epoll kprobe
+        bridge = get_bridge()
+        if sys.platform == "linux":
+            if not bridge.available:
+                bridge.start()  # idempotent — safe to call multiple times
+            if bridge.available:
+                self._epoll_kprobe = _EpollKprobe(
+                    bridge, correlator=None
+                )
+                ok = self._epoll_kprobe.start()
+                if not ok:
+                    self._epoll_kprobe = None
+            else:
+                logger.info(
+                    "asyncio probe: epoll kprobe unavailable "
+                    "(bridge failed to start). "
+                    "Coroutine-level tracing still active."
+                )
+        _patched = True
 
     def stop(self) -> None:
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=2)
-        self._bpf = None
-        logger.info("db_probe stopped")
+        global _originals, _patched, _original_step
 
-    def _poll_loop(self) -> None:
-        while self._running and self._bpf:
-            try:
-                self._bpf.perf_buffer_poll(timeout=100)
-            except Exception as exc:
-                logger.debug("db_probe poll error: %s", exc)
-
-    def _handle_event(self, cpu: int, data, size: int) -> None:
-        if self._bpf is None:
+        if not _patched:
             return
-        try:
-            ev = self._bpf["db_events"].event(data)
 
-            if ev.pid != self._our_pid:
-                return  # ignore other processes
+        if self._epoll_kprobe:
+            self._epoll_kprobe.stop()
+            self._epoll_kprobe = None
 
-            trace_id = ev.trace_id.decode(
-                "ascii", errors="replace"
-            ).rstrip("\x00")
-            if not trace_id:
-                return
-
-            payload = bytes(ev.payload[: ev.payload_len])
-            payload_len = ev.payload_len
-            dst_port = ev.dst_port
-
-            if dst_port == self._postgres_port:
-                probe_type, query_text = _parse_postgres(
-                    payload, payload_len
-                )
-                emit(
-                    NormalizedEvent.now(
-                        probe=probe_type,
-                        trace_id=trace_id,
-                        service="postgres",
-                        # name is the query text — GraphNormalizer collapses literals
-                        name=(
-                            query_text[:200]
-                            if query_text
-                            else "unknown"
-                        ),
-                        pid=ev.pid,
-                        tid=ev.tid,
-                        duration_ns=ev.duration_ns,
-                        bytes_sent=ev.bytes_sent,
-                        port=dst_port,
-                        source="kprobe",
-                        encrypted=(
-                            probe_type == "postgres.bytes.sent"
-                            and not query_text
-                        ),
-                    )
-                )
-
-            elif dst_port == self._redis_port:
-                probe_type, command = _parse_redis(
-                    payload, payload_len
-                )
-                emit(
-                    NormalizedEvent.now(
-                        probe=probe_type,
-                        trace_id=trace_id,
-                        service="redis",
-                        name=command or "UNKNOWN",
-                        pid=ev.pid,
-                        tid=ev.tid,
-                        duration_ns=ev.duration_ns,
-                        bytes_sent=ev.bytes_sent,
-                        port=dst_port,
-                        source="kprobe",
-                    )
-                )
-
-        except Exception as exc:
-            logger.debug(
-                "db_kprobe event handling error: %s", exc
-            )
+        _patched = False
+        logger.info("asyncio probe removed")

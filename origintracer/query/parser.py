@@ -47,10 +47,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-# ====================================================================== #
-# Parser
-# ====================================================================== #
-
 
 @dataclass
 class ParsedQuery:
@@ -502,21 +498,20 @@ def _show_active(engine: Any) -> Dict:
 
 
 def _show_probes(engine: Any) -> Dict:
-    """List registered probe adapters by name."""
+    """
+    List registered probe adapters by name.
+    """
     probes = []
     probe_mgr = getattr(engine, "probes", None)
     if probe_mgr:
-        probes = (
-            list(probe_mgr.keys())
-            if isinstance(probe_mgr, dict)
-            else [getattr(p, "name", str(p)) for p in probe_mgr]
-        )
+        for p in probe_mgr:
+            probes.append(getattr(p, "name", str(p)))
+
     return {"metric": "probes", "data": probes}
 
 
 def _show_rules(engine: Any) -> Dict:
     """List registered causal rule names."""
-    # Based on your PDB, the registry is stored in 'engine.causal'
     registry = getattr(engine, "causal", None)
 
     # Get the rules from the registry.

@@ -115,6 +115,23 @@ def st_on_starting(server: Any) -> None:
 
 
 def ot_post_fork(server: Any, worker: Any) -> None:
+    import asyncio
+    import asyncio.tasks as tasks
+
+    # Force the standard selector-based event loop (native Python)
+    if hasattr(asyncio, "DefaultEventLoopPolicy"):
+        asyncio.set_event_loop_policy(
+            asyncio.DefaultEventLoopPolicy()
+        )
+    if hasattr(tasks, "_PyTask"):
+        tasks.Task = tasks._PyTask
+        asyncio.Task = tasks._PyTask
+        # Also patch the factory if it exists
+        if hasattr(asyncio, "create_task"):
+            # This ensures new tasks use the patched class
+            pass
+    loop = asyncio.get_event_loop()
+    print(loop)
     worker_pid = os.getpid()
     master_pid = os.getppid()
     worker_class = type(worker).__name__
@@ -132,23 +149,23 @@ def ot_post_fork(server: Any, worker: Any) -> None:
             exc,
         )
 
-    import stacktracer
+    import origintracer
 
-    engine = stacktracer.get_engine()
+    engine = origintracer.get_engine()
     if engine is not None:
         _emit_worker_fork(
             trace_id, worker_class, worker_pid, master_pid
         )
         _drain_pre_fork_events(engine)
     else:
-        stacktracer._register_post_init_callback(
+        origintracer._register_post_init_callback(
             lambda: _emit_worker_fork(
                 trace_id, worker_class, worker_pid, master_pid
             )
         )
-        stacktracer._register_post_init_callback(
+        origintracer._register_post_init_callback(
             lambda: _drain_pre_fork_events(
-                stacktracer.get_engine()
+                origintracer.get_engine()
             )
         )
 
@@ -393,10 +410,6 @@ class GunicornProbe(BaseProbe):
     name = "gunicorn"
 
     def start(self) -> None:
-
-        # import pdb
-        # pdb.set_trace()
-
         try:
             import gunicorn  # noqa: F401
         except ImportError:

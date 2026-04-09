@@ -21,14 +21,16 @@ class WorkerConfig(AppConfig):
             self._init_otel()
 
     def _bootstrap_native(self):
-        """Core initialization logic for the native engine."""
-        import stacktracer
+        """
+        Core initialization logic for the native engine.
+        """
+        import origintracer
 
         base_dir = Path(__file__).resolve().parent.parent
-        config_path = str(base_dir / "stacktracer.yaml")
+        config_path = str(base_dir / "origintracer.yaml")
 
-        stacktracer.init(config=config_path)
-        stacktracer.mark_deployment("deployment")
+        origintracer.init(config=config_path)
+        origintracer.mark_deployment("deployment")
 
     def _init_otel(self):
         """Full OTEL instrumentation suite."""
@@ -46,14 +48,14 @@ class WorkerConfig(AppConfig):
         from opentelemetry.sdk.trace.export import (
             BatchSpanProcessor,
         )
-        from stacktracer.bridge.otel_bridge import (
-            StackTracerSpanExporter,
+        from origintracer.bridge.otel_bridge import (
+            OriginTracerSpanExporter,
         )
 
         # Setup OTEL Pipeline
         provider = TracerProvider()
         provider.add_span_processor(
-            BatchSpanProcessor(StackTracerSpanExporter())
+            BatchSpanProcessor(OriginTracerSpanExporter())
         )
         trace.set_tracer_provider(provider)
 

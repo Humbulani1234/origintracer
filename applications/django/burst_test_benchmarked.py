@@ -13,7 +13,7 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BASE_URL = "http://127.0.0.1:80"
 DEFAULT_WAVES = 6
 DEFAULT_BURST_SIZE = 100
 DEFAULT_WORKERS = 15
@@ -161,9 +161,6 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
 
 
 def main():
-    import pdb
-
-    pdb.set_trace()
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_BASE_URL)
     parser.add_argument(
@@ -250,7 +247,7 @@ def main():
     print("   Run complete")
     print("   _________________________________")
     if final_stats and "error" not in final_stats:
-        print(f"   Total Requests: {total_requests:,}")
+        print(f"{'Total Requests:':>18} {total_requests:,}")
         print(
             f"   Total Dropped:  {final_stats.get('buf_dropped', 0):,}"
         )

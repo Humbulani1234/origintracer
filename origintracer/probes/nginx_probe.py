@@ -5,13 +5,15 @@ BCC (BPF Compiler Collection) Installation & Setup Guide
 BCC is a system-level tool and CANNOT be installed inside a virtualenv with pip.
 It must be installed at the OS level and imported from there.
 
-IMPORTANT: Run all commands as shown — order matters.
+NOTE: Run all commands as shown - order matters.
+
 
 STEP 1 — Check your kernel version
 ----------------------------------
 
     $ uname -r
     # Requires 4.9 or higher (5.x / 6.x are fine)
+
 
 STEP 2 — Install kernel headers
 -------------------------------
@@ -25,15 +27,17 @@ headers for that exact version.
 Verify:
     $ ls /lib/modules/$(uname -r)/build
 
+
 STEP 3 — Install BCC from apt
 ---------------------------------------
 
     $ sudo apt install -y bpfcc-tools libbpfcc-dev python3-bpfcc
 
     Packages installed:
-        bpfcc-tools    >> command-line BCC tools
-        python3-bpfcc  >> Python bindings  →  from bcc import BPF
-        libbpfcc-dev   >> C headers needed to compile BPF programs
+        bpfcc-tools >> command-line BCC tools
+        python3-bpfcc >> Python bindings > from bcc import BPF
+        libbpfcc-dev >> C headers needed to compile BPF programs
+
 
 STEP 4 — Verify the install OUTSIDE your virtualenv
 ---------------------------------------------------
@@ -41,6 +45,7 @@ STEP 4 — Verify the install OUTSIDE your virtualenv
     $ deactivate
     $ python3 -c "from bcc import BPF; print('bcc ok')"
     # Expected output: bcc ok
+
 
 STEP 5 — Make BCC visible INSIDE your virtualenv
 --------------------------------------------------
@@ -63,6 +68,7 @@ Verify inside the venv:
 
 Once this passes, get_bridge() will work and bridge.available will be True.
 
+
 STEP 6 — Verify BPF permissions
 --------------------------------
 
@@ -73,6 +79,7 @@ BPF requires root or CAP_BPF. Test with:
         print('BPF compile ok')
     "
     # Expected output: BPF compile ok
+
 
 STEP 7 — Run gunicorn as root (dev only)
 ----------------------------------------
@@ -97,23 +104,13 @@ QUICK CHECKLIST
 
 **************************** INSTALLATION COMPLETE ************************
 
-probes/nginx_probe.py  (final — kprobe + Lua UDP, correlated)
+Two layers, and one is the fallback.
 
-Three layers. Two correlate with each other. One is the fallback.
+Layer A - kprobe (accept4, epoll_wait, sendmsg, recvmsg):
+    Handles: fd, client_ip, client_port, kernel duration, bytes, epoll state.
+    Does not handle: URI, method, status, upstream timing.
 
-Layer A — kprobe (accept4, epoll_wait, sendmsg, recvmsg):
-    Knows: fd, client_ip, client_port, kernel duration, bytes, epoll state.
-    Does NOT know: URI, method, status, upstream timing.
-
-Layer B — Lua UDP receiver (log_by_lua → UDP port 9119):
-    Knows: URI, method, status, upstream timing, request_id, remote_addr.
-    Does NOT know: fd numbers, accept latency, epoll state.
-
-Correlation: (client_ip, client_port) == (remote_addr, remote_port).
-When both fire for the same connection, they are merged into
-nginx.request.enriched — one event with kernel + HTTP fields combined.
-
-Layer C — access log tail: zero-privilege fallback.
+Layer B — access log tail: as a fallback.
 """
 
 from __future__ import annotations
@@ -136,16 +133,16 @@ from ..core.kprobe_bridge import get_bridge
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.nginx")
+logger = logging.getLogger("origintracer.probes.nginx")
 
 ProbeTypes.register_many(
     {
-        "nginx.connection.accept": "accept4 — new connection, client addr captured",
-        "nginx.connection.data_in": "recvmsg — bytes received from client",
-        "nginx.connection.data_out": "sendmsg — bytes sent to client",
-        "nginx.epoll.tick": "epoll_wait — nginx loop tick with n_events",
-        "nginx.request.complete": "log_by_lua — full HTTP request completed",
-        "nginx.request.enriched": "kprobe+lua merged — kernel+HTTP in one event",
+        "nginx.connection.accept": "accept4 - new connection, client addr captured",
+        "nginx.connection.data_in": "recvmsg - bytes received from client",
+        "nginx.connection.data_out": "sendmsg - bytes sent to client",
+        "nginx.epoll.tick": "epoll_wait - nginx loop tick with n_events",
+        "nginx.request.complete": "log_by_lua - full HTTP request completed",
+        "nginx.request.enriched": "kprobe+lua merged - kernel+HTTP in one event",
         "nginx.main.start": "nginx master process discovered at probe start",
         "nginx.worker.discovered": "nginx worker process discovered at probe start",
     }
@@ -153,7 +150,6 @@ ProbeTypes.register_many(
 
 _NGINX_TRACE_PREFIX = "nginx-"
 
-# -------------------- Pre-fork event parking ------------------------------
 # Events emitted here would land in the master's engine — which is discarded
 # after fork. We park them in this list and drain them after init() completes
 # in the worker, so the worker's engine receives the full nginx topology.
@@ -162,7 +158,9 @@ _pre_fork_events: list = []
 
 
 def _drain_pre_fork_events() -> None:
-    """Drain parked nginx topology events into the worker's live engine."""
+    """
+    Drain parked nginx topology events into the worker's live engine.
+    """
     from origintracer.sdk.emitter import emit_direct
 
     for event in _pre_fork_events:
@@ -170,7 +168,6 @@ def _drain_pre_fork_events() -> None:
     _pre_fork_events.clear()
 
 
-# pid discovery
 def _find_nginx_pids() -> List[int]:
     pids = []
     for pid_file in ["/var/run/nginx.pid", "/run/nginx.pid"]:
@@ -244,16 +241,68 @@ def _ip_str(ip_be: int) -> str:
     )
 
 
-# ------------------------ Ngnix BPF C source -----------------------------
+# ------------ Ngnix BPF --------------------------------
 
 _NGINX_BPF = r"""
-/* ----------- nginx pid filter ------------------ */
+/* ------------- nginx pid filter ---------------------- */
 static inline int nginx_is_nginx(void) {
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     return nginx_pids.lookup(&pid) != NULL;
 }
 
-/* ------------- accept4 enter ----------------- */
+// ************ Internal Helpers (Replaces Macros) ************
+
+static inline int handle_epoll_enter(void) {
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u64 ts      = bpf_ktime_get_ns();
+    // Unconditional — save for ALL processes
+    nginx_epoll_ts.update(&pid_tid, &ts);
+    return 0;
+}
+
+static inline int handle_epoll_exit(void *args, int ret_val) {
+    u64 pid_tid   = bpf_get_current_pid_tgid();
+    u32 pid       = (u32)(pid_tid >> 32);
+    u32 tid       = (u32)pid_tid;
+
+    u64 *entry_ts = nginx_epoll_ts.lookup(&pid_tid);
+    if (!entry_ts) return 0;
+
+    u64 now = bpf_ktime_get_ns();
+
+    // nginx path — no trace_id, correlation happens in Python
+    if (nginx_is_nginx() && ret_val > 0) {
+        struct kernel_event_t ev = {};
+        ev.timestamp_ns = now;
+        ev.pid          = pid;
+        ev.tid          = tid;
+        ev.duration_ns  = now - *entry_ts;
+        ev.value1       = ret_val;
+        __builtin_memcpy(ev.event_type, "nginx.epoll", 12);
+        // no trace_id copy — nginx doesn't have it
+        kernel_events.perf_submit(args, &ev, sizeof(ev));
+    }
+
+    // Logic for Asyncio/Tracing context
+    struct trace_entry_t *ctx = trace_context.lookup(&tid);
+    if (ctx && ret_val > 0) {
+        struct kernel_event_t ev = {};
+        ev.timestamp_ns = now;
+        ev.pid = pid;
+        ev.tid = tid;
+        ev.duration_ns = now - *entry_ts;
+        ev.value1 = ret_val;
+        __builtin_memcpy(ev.event_type, "epoll.wait", 11);
+        __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);
+        __builtin_memcpy(ev.service,    ctx->service,  32);
+        kernel_events.perf_submit(args, &ev, sizeof(ev));
+    }
+
+    nginx_epoll_ts.delete(&pid_tid);
+    return 0;
+}
+
+// ******** accept4 enter ***********************
 TRACEPOINT_PROBE(syscalls, sys_enter_accept4) {
     if (!nginx_is_nginx()) return 0;
     u64 pid_tid = bpf_get_current_pid_tgid();
@@ -263,9 +312,6 @@ TRACEPOINT_PROBE(syscalls, sys_enter_accept4) {
 }
 
 // *********** accept4 exit ********************
-// Note: upeer_sockaddr removed from sys_exit_accept4 args in kernel 6.x.
-// Client IP/port capture requires a dedicated enter-side map — omitted here
-// for kernel compatibility. Add if you need it and are on kernel < 6.0.
 TRACEPOINT_PROBE(syscalls, sys_exit_accept4) {
     if (!nginx_is_nginx()) return 0;
     if (args->ret < 0) return 0;
@@ -286,19 +332,14 @@ TRACEPOINT_PROBE(syscalls, sys_exit_accept4) {
     return 0;
 }
 
-// ************ epoll_wait enter ************************
-// Handles BOTH nginx and asyncio paths in one tracepoint.
-// asyncio_probe does NOT attach its own epoll tracepoints — there can only
-// be one BPF program attached to a given tracepoint at a time.
-TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait) {
-    u64 pid_tid = bpf_get_current_pid_tgid();
-    u32 tid     = (u32)pid_tid;
-    u64 ts      = bpf_ktime_get_ns();
+// ************ epoll_wait Probes ************************
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_wait)  { return handle_epoll_enter(); }
+TRACEPOINT_PROBE(syscalls, sys_enter_epoll_pwait) { return handle_epoll_enter(); }
 
-    if (nginx_is_nginx()) {
-        nginx_epoll_ts.update(&pid_tid, &ts);
-    }
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait)   { return handle_epoll_exit(args, args->ret); }
+TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait)  { return handle_epoll_exit(args, args->ret); }
 
+<<<<<<< HEAD
     // asyncio path: any thread registered in trace_context
     struct trace_entry_t *ctx = trace_context.lookup(&tid);
     if (ctx) {
@@ -355,6 +396,10 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_wait) {
 // Exit probe only: msghdr.msg_iov / msg_iovlen removed from BPF-visible
 // msghdr in kernel 6.x. args->ret gives actual bytes sent.
 TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
+=======
+// *********** write exit ***********************************
+TRACEPOINT_PROBE(syscalls, sys_exit_write) {
+>>>>>>> origin/deploy_stack_tracer
     if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
 
@@ -369,9 +414,14 @@ TRACEPOINT_PROBE(syscalls, sys_exit_sendmsg) {
     return 0;
 }
 
+<<<<<<< HEAD
 // ************ recvmsg exit ********************************
 
 TRACEPOINT_PROBE(syscalls, sys_exit_recvmsg) {
+=======
+// ************ recvfrom exit ********************************
+TRACEPOINT_PROBE(syscalls, sys_exit_recvfrom) {
+>>>>>>> origin/deploy_stack_tracer
     if (!nginx_is_nginx()) return 0;
     if (args->ret <= 0) return 0;
 
@@ -422,7 +472,7 @@ class _NginxCorrelator:
         t = threading.Thread(
             target=self._evict,
             daemon=True,
-            name="stacktracer-nginx-evict",
+            name="origintracer-nginx-evict",
         )
         t.start()
 
@@ -452,75 +502,6 @@ class _NginxCorrelator:
                 "fd": fd,
                 "_at": time.monotonic(),
             }
-
-    def on_lua_event(self, d: dict):
-        addr = d.get("remote_addr", "")
-        port = int(d.get("remote_port", 0))
-        with self._lock:
-            conn = self._table.pop((addr, port), None)
-        if conn:
-            self._emit_enriched(d, conn)
-        else:
-            self._emit_lua_only(d)
-
-    def _emit_enriched(self, lua, conn):
-        trace_id = lua.get("trace_id") or conn["conn_key"]
-        dur_ms = lua.get("duration_ms", 0)
-        up_ms = lua.get("upstream_ms", -1)
-        own_ms = lua.get("nginx_own_ms", -1)
-        from origintracer.sdk.emitter import emit_direct
-
-        emit_direct(
-            NormalizedEvent.now(
-                probe="nginx.request.enriched",
-                trace_id=trace_id,
-                service="nginx",
-                name=lua.get("uri", "unknown"),
-                method=lua.get("method", ""),
-                status_code=lua.get("status", 0),
-                bytes_sent=lua.get("bytes_sent", 0),
-                upstream_addr=lua.get("upstream_addr", ""),
-                duration_ns=int(dur_ms * 1e6),
-                upstream_duration_ns=(
-                    int(up_ms * 1e6) if up_ms > 0 else None
-                ),
-                nginx_own_duration_ns=(
-                    int(own_ms * 1e6) if own_ms > 0 else None
-                ),
-                accept_duration_ns=conn["accept_dur_ns"],
-                client_ip=conn["client_ip"],
-                client_port=conn["client_port"],
-                worker_pid=conn["pid"],
-                fd=conn["fd"],
-                source="kprobe+lua",
-            )
-        )
-
-    def _emit_lua_only(self, lua):
-        trace_id = (
-            lua.get("trace_id")
-            or f"{_NGINX_TRACE_PREFIX}{time.time_ns()}"
-        )
-        dur_ms = lua.get("duration_ms", 0)
-        up_ms = lua.get("upstream_ms", -1)
-        from origintracer.sdk.emitter import emit_direct
-
-        emit_direct(
-            NormalizedEvent.now(
-                probe="nginx.request.complete",
-                trace_id=trace_id,
-                service="nginx",
-                name=lua.get("uri", "unknown"),
-                method=lua.get("method", ""),
-                status_code=lua.get("status", 0),
-                duration_ns=int(dur_ms * 1e6),
-                upstream_duration_ns=(
-                    int(up_ms * 1e6) if up_ms > 0 else None
-                ),
-                client_ip=lua.get("remote_addr", ""),
-                source="lua",
-            )
-        )
 
     def _evict(self):
         while self._alive:
@@ -556,6 +537,7 @@ class _NginxKprobeMode:
 
     def __init__(self, bridge, correlator):
         self._bridge = bridge
+        self._our_pid = os.getpid()
         self._corr = correlator
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -632,17 +614,24 @@ class _NginxKprobeMode:
                 time.sleep(0.1)
 
     def _handle_event(self, cpu, data, size):
-        if not self._bpf:
+        if self._bridge.bpf is None:
             return
+
         from origintracer.sdk.emitter import emit_direct
 
         try:
-            ev = self._bpf["nginx_events"].event(data)
-            etype = ev.etype.decode(
+            ev = self._bridge.bpf["kernel_events"].event(data)
+            event_type_full = ev.event_type.decode(
                 "ascii", errors="replace"
             ).rstrip("\x00")
+            parts = event_type_full.split(".")
+            etype = (
+                parts[1] if len(parts) > 1 else event_type_full
+            )
             ckey = f"{_NGINX_TRACE_PREFIX}{ev.pid}-{ev.tid}"
-
+            print(
+                f">>>>> nginx epoll: ev.pid={ev.pid} ev.tid={ev.tid} etype={etype}"
+            )
             if etype == "accept":
                 cip = (
                     _ip_str(ev.client_ip) if ev.client_ip else ""
@@ -656,127 +645,90 @@ class _NginxKprobeMode:
                     conn_key=ckey,
                     client_ip=cip,
                     client_port=cport,
-                    accept_ns=ev.ts_ns,
-                    accept_dur_ns=ev.dur_ns,
+                    accept_ns=ev.timestamp_ns,
+                    accept_dur_ns=ev.duration_ns,
                     pid=ev.pid,
-                    fd=int(ev.v1),
+                    fd=int(ev.value1),
                 )
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.connection.accept",
                         trace_id=ckey,
                         service="nginx",
                         name="accept",
                         pid=ev.pid,
-                        fd=int(ev.v1),
+                        fd=int(ev.value1),
                         client_ip=cip,
                         client_port=cport,
-                        duration_ns=ev.dur_ns,
+                        duration_ns=ev.duration_ns,
                         source="kprobe",
                     )
                 )
             elif etype == "epoll":
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.epoll.tick",
                         trace_id=ckey,
                         service="nginx",
                         name="epoll_wait",
                         pid=ev.pid,
-                        n_events=int(ev.v1),
-                        duration_ns=ev.dur_ns,
+                        n_events=int(ev.value1),
+                        duration_ns=ev.duration_ns,
                         source="kprobe",
                     )
                 )
             elif etype == "data_out":
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.connection.data_out",
                         trace_id=ckey,
                         service="nginx",
                         name="sendmsg",
                         pid=ev.pid,
-                        fd=int(ev.v2),
-                        bytes_sent=int(ev.v1),
+                        fd=int(ev.value2),
+                        bytes_sent=int(ev.value1),
                         source="kprobe",
                     )
                 )
             elif etype == "data_in":
-                emit_direct(
+                emit(
                     NormalizedEvent.now(
                         probe="nginx.connection.data_in",
                         trace_id=ckey,
                         service="nginx",
                         name="recvmsg",
                         pid=ev.pid,
-                        bytes_received=int(ev.v1),
+                        bytes_received=int(ev.value1),
                         source="kprobe",
                     )
                 )
+            elif event_type_full == "epoll.wait":
+                # asyncio epoll event — dispatch to asyncio handler
+                trace_id = (
+                    bytes(ev.trace_id)
+                    .decode("ascii", errors="replace")
+                    .rstrip("\x00")
+                )
+                if trace_id:
+                    service = ev.service.decode(
+                        "ascii", errors="replace"
+                    ).rstrip("\x00")
+                    emit(
+                        NormalizedEvent.now(
+                            probe="asyncio.loop.epoll_wait",
+                            trace_id=trace_id,
+                            service=service or "asyncio",
+                            name="epoll_wait",
+                            pid=ev.pid,
+                            tid=ev.tid,
+                            duration_ns=ev.duration_ns,
+                            n_events=int(ev.value1),
+                            ready_fds=[],
+                            source="kprobe",
+                        )
+                    )
         except Exception as e:
             logger.debug("nginx kprobe event: %s", e)
-
-
-# -------------- Lua UDP receiver --------------------------------
-
-
-class _LuaHandler(socketserver.BaseRequestHandler):
-    def handle(self):
-        try:
-            d = json.loads(
-                self.request[0].decode("utf-8", errors="replace")
-            )
-            self.server.corr.on_lua_event(d)
-        except Exception:
-            pass
-
-
-class _LuaServer(socketserver.UDPServer):
-    allow_reuse_address = True
-
-    def __init__(self, corr, host, port):
-        self.corr = corr
-        super().__init__((host, port), _LuaHandler)
-
-
-class _NginxLuaMode:
-    def __init__(
-        self, corr: _NginxCorrelator, host="127.0.0.1", port=9119
-    ):
-        self._corr = corr
-        self._host = host
-        self._port = port
-        self._srv = None
-
-    def start(self) -> bool:
-        try:
-            self._srv = _LuaServer(
-                self._corr, self._host, self._port
-            )
-        except OSError as e:
-            logger.warning(
-                "nginx Lua UDP bind %s:%d failed: %s",
-                self._host,
-                self._port,
-                e,
-            )
-            return False
-        t = threading.Thread(
-            target=self._srv.serve_forever,
-            daemon=True,
-            name="stacktracer-nginx-lua-udp",
-        )
-        t.start()
-        logger.info(
-            "nginx Lua UDP receiver on %s:%d",
-            self._host,
-            self._port,
-        )
-        return True
-
-    def stop(self):
-        if self._srv:
-            self._srv.shutdown()
 
 
 # ------------- Log tail fallback --------------------------------
@@ -858,7 +810,7 @@ class _NginxLogMode:
         ut = r.get("upstream_response_time", "-")
         from origintracer.sdk.emitter import emit_direct
 
-        emit_direct(
+        emit(
             NormalizedEvent.now(
                 probe="nginx.request.complete",
                 trace_id=trace_id,
@@ -882,27 +834,31 @@ class _NginxLogMode:
 
 class NginxProbe(BaseProbe):
     """
-    nginx observation — three complementary layers:
+        nginx observation — three complementary layers:
 
-    kprobe  >> kernel timing, connection identity, epoll state
-    Lua     >> HTTP semantics, upstream timing, request_id
-    merged  >> nginx.request.enriched when both fire for same connection
+        kprobe  >> kernel timing, connection identity, epoll state
+        Lua     >> HTTP semantics, upstream timing, request_id
+        merged  >> nginx.request.enriched when both fire for same connection
 
-    Pre-fork topology events:
-        On start(), the probe discovers nginx master + worker pids and parks
-        nginx.main.start and nginx.worker.discovered events into _pre_fork_events.
-        These are drained into the live engine after init() completes in each
-        gunicorn worker, giving every worker's graph the correct nginx topology:
+        Pre-fork topology events:
+            On start(), the probe discovers nginx master + worker pids and parks
+            nginx.main.start and nginx.worker.discovered events into _pre_fork_events.
+            These are drained into the live engine after init() completes in each
+            gunicorn worker, giving every worker's graph the correct nginx topology:
 
-            nginx::master - spawned >> nginx::worker-{pid}
-            nginx::worker-{pid} - handled >> nginx::{uri}
+                nginx::master - spawned >> nginx::worker-{pid}
+                nginx::worker-{pid} - handled >> nginx::{uri}
 
-    Configure:
-        nginx:
-          mode: auto # auto | kprobe | lua | log | combined
-          log_path: /var/log/nginx/access.log
-          lua_host: 127.0.0.1
-          lua_port: 9119
+        Configure:
+            nginx:
+    <<<<<<< HEAD
+              mode: auto # auto | kprobe | lua | log | combined
+    =======
+              mode: auto # auto | kprobe | log |
+    >>>>>>> origin/deploy_stack_tracer
+              log_path: /var/log/nginx/access.log
+              lua_host: 127.0.0.1
+              lua_port: 9119
     """
 
     name = "nginx"
@@ -911,21 +867,16 @@ class NginxProbe(BaseProbe):
         self,
         log_path="/var/log/nginx/access.log",
         mode="kprobe",
-        lua_host="127.0.0.1",
-        lua_port=9119,
     ):
         self._log_path = log_path
         self._mode = mode
-        self._lua_host = lua_host
-        self._lua_port = lua_port
         self._corr: Optional[_NginxCorrelator] = None
         self._kp: Optional[_NginxKprobeMode] = None
-        self._lua: Optional[_NginxLuaMode] = None
         self._log: Optional[_NginxLogMode] = None
 
     def start(self):
 
-        # --------- 1. Discover nginx topology and park pre-fork events ----
+        # --------- Discover nginx topology --------------
         # Must happen before any fork() so the events are in _pre_fork_events
         # when the post-init callback drains them into the worker's engine.
 
@@ -966,17 +917,16 @@ class NginxProbe(BaseProbe):
                 "nginx probe: nginx not running — topology events skipped"
             )
 
-        # Register drain callback — fires after init() completes in worker
+        # Register drain callback - fires after init() completes in worker
         from origintracer import _register_post_init_callback
 
         _register_post_init_callback(_drain_pre_fork_events)
 
-        # ----- 2. Start the appropriate observation layer ---------------
+        # -------- Start the observation layer ---------------
         self._corr = _NginxCorrelator()
-        wk = self._mode in ("auto", "kprobe", "combined")
-        wl = self._mode in ("auto", "lua", "combined")
+        wk = self._mode in ("auto", "kprobe")
 
-        kp_ok = lu_ok = False
+        kp_ok = False
         if wk and sys.platform == "linux":
             bridge = get_bridge()
             bridge.start()
@@ -984,35 +934,22 @@ class NginxProbe(BaseProbe):
             kp_ok = self._kp.start()
             if not kp_ok:
                 self._kp = None
-        if wl:
-            self._lua = _NginxLuaMode(
-                self._corr, self._lua_host, self._lua_port
-            )
-            lu_ok = self._lua.start()
-            if not lu_ok:
-                self._lua = None
-        if not kp_ok and not lu_ok:
+
+        if not kp_ok:
             self._log = _NginxLogMode(self._log_path)
             if not self._log.start():
                 self._log = None
 
-        active = (
-            (["kprobe"] if kp_ok else [])
-            + (["lua"] if lu_ok else [])
-            + (["log"] if self._log else [])
+        active = (["kprobe"] if kp_ok else []) + (
+            ["log"] if self._log else []
         )
         if active:
             logger.info("nginx probe: %s", "+".join(active))
-            if kp_ok and lu_ok:
-                logger.info(
-                    "nginx: kprobe+lua combined — emitting "
-                    "nginx.request.enriched on correlated connections"
-                )
         else:
             logger.warning("nginx probe: no layer started")
 
     def stop(self):
-        for x in (self._kp, self._lua, self._log, self._corr):
+        for x in (self._kp, self._log, self._corr):
             if x:
                 x.stop()
-        self._kp = self._lua = self._log = self._corr = None
+        self._kp = self._log = self._corr = None
