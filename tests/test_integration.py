@@ -1,27 +1,26 @@
 """
-tests/test_integration.py
-
 End-to-end integration tests that exercise the full data path:
 
-    Probe events → emit() → Engine.process() → RuntimeGraph
-                                              → TemporalStore
-                                              → ActiveRequestTracker
-                                              → CausalRegistry
-                  → Uploader.insert_event()  → InMemoryRepository
-                  → GraphSerializer          → Snapshot bytes
-                  → GraphDeserializer        → Reconstructed graph
-                  → DSL executor             → Query result
+    Probe events >> emit() >> Engine.process() >> RuntimeGraph
+                                               >> TemporalStore
+                                               >> ActiveRequestTracker
+                                               >> CausalRegistry
 
-These tests don't mock anything. They run the real components together
+                >> Uploader.insert_event() >> InMemoryRepository
+                >> GraphSerializer >> Snapshot bytes
+                >> GraphDeserializer >> Reconstructed graph
+                >> DSL executor >> Query result
+
+The tests don't mock anything. They run the real components together
 and verify that the pieces that were designed and implemented separately
 actually fit together correctly.
 
 Each test class represents one realistic scenario:
-    TestNginxDjangoPostgresTrace   — full stack HTTP request
-    TestDeploymentCorrelation      — causal rule fires after deploy
-    TestHighCardinalityNormalization — normalizer feeds compactor feeds graph
-    TestSnapshotRoundTrip          — agent serialises, backend deserialises
-    TestConfigMergePipeline        — defaults + user yaml + kwargs merge
+    TestNginxDjangoPostgresTrace - full stack HTTP request
+    TestDeploymentCorrelation - causal rule fires after deploy
+    TestHighCardinalityNormalization - normalizer feeds compactor feeds graph
+    TestSnapshotRoundTrip - agent serialises, backend deserialises
+    TestConfigMergePipeline - defaults + user yaml + kwargs merge
 """
 
 from __future__ import annotations
@@ -46,15 +45,13 @@ from origintracer.sdk.emitter import (
 
 from .conftest import evt
 
-# ====================================================================== #
-# Full stack HTTP request trace
-# ====================================================================== #
+# ----------------- Full stack HTTP request trace -----------------
 
 
 class TestNginxDjangoPostgresTrace:
     """
     Simulate a production HTTP request flowing through:
-        nginx → (gunicorn) → django → postgres
+        nginx >> (gunicorn) >> django >> postgres
     All events share one trace_id. Verify that:
         - The graph captures the full topology
         - The critical path is correct
@@ -829,9 +826,6 @@ class TestConfigMergePipeline:
             normalize=kwargs.pop("normalize", None),
             compactor=kwargs.pop("compactor", None),
             active_requests=kwargs.pop("active_requests", None),
-            observe=kwargs.pop(
-                "observe", None
-            ),  # required — added with django probe revision
         )
 
     def test_defaults_applied_when_no_user_config(self):
@@ -947,32 +941,3 @@ class TestConfigMergePipeline:
         }
         cfg = self._merge({"normalize": []}, normalize=[my_rule])
         assert cfg.normalize == [my_rule]
-
-    def test_observe_defaults_to_empty_modules(self):
-        """
-        Without observe.modules configured, cfg.observe should exist
-        and observe.modules should be an empty list — not a KeyError.
-        """
-        cfg = self._merge({})
-        assert isinstance(cfg.observe, dict)
-        assert cfg.observe.get("modules", []) == []
-
-    def test_observe_modules_from_yaml(self):
-        cfg = self._merge(
-            {"observe": {"modules": ["myapp", "myapp.api"]}}
-        )
-        assert cfg.observe["modules"] == ["myapp", "myapp.api"]
-
-    def test_observe_dict_merged_key_by_key(self):
-        """
-        init(observe={"modules": ["myapp"]}) with a user yaml that set
-        a different observe key should keep both keys.
-        """
-        cfg = self._merge(
-            {"observe": {"modules": ["myapp"], "max_depth": 5}},
-            observe={"modules": ["myapp", "myapp.tasks"]},
-        )
-        # kwarg wins on modules
-        assert cfg.observe["modules"] == ["myapp", "myapp.tasks"]
-        # yaml-only key preserved by deep merge
-        assert cfg.observe.get("max_depth") == 5

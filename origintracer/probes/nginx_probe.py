@@ -5,13 +5,15 @@ BCC (BPF Compiler Collection) Installation & Setup Guide
 BCC is a system-level tool and CANNOT be installed inside a virtualenv with pip.
 It must be installed at the OS level and imported from there.
 
-IMPORTANT: Run all commands as shown — order matters.
+NOTE: Run all commands as shown - order matters.
+
 
 STEP 1 — Check your kernel version
 ----------------------------------
 
     $ uname -r
     # Requires 4.9 or higher (5.x / 6.x are fine)
+
 
 STEP 2 — Install kernel headers
 -------------------------------
@@ -25,15 +27,17 @@ headers for that exact version.
 Verify:
     $ ls /lib/modules/$(uname -r)/build
 
+
 STEP 3 — Install BCC from apt
 ---------------------------------------
 
     $ sudo apt install -y bpfcc-tools libbpfcc-dev python3-bpfcc
 
     Packages installed:
-        bpfcc-tools    >> command-line BCC tools
-        python3-bpfcc  >> Python bindings  →  from bcc import BPF
-        libbpfcc-dev   >> C headers needed to compile BPF programs
+        bpfcc-tools >> command-line BCC tools
+        python3-bpfcc >> Python bindings > from bcc import BPF
+        libbpfcc-dev >> C headers needed to compile BPF programs
+
 
 STEP 4 — Verify the install OUTSIDE your virtualenv
 ---------------------------------------------------
@@ -41,6 +45,7 @@ STEP 4 — Verify the install OUTSIDE your virtualenv
     $ deactivate
     $ python3 -c "from bcc import BPF; print('bcc ok')"
     # Expected output: bcc ok
+
 
 STEP 5 — Make BCC visible INSIDE your virtualenv
 --------------------------------------------------
@@ -63,6 +68,7 @@ Verify inside the venv:
 
 Once this passes, get_bridge() will work and bridge.available will be True.
 
+
 STEP 6 — Verify BPF permissions
 --------------------------------
 
@@ -73,6 +79,7 @@ BPF requires root or CAP_BPF. Test with:
         print('BPF compile ok')
     "
     # Expected output: BPF compile ok
+
 
 STEP 7 — Run gunicorn as root (dev only)
 ----------------------------------------
@@ -97,19 +104,13 @@ QUICK CHECKLIST
 
 **************************** INSTALLATION COMPLETE ************************
 
-probes/nginx_probe.py  (final — kprobe + Lua UDP, correlated)
+Two layers, and one is the fallback.
 
-Three layers. Two correlate with each other. One is the fallback.
+Layer A - kprobe (accept4, epoll_wait, sendmsg, recvmsg):
+    Handles: fd, client_ip, client_port, kernel duration, bytes, epoll state.
+    Does not handle: URI, method, status, upstream timing.
 
-Layer A — kprobe (accept4, epoll_wait, sendmsg, recvmsg):
-    Knows: fd, client_ip, client_port, kernel duration, bytes, epoll state.
-    Does NOT know: URI, method, status, upstream timing.
-
-Layer C — access log tail: as a fallback.
-
-Correlation: (client_ip, client_port) == (remote_addr, remote_port).
-When both fire for the same connection, they are merged into
-nginx.request.enriched — one event with kernel + HTTP fields combined.
+Layer B — access log tail: as a fallback.
 """
 
 from __future__ import annotations
@@ -136,12 +137,12 @@ logger = logging.getLogger("origintracer.probes.nginx")
 
 ProbeTypes.register_many(
     {
-        "nginx.connection.accept": "accept4 — new connection, client addr captured",
-        "nginx.connection.data_in": "recvmsg — bytes received from client",
-        "nginx.connection.data_out": "sendmsg — bytes sent to client",
-        "nginx.epoll.tick": "epoll_wait — nginx loop tick with n_events",
-        "nginx.request.complete": "log_by_lua — full HTTP request completed",
-        "nginx.request.enriched": "kprobe+lua merged — kernel+HTTP in one event",
+        "nginx.connection.accept": "accept4 - new connection, client addr captured",
+        "nginx.connection.data_in": "recvmsg - bytes received from client",
+        "nginx.connection.data_out": "sendmsg - bytes sent to client",
+        "nginx.epoll.tick": "epoll_wait - nginx loop tick with n_events",
+        "nginx.request.complete": "log_by_lua - full HTTP request completed",
+        "nginx.request.enriched": "kprobe+lua merged - kernel+HTTP in one event",
         "nginx.main.start": "nginx master process discovered at probe start",
         "nginx.worker.discovered": "nginx worker process discovered at probe start",
     }
@@ -149,8 +150,6 @@ ProbeTypes.register_many(
 
 _NGINX_TRACE_PREFIX = "nginx-"
 
-# ── Pre-fork event parking ─────────────────────────────────────────────────
-#
 # Events emitted here would land in the master's engine — which is discarded
 # after fork. We park them in this list and drain them after init() completes
 # in the worker, so the worker's engine receives the full nginx topology.
@@ -159,15 +158,14 @@ _pre_fork_events: list = []
 
 
 def _drain_pre_fork_events() -> None:
-    """Drain parked nginx topology events into the worker's live engine."""
+    """
+    Drain parked nginx topology events into the worker's live engine.
+    """
     from origintracer.sdk.emitter import emit_direct
 
     for event in _pre_fork_events:
         emit_direct(event)
     _pre_fork_events.clear()
-
-
-# ── pid discovery ─────────────────────────────────────────────────────
 
 
 def _find_nginx_pids() -> List[int]:
@@ -243,7 +241,7 @@ def _ip_str(ip_be: int) -> str:
     )
 
 
-# ------- Ngnix BPF C source --------------------------------
+# ------------ Ngnix BPF --------------------------------
 
 _NGINX_BPF = r"""
 /* ------------- nginx pid filter ---------------------- */
@@ -788,7 +786,7 @@ class NginxProbe(BaseProbe):
 
     Configure:
         nginx:
-          mode: auto       # auto | kprobe | lua | log | combined
+          mode: auto # auto | kprobe | log |
           log_path: /var/log/nginx/access.log
           lua_host: 127.0.0.1
           lua_port: 9119
@@ -800,8 +798,6 @@ class NginxProbe(BaseProbe):
         self,
         log_path="/var/log/nginx/access.log",
         mode="kprobe",
-        lua_host="127.0.0.1",
-        lua_port=9119,
     ):
         self._log_path = log_path
         self._mode = mode
@@ -810,7 +806,8 @@ class NginxProbe(BaseProbe):
         self._log: Optional[_NginxLogMode] = None
 
     def start(self):
-        # --------- 1. Discover nginx topology and park pre-fork events ----
+
+        # --------- Discover nginx topology --------------
         # Must happen before any fork() so the events are in _pre_fork_events
         # when the post-init callback drains them into the worker's engine.
 
@@ -851,12 +848,12 @@ class NginxProbe(BaseProbe):
                 "nginx probe: nginx not running — topology events skipped"
             )
 
-        # Register drain callback — fires after init() completes in worker
+        # Register drain callback - fires after init() completes in worker
         from origintracer import _register_post_init_callback
 
         _register_post_init_callback(_drain_pre_fork_events)
 
-        # ----- 2. Start the appropriate observation layer ---------------
+        # -------- Start the observation layer ---------------
         self._corr = _NginxCorrelator()
         wk = self._mode in ("auto", "kprobe")
 

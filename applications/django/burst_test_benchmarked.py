@@ -247,7 +247,7 @@ def main():
     print("   Run complete")
     print("   _________________________________")
     if final_stats and "error" not in final_stats:
-        print(f"   Total Requests: {total_requests:,}")
+        print(f"{'Total Requests:':>18} {total_requests:,}")
         print(
             f"   Total Dropped:  {final_stats.get('buf_dropped', 0):,}"
         )

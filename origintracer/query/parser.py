@@ -47,10 +47,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-# ====================================================================== #
-# Parser
-# ====================================================================== #
-
 
 @dataclass
 class ParsedQuery:
@@ -516,7 +512,6 @@ def _show_probes(engine: Any) -> Dict:
 
 def _show_rules(engine: Any) -> Dict:
     """List registered causal rule names."""
-    # Based on your PDB, the registry is stored in 'engine.causal'
     registry = getattr(engine, "causal", None)
 
     # Get the rules from the registry.

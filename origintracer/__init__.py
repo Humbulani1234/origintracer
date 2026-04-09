@@ -34,7 +34,7 @@ from .sdk.uploader import Uploader  # noqa: F401
 
 logger = logging.getLogger("origintracer")
 
-# Package-level variables — one per process
+# Package-level variables
 _config: Optional["ResolvedConfig"] = None
 _engine: Optional[Engine] = None
 _active_probes: List[BaseProbe] = []
@@ -52,7 +52,7 @@ def _register_post_init_callback(fn: Callable) -> None:
         _post_init_callbacks.append(fn)
 
 
-# ----------- Step 1 — Raw config loading and merging ---------------
+# ----------- Raw config loading and merging ---------------
 
 
 def _load_package_defaults() -> Dict[str, Any]:
@@ -146,8 +146,6 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
             and isinstance(val, dict)
         ):
             result[key] = _deep_merge(result[key], val)
-
-        # ADD THIS EXCEPTION:
         elif (
             key == "semantic"
             and key in result
@@ -170,7 +168,6 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
             if not val:
                 result[key] = []
             else:
-                # Otherwise, we keep the user's rules as the New Base
                 result[key] = val
         else:
             result[key] = val
@@ -200,7 +197,7 @@ def _extend_normalize(
     init_kwarg_rules: Optional[List[Dict]],
 ) -> List[Dict]:
     """
-    Normalize rules are ADDITIVE — kwarg rules extend the yaml list.
+    Normalize rules are ADDITIVE - kwarg rules extend the yaml list.
     User wanting a clean slate sets normalize: [] in their yaml first.
     """
     base = list(merged_yaml_rules)
@@ -209,7 +206,7 @@ def _extend_normalize(
     return base
 
 
-# ----------------- Step 2 — ResolvedConfig ----------------------------
+# ----------------- ResolvedConfig ----------------------------
 
 
 @dataclass
@@ -225,7 +222,6 @@ class ResolvedConfig:
     buffer_size: int
     flush_interval: int
     snapshot_interval: float
-    redact_fields: List[str]
     probes: List[str]
     builtin_probes: List[
         str
@@ -233,10 +229,7 @@ class ResolvedConfig:
     semantic: List[Dict]
     normalize: List[Dict]
     compactor: Dict[str, Any]
-    nginx: Dict[str, Any]
-    gunicorn: Dict[str, Any]
     active_requests: Dict[str, Any]
-    observe: Dict[str, Any]
     debug: bool
     enabled: bool
     config_path: Optional[str]
@@ -266,7 +259,6 @@ def _build_resolved_config(
     normalize: Optional[List[Dict]],
     compactor: Optional[Dict],
     active_requests: Optional[Dict],
-    observe: Optional[Dict],
 ) -> ResolvedConfig:
     """
     Apply init() kwargs as the final override layer on top of merged yaml.
@@ -296,7 +288,6 @@ def _build_resolved_config(
             if snapshot_interval is not None
             else merged_yaml.get("snapshot_interval", 15.0)
         ),
-        redact_fields=merged_yaml.get("redact_fields", []),
         probes=(
             probes
             if probes is not None
@@ -308,14 +299,9 @@ def _build_resolved_config(
         compactor=_deep_merge(
             merged_yaml.get("compactor", {}), compactor or {}
         ),
-        nginx=merged_yaml.get("nginx", {}),
-        gunicorn=merged_yaml.get("gunicorn", {}),
         active_requests=_deep_merge(
             merged_yaml.get("active_requests", {}),
             active_requests or {},
-        ),
-        observe=_deep_merge(
-            merged_yaml.get("observe", {}), observe or {}
         ),
         debug=debug,
         enabled=True,
@@ -323,9 +309,7 @@ def _build_resolved_config(
     )
 
 
-# ====================================================================== #
-# Step 3 — Component initialisation
-# ====================================================================== #
+# ---------------- Component initialisation ---------------
 
 
 def _init_normalizer(cfg: ResolvedConfig) -> Any:
@@ -452,7 +436,7 @@ def _init_probes(
     started = []
     for probe in probes:
         try:
-            probe.start()
+            probe.start(cfg)
             started.append(probe)
             logger.info("Probe started: %s", probe.name)
         except Exception as exc:
@@ -604,7 +588,9 @@ def _init_uploader(
         return None
 
 
-# Public init()
+# ------------------ Public init() ----------------------
+
+
 def init(
     api_key: str = "test-key-123",
     endpoint: str = "http://localhost:8000",
@@ -618,7 +604,6 @@ def init(
     normalize: Optional[List[Dict]] = None,
     compactor: Optional[Dict] = None,
     active_requests: Optional[Dict] = None,
-    observe: Optional[Dict] = None,
     otel_mode: bool = False,
 ) -> None:
     """
@@ -711,7 +696,6 @@ def init(
         normalize=normalize,
         compactor=compactor,
         active_requests=active_requests,
-        observe=observe,
     )
 
     if not _config.enabled:

@@ -410,10 +410,6 @@ class GunicornProbe(BaseProbe):
     name = "gunicorn"
 
     def start(self) -> None:
-
-        # import pdb
-        # pdb.set_trace()
-
         try:
             import gunicorn  # noqa: F401
         except ImportError:
