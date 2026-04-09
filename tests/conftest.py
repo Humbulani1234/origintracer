@@ -79,9 +79,15 @@ def load_builtin_rules():
             f"origintracer.rules.{module_name}"
         )
     # User rules that need to be available in tests
-    from applications.django.rules import gunicorn_rules
+    from applications.django.rules import (
+        gunicorn_rules,
+        nginx_rules,
+        uvicorn_rules,
+    )
 
     gunicorn_rules.register(PatternRegistry)
+    uvicorn_rules.register(PatternRegistry)
+    nginx_rules.register(PatternRegistry)
 
 
 @pytest.fixture(autouse=True, scope="function")

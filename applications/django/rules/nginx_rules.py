@@ -11,6 +11,7 @@ from origintracer.core.temporal import TemporalStore
 def _retry_amplification(
     graph: RuntimeGraph,
     temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict]:
     """
     Detect downstream nodes where retry counts are high —

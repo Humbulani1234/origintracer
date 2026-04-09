@@ -97,6 +97,13 @@ class PatternRegistry:
         cls._rules.pop(name, None)
 
     @classmethod
+    def _reset(cls) -> None:
+        """
+        For testing only - clears all registered rules.
+        """
+        cls._rules.clear()
+
+    @classmethod
     def evaluate(
         cls,
         graph: RuntimeGraph,
