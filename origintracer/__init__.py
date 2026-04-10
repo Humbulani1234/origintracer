@@ -34,12 +34,12 @@ from .sdk.base_probe import BaseProbe, ProbeRegistry
 from .sdk.emitter import bind_engine, emit
 from .sdk.uploader import Uploader
 
-logger = logging.getLogger("origintracer")
+logger = logging.getLogger("origintracer.initialisation")
 
 # Package-level variables
 _config: Optional["ResolvedConfig"] = None
 _engine: Optional[Engine] = None
-_active_rules: dict[str, CausalRule] = {}
+_active_rules: Optional[PatternRegistry] = None
 _active_probes: List[BaseProbe] = []
 _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
@@ -434,7 +434,7 @@ def _init_probes(
     started = []
     for probe in probes:
         try:
-            probe.start(cfg)
+            probe.start()
             started.append(probe)
             logger.info("Probe started: %s", probe.name)
         except Exception as exc:
@@ -505,7 +505,9 @@ def _init_rules(
     # 1. Builtins — import triggers PatternRegistry.registry.register(...)
     for module_path in cfg.builtin_rules:
         try:
-            importlib.import_module(module_path)
+            importlib.import_module(
+                module_path, package=__name__
+            )
         except ImportError as exc:
             logger.debug(
                 "Builtin rule not available: %s — %s",
@@ -517,8 +519,8 @@ def _init_rules(
     _discover_user_rules(app_root)
 
     # 3. Filter to intersection with cfg.rules
-    PatternRegistry._apply_rule_filter(cfg.rules)
-    return PatternRegistry._rules
+    PatternRegistry.apply_filter(cfg.rules)
+    return PatternRegistry
 
 
 def _discover_user_rules(app_root: str) -> None:
@@ -529,7 +531,7 @@ def _discover_user_rules(app_root: str) -> None:
     import importlib.util
     import traceback
 
-    rules_dir = os.path.join(app_root, "origintracer", "rules")
+    rules_dir = os.path.join(app_root, "rules")
     if not os.path.isdir(rules_dir):
         return
 
@@ -622,7 +624,7 @@ def _init_uploader(
 
 def init(
     api_key: str = "test-key-123",
-    endpoint: str = "http://localhost:8000",
+    endpoint: str = "https://origintracer.app",
     config: Optional[str] = None,
     probes: Optional[List[str]] = None,
     rules: Optional[List[str]] = None,

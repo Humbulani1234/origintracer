@@ -343,6 +343,7 @@ def _make_create_task_wrapper(original: Callable) -> Callable:
         name: Optional[str] = None,
         context: Any = None,
     ):
+
         trace_id = get_trace_id()
         if trace_id:
             coro_name = getattr(
@@ -378,9 +379,7 @@ class AsyncioProbe(BaseProbe):
     def __init__(self) -> None:
         self._epoll_kprobe: Optional[_EpollKprobe] = None
 
-    def start(
-        self, observe_modules: Optional[List[str]] = None
-    ) -> None:
+    def start(self) -> None:
 
         global _originals, _patched, _original_step
 

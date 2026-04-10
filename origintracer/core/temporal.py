@@ -4,7 +4,15 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Deque, Dict, List, Optional, Set
+from typing import (
+    Any,
+    Deque,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+    Set,
+)
 
 
 @dataclass
@@ -21,6 +29,9 @@ class GraphDiff:
     removed_node_ids: Set[str] = field(default_factory=set)
     added_edge_keys: Set[str] = field(default_factory=set)
     removed_edge_keys: Set[str] = field(default_factory=set)
+    edge_baseline: FrozenSet[str] = field(
+        default_factory=frozenset
+    )
 
     @property
     def is_empty(self) -> bool:
@@ -123,6 +134,9 @@ class TemporalStore:
                 GraphDiff(
                     timestamp=time.time(),
                     label=label,
+                    edge_baseline=frozenset(
+                        self._prev_edge_keys
+                    ),
                 )
             )
 

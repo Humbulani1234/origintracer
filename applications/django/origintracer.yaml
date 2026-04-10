@@ -5,9 +5,9 @@
 probes:
   - gunicorn
   - uvicorn
-  # - asyncio
+  - asyncio
   - django
-  - nginx
+  # - nginx
 
 rules:
   - worker_imbalance

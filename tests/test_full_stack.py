@@ -354,9 +354,11 @@ class TestPatternRegistry:
         assert matches[0].confidence == 0.0
 
     def test_loop_starvation_rule(self):
-        from origintracer.core.causal import LOOP_STARVATION
         from origintracer.core.runtime_graph import RuntimeGraph
         from origintracer.core.temporal import TemporalStore
+        from origintracer.rules.asyncio_rules import (
+            LOOP_STARVATION,
+        )
 
         g = RuntimeGraph()
         # Create a node that looks like a slow asyncio loop tick

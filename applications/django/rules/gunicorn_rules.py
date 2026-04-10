@@ -80,6 +80,19 @@ def _worker_imbalance(
     }
 
 
+WORKER_IMBALANCE = CausalRule(
+    name="worker_imbalance",
+    description=(
+        "Gunicorn worker load is unbalanced - one worker is handling 2x+ "
+        "more requests than another. A worker may be stuck on a blocking "
+        "call, starving the others of available capacity."
+    ),
+    predicate=_worker_imbalance,
+    confidence=0.80,
+    tags=["gunicorn", "concurrency", "blocking"],
+)
+
+
 def register(registry: PatternRegistry) -> None:
     """
     Called automatically when this file is loaded.

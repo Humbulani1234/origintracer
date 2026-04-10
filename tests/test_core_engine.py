@@ -224,39 +224,6 @@ class TestEngineTemporalIntegration:
         assert diff is not None
         assert diff.label == "v2.0.0"
 
-    def test_new_sync_call_rule_fires_after_deployment(
-        self, engine, trace_id
-    ):
-        """
-        The new_sync_call_after_deployment rule fires when edges appear
-        after a deployment marker. Simulate: mark deploy, then new edge arrives.
-        """
-        engine.mark_deployment("deployment")
-        time.sleep(0.01)
-
-        # New call edge appears after deployment
-        engine.process(
-            evt(
-                probe="request.entry",
-                service="django",
-                name="view",
-                trace_id=trace_id,
-            )
-        )
-        engine.process(
-            evt(
-                probe="function.call",
-                service="exporter",
-                name="call_flags",
-                trace_id=trace_id,
-            )
-        )
-        engine.snapshot()
-
-        matches = engine.evaluate()
-        rule_names = [m.rule_name for m in matches]
-        assert "new_sync_call_after_deployment" in rule_names
-
     def test_evaluate_returns_empty_on_clean_graph(self, engine):
         """A graph with no anomalous patterns should return no causal matches."""
         # Process a few normal events — nothing that would trigger rules

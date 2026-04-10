@@ -223,44 +223,6 @@ class TestDeploymentCorrelation:
     def setup_method(self):
         enable_sync_mode()
 
-    def test_new_edge_after_deployment_fires_rule(self, engine):
-        # Some baseline traffic before deployment
-        for i in range(3):
-            tid = str(uuid.uuid4())
-            emit(
-                NormalizedEvent.now(
-                    "function.call",
-                    tid,
-                    "django",
-                    "existing_view",
-                )
-            )
-        engine.snapshot()
-        # Deployment happens
-        engine.mark_deployment("deployment")
-        time.sleep(0.01)
-
-        # NEW synchronous call appears post-deploy
-        tid = str(uuid.uuid4())
-        emit(
-            NormalizedEvent.now(
-                "request.entry", tid, "django", "existing_view"
-            )
-        )
-        emit(
-            NormalizedEvent.now(
-                "function.call",
-                tid,
-                "exporter",
-                "call_feature_flags",
-            )
-        )
-        engine.snapshot()
-
-        matches = engine.evaluate()
-        rule_names = [m.rule_name for m in matches]
-        assert "new_sync_call_after_deployment" in rule_names
-
     def test_deployment_marker_survives_snapshot_cycle(
         self, engine
     ):

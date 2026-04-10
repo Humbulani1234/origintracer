@@ -159,3 +159,21 @@ def cleanup_emitter():
     """
     yield  # Run the test
     unbind_engine()  # Clean up after the test
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_rule: skip test if rule not registered",
+    )
+
+
+@pytest.fixture(autouse=False)
+def require_rule(request):
+    marker = request.node.get_closest_marker("requires_rule")
+    if marker:
+        rule_name = marker.args[0]
+        if rule_name not in PatternRegistry.rule_names():
+            pytest.skip(
+                f"Rule '{rule_name}' not registered — user rule not loaded"
+            )

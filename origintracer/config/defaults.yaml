@@ -20,16 +20,16 @@
 builtin_probes:
   - ".probes.gunicorn_probe"
   - ".probes.uvicorn_probe"
-  # - ".probes.asyncio_probe"
+  - ".probes.asyncio_probe"
   - ".probes.django_probe"
-  - ".probes.nginx_probe"
+  # - ".probes.nginx_probe"
 
 probes:
   - django
   - asyncio
   - uvicorn
   - gunicorn
-  - nginx
+  # - nginx
 
 # ---------------- Rules activation ---------------------------
 
@@ -43,8 +43,8 @@ probes:
 #   Only probes listed here are started - importing a module does not start it.
  
 builtin_rules:
-  - ".probes.asyncio_rule"
-  - ".probes.django_rule"
+  - ".rules.asyncio_rules"
+  - ".rules.django_rules"
 
 rules:
   - new_sync_call_after_deployment

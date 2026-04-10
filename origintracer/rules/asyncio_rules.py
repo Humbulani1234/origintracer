@@ -1,3 +1,4 @@
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from origintracer.core.active_requests import (
@@ -19,26 +20,64 @@ def _new_sync_call_after_deployment(
     if not deployment_diff:
         return False, {}
 
+    if time.time() - deployment_diff.timestamp < 120:
+        return False, {}
+
+    # require post-deployment snapshots
+    post_diffs = [
+        d
+        for d in temporal.changes_since(
+            deployment_diff.timestamp
+        )
+        if not d.label
+    ]
+    if not post_diffs:
+        return False, {}
+
     new_edges = temporal.new_edges_since(
         deployment_diff.timestamp
     )
-    sync_edges = [k for k in new_edges if ":calls" in k]
-    if not sync_edges:
+    genuinely_new = [
+        e
+        for e in new_edges
+        if ":calls" in e
+        and e not in deployment_diff.edge_baseline
+    ]
+    if not genuinely_new:
+        return False, {}
+
+    # extract node ids from new edge keys e.g. "django::A→django::B:calls"
+    new_edge_nodes = set()
+    for edge in genuinely_new:
+        parts = edge.replace(":calls", "").split("→")
+        for p in parts:
+            new_edge_nodes.add(p.strip())
+
+    slow_nodes = [
+        n
+        for n in graph.all_nodes()
+        if n.id in new_edge_nodes
+        and n.avg_duration_ns
+        and n.avg_duration_ns > 200 * 1e6
+    ]
+    if not slow_nodes:
         return False, {}
 
     return True, {
         "deployment_timestamp": deployment_diff.timestamp,
-        "new_sync_edges": sync_edges[:10],
+        "new_sync_edges": genuinely_new[:10],
+        "slow_nodes": [n.id for n in slow_nodes],
     }
 
 
 NEW_SYNC_CALL = CausalRule(
     name="new_sync_call_after_deployment",
     description=(
-        "New synchronous call edges appeared immediately after the most recent "
-        "deployment. A newly introduced synchronous dependency is the probable "
-        "root cause of latency — not the database or downstream metrics that "
-        "degraded later. (Ref: Antimetal Exporter→Flags incident pattern.)"
+        "New synchronous call edges appeared after the most recent deployment "
+        "and the nodes involved in those new edges are experiencing elevated "
+        "latency (>200ms avg). The new dependency itself is the probable root "
+        "cause - not unrelated parts of the system. "
+        "Rule requires 120s post-deployment to establish a baseline. "
     ),
     predicate=_new_sync_call_after_deployment,
     confidence=0.85,

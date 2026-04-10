@@ -37,6 +37,19 @@ def _retry_amplification(
     return True, evidence
 
 
+RETRY_AMPLIFICATION = CausalRule(
+    name="retry_amplification",
+    description=(
+        "High retry counts on downstream edges. "
+        "A slow dependency is being amplified by retry loops — "
+        "investigate the slowest downstream node first, not the retrying caller."
+    ),
+    predicate=_retry_amplification,
+    confidence=0.75,
+    tags=["latency", "retry"],
+)
+
+
 def register(registry: PatternRegistry) -> None:
     """
     Called automatically when this file is loaded.

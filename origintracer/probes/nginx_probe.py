@@ -833,7 +833,7 @@ class NginxProbe(BaseProbe):
             )
         else:
             logger.info(
-                "nginx probe: nginx not running — topology events skipped"
+                "nginx probe: nginx not running - topology events skipped"
             )
 
         # Register drain callback - fires after init() completes in worker

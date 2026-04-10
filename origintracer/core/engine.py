@@ -59,7 +59,7 @@ class Engine:
             GraphCompactor()
         )  # overwridden in init()
         self.semantic = semantic_layer or SemanticLayer()
-        self.causal: Optional[dict[str, CausalRule]] = None
+        self.causal: Optional[PatternRegistry] = None
         # System active probes - overridden during init()
         self.probes: Optional[List[BaseProbe]] = None
 
@@ -162,10 +162,9 @@ class Engine:
     def evaluate(
         self, tags: Optional[List[str]] = None
     ) -> List[CausalMatch]:
-        """Run all registered causal rules against the current graph."""
-
-        # import pdb
-        # pdb.set_trace()
+        """
+        Run all registered causal rules against the current graph.
+        """
 
         return self.causal.evaluate(
             self.graph, self.temporal, self.tracker, tags=tags

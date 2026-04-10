@@ -50,11 +50,6 @@ import textwrap
 import time
 import uuid
 
-try:
-    import readline
-except ImportError:
-    pass  # Windows - fine without it
-
 # Make sure the project root is on the path (harmless if already there)
 sys.path.insert(
     0,
@@ -845,11 +840,16 @@ HISTORY_FILE = os.path.expanduser("~/.stacktracer_history")
 
 
 def main():
+
     try:
+        import readline
+
         readline.read_history_file(HISTORY_FILE)
+        readline.set_history_length(200)
     except FileNotFoundError:
-        pass
-    readline.set_history_length(200)
+        pass  # history file doesn't exist yet, fine
+    except ImportError:
+        pass  # Windows, fine without it
 
     print(
         c("\n  StackTracer REPL", BOLD, CYAN)
@@ -875,7 +875,7 @@ def main():
             raw = input(c("› ", BOLD, BLUE)).strip()
         except (KeyboardInterrupt, EOFError):
             print()
-            ok("Bye.")
+            ok("Finished.")
             break
 
         if not raw:

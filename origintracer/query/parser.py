@@ -502,8 +502,7 @@ def _show_rules(engine: Any) -> Dict:
     """List registered causal rule names."""
     registry = getattr(engine, "causal", None)
 
-    # Get the rules from the registry.
-    if registry and hasattr(registry, "_rules"):
+    if registry:
         rules = list(registry._rules.keys())
     else:
         rules = []
