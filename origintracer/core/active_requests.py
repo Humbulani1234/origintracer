@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import collections
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -17,12 +18,14 @@ _COMPLETION_WINDOW = 200  # keep last N completions per pattern for rule evaluat
 
 @dataclass
 class RequestSpan:
-    """One in-flight or recently completed request."""
+    """
+    One in-flight or recently completed request.
+    """
 
     trace_id: str
     service: str
     pattern: str  # normalized name, e.g. "GET /api/users/{id}/"
-    start_time: float  # time.monotonic()
+    start_time: float
     last_event: float = field(default_factory=time.monotonic)
     complete_time: Optional[float] = None
     probe_sequence: List[str] = field(default_factory=list)
@@ -45,39 +48,21 @@ class RequestSpan:
 class ActiveRequestTracker:
     """
     Tracks in-flight requests in a bounded dict with TTL eviction.
-
-    This is NOT a second graph. It is a 30-second window of active
-    trace_ids that enables one thing the RuntimeGraph cannot do alone:
-    compare current request latency against stored historical averages.
-
-    Why not use the RuntimeGraph for this:
-        RuntimeGraph nodes store avg_duration_ns accumulated over all time.
-        That is the right structure for topology and causal rules.
-        But avg_duration_ns cannot tell you whether the CURRENT request
-        is anomalous — it reflects all past requests, not the live one.
-
-        To detect "this endpoint is 3x slower than normal right now",
-        you need to know both:
-            A. Historical average (from RuntimeGraph node.avg_duration_ns)
-            B. Current in-flight duration (from this tracker)
+    It is a 30-second window of active trace_ids that enables one thing the
+    RuntimeGraph cannot do alone: compare current request latency against
+    stored historical averages.
 
     What this tracks:
         {trace_id: RequestSpan}
         RequestSpan: service, pattern (normalized name), start_time, last_event
 
     Lifecycle:
-        start()   → called when a traced request enters (TracerMiddleware,
-                    Celery task_prerun, etc.)
-        event()   → called on every NormalizedEvent to update last_event
-        complete()→ called when request exits, returns RequestSpan with duration
-        TTL       → entries not completed within 30s are evicted automatically
-
-    Memory:
-        One dict entry per in-flight request.
-        At 1000 req/s with 50ms P99 latency → ~50 entries at any moment.
-        At 1000 req/s with 5s P99 (slow system) → ~5000 entries.
-        Max cap of 10000 entries prevents unbounded growth under extreme load.
-        Eviction is FIFO when cap is hit — oldest entries go first.
+        start() >> called when a traced request enters (TracerMiddleware,
+                   Celery task_prerun, etc.)
+        event() >> called on every NormalizedEvent to update last_event
+        complete() >> called when request exits, returns RequestSpan with
+                      duration
+        TTL >> entries not completed within 30s are evicted automatically
 
     Integration with causal rules:
         The _request_duration_anomaly rule (in causal.py) reads:
@@ -87,16 +72,13 @@ class ActiveRequestTracker:
 
     Usage:
         tracker = ActiveRequestTracker()
-        # In TracerMiddleware / Celery probe:
+        # In TracerMiddleware/Celery probe:
         tracker.start(trace_id="abc-123", service="django",
                     pattern="/api/users/{id}/")
-        # In Engine.ingest():
+        # In Engine.process():
         tracker.event(trace_id="abc-123", probe="django.db.query")
-        # In TracerMiddleware exit / task_postrun:
+        # In TracerMiddleware exit/task_postrun:
         span = tracker.complete(trace_id="abc-123")
-        if span:
-            duration_ms = span.duration_ms
-            # Compare against graph node avg for anomaly detection
     """
 
     def __init__(
@@ -131,10 +113,6 @@ class ActiveRequestTracker:
     def stop(self) -> None:
         self._alive = False
 
-    # ------------------------------------------------------------------ #
-    # Hot path — called per request / per event
-    # ------------------------------------------------------------------ #
-
     def start(
         self,
         trace_id: str,
@@ -144,9 +122,8 @@ class ActiveRequestTracker:
         """
         Register a new in-flight request.
         Called by TracerMiddleware._begin(), Celery _on_task_start(), etc.
-
         If the tracker is at capacity, the oldest entry is evicted to make room.
-        This is a last-resort safety valve — normal eviction is TTL-based.
+        This is a last-resort safety valve - normal eviction is TTL-based.
         """
         span = RequestSpan(
             trace_id=trace_id,
@@ -156,7 +133,7 @@ class ActiveRequestTracker:
         )
         with self._lock:
             if len(self._active) >= self._max:
-                # Evict oldest entry (FIFO)
+                # Evict oldest entry - FIFO
                 oldest_key = next(iter(self._active))
                 del self._active[oldest_key]
                 logger.debug(
@@ -169,8 +146,7 @@ class ActiveRequestTracker:
     def event(self, trace_id: str, probe: str) -> None:
         """
         Update last_event timestamp and append to probe_sequence.
-        Called by Engine.ingest() for every NormalizedEvent.
-        Very cheap — single dict lookup + two attribute writes under lock.
+        Called by Engine.process() for every NormalizedEvent.
         """
         with self._lock:
             span = self._active.get(trace_id)
@@ -202,10 +178,6 @@ class ActiveRequestTracker:
                 )
 
         return span
-
-    # ------------------------------------------------------------------ #
-    # Query — called by causal rules
-    # ------------------------------------------------------------------ #
 
     def active_count(self, service: Optional[str] = None) -> int:
         """Number of requests currently in-flight."""
@@ -243,7 +215,7 @@ class ActiveRequestTracker:
         Returns recent completion durations (ms) for the given pattern.
         Used by causal rules to compute rolling averages and percentiles.
 
-        Note: we store by pattern not by timestamp so window_s is approximate —
+        Note: we store by pattern not by timestamp so window_s is approximate -
         it returns the last _COMPLETION_WINDOW completions regardless of time.
         For a high-throughput endpoint that is fine. For a rarely-hit endpoint,
         the ring buffer may span much longer than window_s.
@@ -254,7 +226,9 @@ class ActiveRequestTracker:
     def percentile(
         self, durations: List[float], p: float
     ) -> Optional[float]:
-        """Helper for causal rules: p99, p95 from a duration list."""
+        """
+        Helper for causal rules: p99, p95 from a duration list.
+        """
         if not durations:
             return None
         sorted_d = sorted(durations)
@@ -289,19 +263,13 @@ class ActiveRequestTracker:
         return result
 
     def _normalize_path(self, path: str) -> str:
-        # normalize /api/users/123/ → /api/users/{id}/
-        import re
-
+        # normalize /api/users/123/ >> /api/users/{id}/
         return re.sub(r"/\d+", "/{id}", path)
-
-    # ------------------------------------------------------------------ #
-    # Background eviction
-    # ------------------------------------------------------------------ #
 
     def _evict_loop(self) -> None:
         while self._alive:
             time.sleep(_EVICT_PERIOD_S)
-            self._evict()  # <--- Call the new method
+            self._evict()
 
     def _evict(self) -> None:
         cutoff = time.monotonic() - self._ttl

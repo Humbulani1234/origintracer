@@ -32,7 +32,7 @@ class Engine:
     ---------
     1. Instantiate once at startup.
     2. Bind to the SDK emitter: `sdk.emitter.bind_engine(engine)`
-    3. All probes emit via `sdk.emitter.emit(event)` — they never touch Engine directly.
+    3. All probes emit via `sdk.emitter.emit(event)` - they never touch Engine directly.
     4. Call `engine.start_background_tasks()` to enable periodic snapshots.
     5. Query via `engine.query(...)` or the HTTP API.
 
@@ -185,7 +185,7 @@ class Engine:
         Derive the critical path for a single trace_id from the event log.
         Returns all registered probe events in chronological order,
         annotated with inter-stage durations.
-        Uses ProbeTypes registry — no manual probe list to maintain.
+        Uses ProbeTypes registry.
         """
         with self._event_log_lock:
             events = [
@@ -196,9 +196,9 @@ class Engine:
 
         events.sort(key=lambda e: e.timestamp)
 
-        # All registered probes are meaningful — infrastructure probes
+        # All registered probes are meaningful - infrastructure probes
         # (gunicorn.worker.fork etc.) have no duration so they show as gaps
-        # which is correct — they mark topology events on the critical path.
+        # which is correct - they mark topology events on the critical path.
         registered = list(ProbeTypes.all().keys())
         filtered = [e for e in events if e.probe in registered]
 
@@ -231,7 +231,9 @@ class Engine:
     def traces_for_service(
         self, service: str, limit: int = 50
     ) -> List[str]:
-        """Return distinct trace_ids that touched a given service."""
+        """
+        Return distinct trace_ids that touched a given service.
+        """
         with self._event_log_lock:
             seen = []
             seen_set: set = set()
@@ -247,7 +249,9 @@ class Engine:
         return seen
 
     def hotspots(self, top_n: int = 10) -> List[Dict[str, Any]]:
-        """Return the N busiest nodes by call count."""
+        """
+        Return the N busiest nodes by call count.
+        """
         return [
             {
                 "node": n.id,
@@ -300,11 +304,9 @@ class Engine:
         """
         Remove trace_ids from _last_event_per_trace that have not received
         an event in _trace_ttl_s seconds (default 60s).
-
         Why this matters: every unique trace_id that ever passes through
         process() is inserted into this dict. Without eviction it grows
-        forever — one entry per request for the lifetime of the process.
-
+        forever - one entry per request for the lifetime of the process.
         Called from _snapshot_loop so it runs every snapshot_interval seconds
         (default 15s), which is well within the 60s TTL threshold.
         """

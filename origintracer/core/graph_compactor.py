@@ -2,30 +2,33 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Set
 
 logger = logging.getLogger("stacktracer.compactor")
+
+if TYPE_CHECKING:
+    from .runtime_graph import RuntimeGraph
 
 
 class GraphCompactor:
     """
     Bounds RuntimeGraph memory via two mechanisms:
 
-    Mechanism 1 — Node TTL
+    Mechanism 1 - Node TTL
         Nodes not seen for longer than `node_ttl_s` seconds are evicted.
         This handles services that appear temporarily (a feature flag endpoint
         that was removed, a task type that is no longer dispatched).
-        Default TTL: 3600 seconds (1 hour).
+        Default TTL: 3600 seconds.
 
-    Mechanism 2 — Node cap with LRU eviction
+    Mechanism 2 - Node cap with LRU eviction
         When the node count exceeds `max_nodes`, the least recently seen
         nodes are evicted to bring the count back to `max_nodes * evict_to_ratio`.
         Default: cap 5000 nodes, evict to 80% (4000 nodes) when exceeded.
 
     Edge handling on eviction:
-        When a node is evicted, all edges incident to it (in both directions)
-        are also removed. Dangling edges pointing to evicted nodes are invalid
-        for causal reasoning and must not persist.
+        When a node is evicted, all edges incident to it are also removed.
+        Dangling edges pointing to evicted nodes are invalid for causal
+        reasoning and must not persist.
 
     When to compact:
         Compaction runs on a background thread (called by Engine's snapshot loop)
@@ -44,7 +47,6 @@ class GraphCompactor:
         evict_to_ratio: float = 0.80,  # evict to 80% of max when cap hit
         node_ttl_s: float = 3600.0,  # evict nodes not seen in 1 hour
         min_call_count: int = 1,  # never evict nodes called >= this often
-        # (protects hot nodes from TTL eviction)
     ) -> None:
         self.max_nodes = max_nodes
         self.evict_to = int(max_nodes * evict_to_ratio)
@@ -54,12 +56,10 @@ class GraphCompactor:
         self._total_evictions = 0
         self._compact_runs = 0
 
-    def compact(self, graph: Any) -> Dict[str, Any]:
+    def compact(self, graph: RuntimeGraph) -> Dict[str, Any]:
         """
         Run one compaction pass against the graph.
         Returns a stats dict describing what was evicted and why.
-
-        `graph` is a RuntimeGraph — typed as Any to avoid circular import.
         """
         self._compact_runs += 1
         now = time.time()
@@ -69,7 +69,7 @@ class GraphCompactor:
         with graph._lock:
             node_count = len(graph._nodes)
 
-            # ---- Pass 1: TTL eviction ----
+            # Pass 1: TTL eviction
             # Evict nodes not seen recently, unless they are very hot.
             ttl_candidates = [
                 node_id
@@ -81,7 +81,7 @@ class GraphCompactor:
                 evicted_nodes.update(ttl_candidates)
                 reasons.append(f"ttl({len(ttl_candidates)})")
 
-            # ---- Pass 2: Cap eviction (LRU by last_seen) ----
+            # Pass 2: Cap eviction (LRU by last_seen)
             # Only runs if we are still over the cap after TTL eviction.
             remaining_after_ttl = node_count - len(evicted_nodes)
             if remaining_after_ttl > self.max_nodes:
@@ -113,7 +113,7 @@ class GraphCompactor:
                     "compact_runs": self._compact_runs,
                 }
 
-            # ---- Remove nodes and all incident edges ----
+            # Remove nodes and all incident edges
             evicted_edge_count = self._remove_nodes(
                 graph, evicted_nodes
             )

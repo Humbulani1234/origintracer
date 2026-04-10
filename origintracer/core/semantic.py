@@ -46,8 +46,8 @@ class SemanticLayer:
     graph node IDs and service names.
 
     This layer is what makes queries human-legible.
-    Instead of:  SHOW latency WHERE node = "django::flags_client.call_remote"
-    You write:   SHOW latency WHERE system = "export"
+    Instead of: SHOW latency WHERE node = "django::flags_client.call_remote"
+    You write: SHOW latency WHERE system = "export"
 
     The mapping is built from:
     1. Static registration (config files, code)
@@ -107,11 +107,6 @@ class SemanticLayer:
         yield from self._aliases.values()
 
 
-# ====================================================================== #
-# YAML loader
-# ====================================================================== #
-
-
 def load_from_dict(data: List[Dict[str, Any]]) -> SemanticLayer:
     """
     Load semantic aliases from a parsed YAML/JSON structure.
@@ -167,7 +162,7 @@ def merge_yaml_configs(*paths: str) -> dict:
             data = yaml.safe_load(f) or {}
         # Probes: extend the list (union, deduplicated later)
         merged["probes"].extend(data.get("probes", []))
-        # Semantic: extend — user aliases simply add to built-ins
+        # Semantic: extend - user aliases simply add to built-ins
         merged["semantic"].extend(data.get("semantic", []))
 
     # Deduplicate probes by name (last wins)

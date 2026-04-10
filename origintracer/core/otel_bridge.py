@@ -4,15 +4,8 @@ NOTE: Must be thoroughly tested.
 Makes OriginTracer an optional OpenTelemetry SpanExporter.
 
 When this bridge is active, OTel is the source of truth for spans.
-StackTracer's own probes are disabled and the engine receives
+OriginTracer's own probes are disabled and the engine receives
 NormalizedEvents translated from OTel spans instead.
-
-Why OTel as source of truth:
-    Some teams already have OTel instrumentation across their stack —
-    Django OTel SDK, SQLAlchemy instrumentation, Redis instrumentation.
-    Re-instrumenting with StackTracer probes alongside OTel would be
-    redundant and risky. The bridge lets StackTracer consume the OTel
-    signal the team already has and apply causal rules against it.
 
 What is lost when using OTel mode:
     - asyncio internals (Task.__step, loop tick, ready queue depth)
@@ -22,12 +15,6 @@ What is lost when using OTel mode:
     OTel does not go that deep. These are StackTracer-only observations.
     OTel mode gives you the graph and causal rules. Native probe mode
     gives you the graph + kernel internals + asyncio internals.
-
-What is gained when using OTel mode:
-    - Zero additional instrumentation if OTel is already deployed
-    - Distributed tracing across polyglot services (Go, Java, Node)
-    - OTel Collector as the transport (batching, retry, TLS)
-    - W3C traceparent header propagation across services automatically
 
 Architecture:
     OTel SDK (in Django)
@@ -95,14 +82,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional, Sequence
 
+import origintracer
+
 logger = logging.getLogger("origintracer.bridge.otel")
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace import ReadableSpan
 
 
-# ── Probe type mapping from OTel SpanKind ────────────────────────────────────
-
+# Probe type mapping from OTel SpanKind
 _SPAN_KIND_TO_PROBE = {
     0: "otel.internal",  # INTERNAL
     1: "otel.server",  # SERVER - incoming HTTP request
@@ -130,7 +118,6 @@ def _extract_service(span: "ReadableSpan") -> str:
     for attr, fn in _SERVICE_HINTS.items():
         if attr in attrs:
             return fn(attrs[attr])
-    # fall back to instrumentation scope name — strip the long prefix
     scope = getattr(span.instrumentation_scope, "name", "") or ""
     if "django" in scope:
         return "django"
@@ -188,10 +175,12 @@ def span_to_event(span: "ReadableSpan") -> Optional[object]:
     Returns None if the span should be skipped (e.g. internal OTel noise).
     """
     try:
-        from stacktracer.core.event_schema import NormalizedEvent
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+        )
     except ImportError:
         logger.error(
-            "stacktracer not installed — cannot convert OTel span"
+            "stacktracer not installed - cannot convert OTel span"
         )
         return None
 
@@ -256,9 +245,6 @@ def span_to_event(span: "ReadableSpan") -> Optional[object]:
     )
 
 
-# StackTracerSpanExporter
-
-
 class OriginTracerSpanExporter:
     """
     OpenTelemetry SpanExporter that feeds spans into StackTracer's engine.
@@ -266,7 +252,7 @@ class OriginTracerSpanExporter:
     Install as a span processor in your OTel setup:
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from stacktracer.bridge.otel_bridge import OriginTracerSpanExporter
+        from origintracer.bridge.otel_bridge import OriginTracerSpanExporter
 
         provider.add_span_processor(
             BatchSpanProcessor(OriginTracerSpanExporter())
@@ -284,8 +270,6 @@ class OriginTracerSpanExporter:
         except ImportError:
             return 0  # SUCCESS
 
-        import origintracer
-
         engine = origintracer.get_engine()
 
         if engine is None:
@@ -293,9 +277,7 @@ class OriginTracerSpanExporter:
                 "OTel bridge: engine not ready — dropping %d spans",
                 len(spans),
             )
-            return (
-                SpanExportResult.SUCCESS
-            )  # drop silently, not an error
+            return SpanExportResult.SUCCESS
 
         converted = 0
         for span in spans:
@@ -326,15 +308,11 @@ class OriginTracerSpanExporter:
         return True
 
 
-# W3C traceparent extraction helper
-
-
 def extract_trace_id_from_traceparent(
     traceparent: str,
 ) -> Optional[str]:
     """
     Extract the trace_id from a W3C traceparent header.
-
     traceparent format: 00-{trace_id}-{span_id}-{flags}
     Example: 00-4a3ce96-00f067aa902b7-01
 

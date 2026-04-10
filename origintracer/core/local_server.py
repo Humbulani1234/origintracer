@@ -1,7 +1,5 @@
 """
-core/local_server.py
-
-Unix domain socket server that the StackTracer REPL connects to.
+Unix domain socket server that the OriginTracer REPL connects to.
 
 The agent process (gunicorn worker) starts this server at init() time.
 The REPL (running in a separate terminal) connects to the socket and
@@ -13,27 +11,21 @@ Socket path: /tmp/stacktracer-{pid}.sock
     The REPL discovers the socket by listing /tmp/stacktracer-*.sock.
 
 Protocol: newline-delimited JSON.
-    Request:  {"query": "SHOW nodes", "id": "1"}\\n
+    Request: {"query": "SHOW nodes", "id": "1"}\\n
     Response: {"id": "1", "ok": true, "data": [...]}\\n
               {"id": "1", "ok": false, "error": "..."}\\n
 
-Supported query types (passed to engine.query()):
-    SHOW nodes                      — all graph nodes
-    SHOW edges                      — all graph edges
-    SHOW graph                      — nodes + edges together
-    SHOW trace <trace_id>           — all events for a trace
-    SHOW status                     — engine health/stats
-    BLAME WHERE service = "django"  — causal blame query
-
-The server is a single daemon thread — it blocks on accept() in a loop.
-Each connection is handled synchronously (one query per connection).
-This is a debug/REPL interface, not a high-throughput API.
+Supported query types:
+    SHOW nodes - all graph nodes
+    SHOW edges - all graph edges
+    SHOW graph - nodes + edges together
+    SHOW trace <trace_id> - all events for a trace
+    SHOW status - engine health/stats
+    BLAME WHERE service = "django" - causal blame query
 
 REPL usage:
     # In a separate terminal
-    python -m stacktracer.repl
-    # or
-    st-repl
+    python -m origintracer.repl
 
     The REPL auto-discovers the socket, connects, and presents
     an interactive prompt where you can type queries.
@@ -54,8 +46,8 @@ logger = logging.getLogger("stacktracer.local_server")
 _SOCKET_DIR = "/tmp"
 _SOCKET_PREFIX = "stacktracer-"
 _SOCKET_SUFFIX = ".sock"
-_READ_TIMEOUT = 30.0  # seconds — drop idle connections
-_MAX_MSG_BYTES = 65_536  # 64 KB — max query size
+_READ_TIMEOUT = 30.0  # seconds - drop idle connections
+_MAX_MSG_BYTES = 65_536  # 64 KB - max query size
 
 
 def _socket_path(pid: int) -> str:
@@ -82,14 +74,11 @@ def discover_sockets() -> list[str]:
 
 class LocalQueryServer:
     """
-    Unix socket server — one per worker process.
+    Unix socket server - one per worker process.
 
     Starts a daemon thread that accepts connections from the REPL.
     Each connection receives one JSON query, returns one JSON response,
     then closes.
-
-    Thread safety: all engine queries go through engine.query() which
-    is already thread-safe (uses internal locks on graph and event_log).
     """
 
     def __init__(self, engine: Any) -> None:
@@ -206,9 +195,6 @@ class LocalQueryServer:
             )
             return
 
-        # import pdb
-        # pdb.set_trace()
-
         query_str = msg.get("query", "").strip()
         req_id = msg.get("id", "")
 
@@ -223,7 +209,6 @@ class LocalQueryServer:
             )
             return
 
-        # ← wrap _evaluate so crashes return an error instead of closing silently
         try:
             result = self._evaluate(query_str)
         except Exception as exc:
@@ -247,32 +232,7 @@ class LocalQueryServer:
         """
         query_str.upper().strip()
 
-        # ── DSL parser — handles everything else ──────────────────────
-        #
-        # This is identical to what the old repl.py did locally:
-        #
-        #   from stacktracer.query.parser import parse, execute
-        #   parsed = parse(raw)
-        #   result = execute(parsed, engine)
-        #
-        # The parser now runs here, inside the worker process, against
-        # the live engine.  The REPL just sends the raw string and
-        # renders whatever JSON comes back.  No parser code lives in
-        # the REPL at all.
-        #
-        # Supported DSL verbs (handled by parse + execute):
-        #   SHOW latency WHERE service = "django"
-        #   SHOW latency WHERE system = "export"
-        #   SHOW graph
-        #   SHOW graph WHERE system = "worker"
-        #   SHOW events WHERE probe = "db.query.start" LIMIT 20
-        #   HOTSPOT TOP 10
-        #   CAUSAL
-        #   CAUSAL WHERE tags = "blocking,celery"
-        #   BLAME WHERE system = "export"
-        #   DIFF SINCE deployment
-        #   TRACE <trace_id>
-
+        # DSL parser — handles everything else
         try:
             from origintracer.query.parser import execute, parse
 

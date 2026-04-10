@@ -8,13 +8,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 logger = logging.getLogger("stacktracer.normalizer")
 
 
-# ====================================================================== #
-# Built-in normalization patterns
-# ====================================================================== #
-
 # These cover the most common high-cardinality patterns encountered
 # in Django, FastAPI, Flask, and Celery applications.
-
 _BUILTIN_PATTERNS: List[Tuple[str, str]] = [
     # UUIDs  e.g. /api/orders/550e8400-e29b-41d4-a716-446655440000/
     (
@@ -93,11 +88,6 @@ class NormalizationRule:
         return name
 
 
-# ====================================================================== #
-# GraphNormalizer
-# ====================================================================== #
-
-
 class GraphNormalizer:
     """
     Normalizes (service, name) pairs before graph insertion.
@@ -115,14 +105,14 @@ class GraphNormalizer:
         If `name` is high-cardinality (URL with user IDs, query text,
         coroutine repr with memory addresses), the graph grows without bound.
 
-        /api/users/1234/profile   → one node per user
-        /api/users/5678/profile   → another node
+        /api/users/1234/profile >> one node per user
+        /api/users/5678/profile >> another node
         ... 10,000 users = 10,000 nodes for what is structurally one endpoint
 
     This module normalizes names to their structural form before graph insertion.
 
-        /api/users/1234/profile   → /api/users/{id}/profile
-        /api/users/5678/profile   → /api/users/{id}/profile   (same node)
+        /api/users/1234/profile >> /api/users/{id}/profile
+        /api/users/5678/profile >> /api/users/{id}/profile (same node)
 
     The graph then has one node for the endpoint pattern, with call_count
     accumulating across all individual user requests. This is almost always
@@ -131,16 +121,16 @@ class GraphNormalizer:
 
     Usage:
         Passed to RuntimeGraph at construction time:
-            from stacktracer.core.graph_normalizer import GraphNormalizer
+            from origintracer.core.graph_normalizer import GraphNormalizer
             normalizer = GraphNormalizer()
             graph = RuntimeGraph(normalizer=normalizer)
 
         RuntimeGraph calls normalizer.normalize(service, name) in add_from_event()
         before constructing the node ID.
 
-    Extending (user-facing):
+    Extending:
 
-        In stacktracer.yaml:
+        In origintracer.yaml:
             normalize:
             - service: django
                 pattern: "/api/items/(\\d+)/"
@@ -178,7 +168,6 @@ class GraphNormalizer:
     ) -> None:
         r"""
         Add a regex normalization rule for a specific service.
-
         service = "*" applies to all services.
 
         Example:
@@ -205,7 +194,6 @@ class GraphNormalizer:
     ) -> None:
         """
         Add a function-based normalization rule.
-
         fn receives the raw name string and returns the normalized name.
 
         Example:
@@ -226,8 +214,6 @@ class GraphNormalizer:
     def normalize(self, service: str, name: str) -> str:
         """
         Return the normalized form of this (service, name) pair.
-
-        Hot path — called on every event. Cache hit in O(1).
         """
         cache_key = (service, name)
         if cache_key in self._cache:
@@ -235,7 +221,7 @@ class GraphNormalizer:
 
         result = self._normalize_uncached(service, name)
 
-        # Cardinality guard — if this service has too many unique names,
+        # Cardinality guard - if this service has too many unique names,
         # collapse overflow into a sentinel node rather than exploding the graph
         seen = self._seen_names.setdefault(service, set())
         if result not in seen:
@@ -267,20 +253,20 @@ class GraphNormalizer:
     ) -> str:
         result = name
 
-        # Step 1 — built-in patterns (applied to all services)
+        # Step 1 - built-in patterns (applied to all services)
         if self._enable_builtins:
             for pattern, replacement in _BUILTIN_COMPILED:
                 result = pattern.sub(replacement, result)
 
-        # Step 2 — per-service rules
+        # Step 2 - per-service rules
         for rule in self._rules.get(service, []):
             result = rule.apply(result)
 
-        # Step 3 — global rules (service="*")
+        # Step 3 - global rules (service="*")
         for rule in self._rules.get("*", []):
             result = rule.apply(result)
 
-        # Step 4 — truncate to max length
+        # Step 4 - truncate to max length
         if len(result) > self._max_name_length:
             result = result[: self._max_name_length] + "…"
 
@@ -289,7 +275,7 @@ class GraphNormalizer:
     @classmethod
     def from_yaml(cls, config: List[dict]) -> "GraphNormalizer":
         """
-        Build a GraphNormalizer from the normalize: section of stacktracer.yaml.
+        Build a GraphNormalizer from the normalize: section of origintracer.yaml.
 
         YAML format:
             normalize:
@@ -323,7 +309,9 @@ class GraphNormalizer:
         return normalizer
 
     def stats(self) -> dict:
-        r"""Return cardinality stats per service — useful in REPL \status."""
+        r"""
+        Return cardinality stats per service - useful in REPL \status.
+        """
         return {
             service: len(names)
             for service, names in self._seen_names.items()

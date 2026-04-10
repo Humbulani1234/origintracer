@@ -66,13 +66,6 @@ class TemporalStore:
     -----
     Call `capture(graph, label=None)` periodically (e.g. every 10 s)
     or on significant events (deployments, config changes).
-
-    Key queries
-    -----------
-    changes_since(t)         — all diffs after timestamp t
-    new_edges_since(t)       — set of edge keys that appeared after t
-    changes_around(t, window)— diffs within ±window seconds of t
-    label_diff(label)        — diff associated with a named event
     """
 
     def __init__(self, max_diffs: int = 500) -> None:
@@ -80,10 +73,6 @@ class TemporalStore:
         self._prev_node_ids: Set[str] = set()
         self._prev_edge_keys: Set[str] = set()
         self._lock = RLock()
-
-    # ------------------------------------------------------------------ #
-    # Mutation
-    # ------------------------------------------------------------------ #
 
     def capture(
         self,
@@ -139,10 +128,6 @@ class TemporalStore:
                     ),
                 )
             )
-
-    # ------------------------------------------------------------------ #
-    # Queries
-    # ------------------------------------------------------------------ #
 
     def latest_diff(self) -> Optional[Dict]:
         if not self._diffs:

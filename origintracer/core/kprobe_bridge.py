@@ -18,14 +18,14 @@ Proposed solution - a shared BPF hash map:
 
     Structure:
         BPF_HASH(trace_context, u64, struct trace_entry)
-        key   = tid — unique per thread
+        key   = tid - unique per thread
         value = { trace_id: char[36], start_ns: u64, service: char[32] }
 
 Usage - Python side:
     from stacktracer.core.kprobe_bridge import KprobeBridge
 
     bridge = KprobeBridge()
-    bridge.start()           # loads the BPF program, creates the map
+    bridge.start() # loads the BPF program, creates the map
 
     # Called by context/vars.py set_trace():
     bridge.register_trace(trace_id="abc-123", service="django")
@@ -56,16 +56,10 @@ Usage (BPF program side) — include in every kprobe that needs Python context:
     if (!entry) return 0;   // not a traced request, skip
     // entry->trace_id is now the Python trace ID for attribution
 
-Shared map approach:
-    We compile one BPF program that contains the trace_context map.
-    The epoll probe, TCP probe, and any other kprobe are compiled as
-    part of the same BPF object so they share the map by name.
-    This avoids map pinning complexity for the MVP.
-
 Permissions:
     kprobes require CAP_BPF or root on Linux.
     On systems without this, the bridge.start() returns False and
-    all kprobe-based probes degrade gracefully — the Python-side
+    all kprobe-based probes degrade gracefully - the Python-side
     observations (sys.monitoring, middleware) still function normally.
 """
 
@@ -186,11 +180,9 @@ class KprobeBridge:
         self._bpf = None
         self._map = None
 
-    # ── Python-side trace context API ─────────────────────────────────────────
-    # Called by Django / uvicorn middleware at request boundaries.
+    # Called by Django/uvicorn middleware at request boundaries.
     # Writes into the BPF trace_context map so kernel probes can attribute
     # syscalls to the correct application trace.
-
     def register_trace(
         self,
         tid: int,
@@ -224,13 +216,15 @@ class KprobeBridge:
             pass
 
 
-# Global singleton — created by Engine, used by all kprobe probes
+# Created by Engine, used by all kprobe probes
 _bridge: Optional[KprobeBridge] = None
 _bridge_lock = threading.Lock()
 
 
 def get_bridge() -> "KprobeBridge":
-    """Return the process-wide singleton KprobeBridge instance."""
+    """
+    Return the process-wide singleton KprobeBridge instance.
+    """
     global _bridge
     if _bridge is None:
         with _bridge_lock:

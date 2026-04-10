@@ -6,12 +6,13 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
+from origintracer.core.runtime_graph import (
+    GraphEdge,
+    GraphNode,
+    RuntimeGraph,
+)
+
 logger = logging.getLogger("stacktracer.serializer")
-
-
-# ====================================================================== #
-# Shared graph → dict conversion (format-agnostic intermediate)
-# ====================================================================== #
 
 
 def graph_to_dict(graph: Any) -> Dict:
@@ -21,7 +22,7 @@ def graph_to_dict(graph: Any) -> Dict:
 
     Metadata values are cast to strings because both serialization formats
     have constraints on value types. String metadata is always safe.
-    The original types (int, float, bool) are preserved in GraphNode in memory —
+    The original types (int, float, bool) are preserved in GraphNode in memory -
     only the serialized form is stringified.
     """
     with graph._lock:
@@ -71,14 +72,6 @@ def dict_to_graph(data: Dict) -> Any:
     Reconstruct a RuntimeGraph from the plain dict form.
     Returns a fully functional RuntimeGraph.
     """
-    from collections import defaultdict
-
-    from origintracer.core.runtime_graph import (
-        GraphEdge,
-        GraphNode,
-        RuntimeGraph,
-    )
-
     graph = RuntimeGraph()
 
     with graph._lock:
@@ -122,11 +115,6 @@ def dict_to_graph(data: Dict) -> Any:
         data.get("schema_version", "unknown"),
     )
     return graph
-
-
-# ====================================================================== #
-# Base class
-# ====================================================================== #
 
 
 class GraphSerializer(ABC):
@@ -210,26 +198,9 @@ class GraphSerializer(ABC):
         return graph
 
 
-# ====================================================================== #
-# MessagePack serializer (simpler, no compile step)
-# ====================================================================== #
-
-
 class MsgpackSerializer(GraphSerializer):
     """
     Serialize RuntimeGraph using MessagePack.
-
-    No schema, no code generation, no protoc.
-    Just: pip install msgpack
-
-    Size comparison for a 5000-node graph:
-        JSON:     ~6.2 MB
-        msgpack:  ~1.8 MB  (3.4x smaller)
-        protobuf: ~0.9 MB  (6.9x smaller)
-
-    MessagePack is the right first choice — simple to set up,
-    meaningfully smaller than JSON, and easy to debug (just decode
-    and inspect the dict).
     """
 
     def serialize(self, graph: Any) -> bytes:
@@ -255,11 +226,6 @@ class MsgpackSerializer(GraphSerializer):
         return dict_to_graph(payload)
 
 
-# ====================================================================== #
-# Protobuf serializer (smallest, strongly typed, best for transport)
-# ====================================================================== #
-
-
 class ProtobufSerializer(GraphSerializer):
     """
     Serialize RuntimeGraph using Protocol Buffers.
@@ -267,22 +233,9 @@ class ProtobufSerializer(GraphSerializer):
     Requires:
         pip install protobuf grpcio-tools
         python -m grpc_tools.protoc \\
-            -I stacktracer/core \\
-            --python_out=stacktracer/core \\
-            stacktracer/core/stacktracer.proto
-
-    This generates stacktracer_pb2.py. Without running protoc first,
-    this serializer raises ImportError with clear instructions.
-
-    Size comparison for a 5000-node graph:
-        JSON:     ~6.2 MB
-        msgpack:  ~1.8 MB
-        protobuf: ~0.9 MB  ← smallest
-
-    Use protobuf when:
-        - Sending graphs over the network (hosted backend)
-        - Long-term storage where size matters
-        - You need schema validation on read
+            -I origintracer/core \\
+            --python_out=origintracer/core \\
+            origintracer/core/origintracer.proto
     """
 
     def serialize(self, graph: Any) -> bytes:
@@ -375,11 +328,6 @@ class ProtobufSerializer(GraphSerializer):
                 "      --python_out=stacktracer/core \\\n"
                 "      stacktracer/core/stacktracer.proto"
             )
-
-
-# ====================================================================== #
-# JSON serializer (debug / human readable)
-# ====================================================================== #
 
 
 class JSONSerializer(GraphSerializer):

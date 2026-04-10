@@ -9,25 +9,20 @@ from typing import Any, Dict, Literal, Optional
 
 
 class ProbeTypeRegistry:
-    r"""
+    """
     Open registry of probe type strings.
 
     The core registers its built-in types at import time.
     Users register their own types from their application code.
     Third-party libraries register their types when installed.
 
-    Registration is purely for:
-        - IDE autocompletion via __contains__ and all()
-        - REPL \probes command listing
-        - Validation warnings (unknown types are warned, not rejected)
-
-    The NormalizedEvent.probe field is typed as str — any string
+    The NormalizedEvent.probe field is typed as str - any string
     is accepted at runtime regardless of registration. Registration
     makes known types visible, not mandatory.
     """
 
     def __init__(self):
-        self._types: dict[str, str] = {}  # name → description
+        self._types: dict[str, str] = {}  # name:description
 
     def register(
         self, probe_type: str, description: str = ""
@@ -35,14 +30,15 @@ class ProbeTypeRegistry:
         """
         Register a probe type string.
         Returns the string so it can be used as a constant:
-
             MY_PROBE = ProbeTypes.register("myapp.thing.start", "Thing started")
         """
         self._types[probe_type] = description
         return probe_type
 
     def register_many(self, types: dict[str, str]) -> None:
-        """Register multiple types at once from a dict of name → description."""
+        """
+        Register multiple types at once from a dict of name:description.
+        """
         self._types.update(types)
 
     def all(self) -> dict[str, str]:
@@ -120,23 +116,21 @@ class NormalizedEvent:
 
     Fields
     ------
-    probe:
-        Which type of observation this is.
-    service:
-        Logical service name (e.g. "django", "nginx", "postgres").
-    name        : The specific entity (route, function, syscall, query text…).
-    trace_id    : Ties all events in one request together.
-    timestamp   : perf_counter() at moment of emission. Use wall clock for display.
-    wall_time   : time.time() for human-readable timestamps.
-    duration_ns : Optional measured duration (e.g. syscall wall time).
-    span_id     : OpenTelemetry-compatible span identifier.
-    parent_span_id : Parent span for distributed tracing linkage.
-    pid         : OS process ID (populated by kernel-level probes).
-    tid         : OS thread ID.
-    metadata    : Probe-specific payload. Anything that doesn't fit above.
+    probe: Which type of observation this is.
+    service: Logical service name (e.g. "django", "nginx", "postgres").
+    name: The specific entity (route, function, syscall, query text…).
+    trace_id: Ties all events in one request together.
+    timestamp: perf_counter() at moment of emission. Use wall clock for display.
+    wall_time: time.time() for human-readable timestamps.
+    duration_ns: Optional measured duration (e.g. syscall wall time).
+    span_id: OpenTelemetry-compatible span identifier.
+    parent_span_id: Parent span for distributed tracing linkage.
+    pid: OS process ID (populated by kernel-level probes).
+    tid: OS thread ID.
+    metadata: Probe-specific payload. Anything that doesn't fit above.
     """
 
-    probe: str  # ProbeType (kept as str for extensibility)
+    probe: str  # ProbeType
     service: str
     name: str
     trace_id: str
@@ -162,17 +156,14 @@ class NormalizedEvent:
         service: str,
         name: str,
         parent_span_id: Optional[str] = None,
-        duration_ns: Optional[
-            int
-        ] = None,  # ← extract explicitly
-        pid: Optional[
-            int
-        ] = None,  # ← same for pid/tid if probes pass them
+        duration_ns: Optional[int] = None,
+        pid: Optional[int] = None,
         tid: Optional[int] = None,
         **metadata: Any,
     ) -> "NormalizedEvent":
         """
-        Constructor which captures other metadata such as timestamps at call site.
+        Constructor which captures other metadata such as timestamps at
+        call site.
         """
         return NormalizedEvent(
             probe=probe,
@@ -180,10 +171,10 @@ class NormalizedEvent:
             name=name,
             trace_id=trace_id,
             parent_span_id=parent_span_id,
-            duration_ns=duration_ns,  # ← lands on the dataclass field
+            duration_ns=duration_ns,
             pid=pid,
             tid=tid,
-            metadata=metadata,  # ← only genuinely unknown kwargs
+            metadata=metadata,
         )
 
     def to_dict(self) -> Dict[str, Any]:

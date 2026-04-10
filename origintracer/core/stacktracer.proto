@@ -1,5 +1,3 @@
-// stacktracer/core/stacktracer.proto
-//
 // Protobuf schema for RuntimeGraph serialization.
 //
 // Compile with:
@@ -9,36 +7,36 @@
 //       --python_out=stacktracer/core \
 //       stacktracer/core/stacktracer.proto
 //
-// This generates stacktracer_pb2.py in the same directory.
-// Import it as: from stacktracer.core import stacktracer_pb2
+// This generates origintracer_pb2.py in the same directory.
+// Import it as: from origintracer.core import origintracer_pb2
 
 syntax = "proto3";
 
-package stacktracer;
+package origintracer;
 
 //-------- GraphNode ----------------------------------------
 
 message GraphNode {
-  string id                = 1;   // "django::handle_export"
-  string node_type         = 2;   // "django", "asyncio", "celery", etc.
-  string service           = 3;   // "django", "postgres", "celery"
+  string id                = 1; // "django::handle_export"
+  string node_type         = 2; // "django", "asyncio", "celery", etc.
+  string service           = 3; // "django", "postgres", "celery"
 
-  double first_seen        = 4;   // Unix timestamp (time.time())
-  double last_seen         = 5;   // Unix timestamp
+  double first_seen        = 4; // Unix timestamp (time.time())
+  double last_seen         = 5; // Unix timestamp
   int64  call_count        = 6;
   int64  total_duration_ns = 7;
 
   // Probe-specific metadata as key-value pairs.
-  // Only scalar values — complex nested structures are not stored here.
+  // Only scalar values - complex nested structures are not stored here.
   map<string, string> metadata = 8;
 }
 
 //------------- GraphEdge -----------------------------------
 
 message GraphEdge {
-  string source            = 1;   // source node ID
-  string target            = 2;   // target node ID
-  string edge_type         = 3;   // "calls", "awaits", "sends_to"
+  string source            = 1; // source node ID
+  string target            = 2; // target node ID
+  string edge_type         = 3; // "calls", "awaits", "sends_to"
 
   int64  call_count        = 4;
   int64  total_duration_ns = 5;
@@ -51,9 +49,9 @@ message GraphEdge {
 //------------------- SerializedGraph -------------------------
 
 message SerializedGraph {
-  double serialized_at     = 1;   // Unix timestamp when this was written
-  double graph_last_updated = 2;  // RuntimeGraph.last_updated at snapshot time
-  string schema_version    = 3;   // "1.0" — bump when breaking changes made
+  double serialized_at     = 1; // Unix timestamp when this was written
+  double graph_last_updated = 2; // RuntimeGraph.last_updated at snapshot time
+  string schema_version    = 3; // "1.0" - bump when breaking changes made
 
   repeated GraphNode nodes = 4;
   repeated GraphEdge edges = 5;
@@ -67,7 +65,7 @@ message SerializedGraph {
 
 message SerializedGraphDiff {
   double timestamp         = 1;
-  string label             = 2;   // "deployment", "restart", etc. — empty if unlabelled
+  string label             = 2; // "deployment", "restart", etc. — empty if unlabelled
 
   repeated string added_node_ids    = 3;
   repeated string removed_node_ids  = 4;
@@ -83,10 +81,10 @@ message SerializedEvent {
   string name            = 3;
   string trace_id        = 4;
 
-  double timestamp       = 5;   // perf_counter()
-  double wall_time       = 6;   // time.time()
+  double timestamp       = 5; // perf_counter()
+  double wall_time       = 6; // time.time()
 
-  int64  duration_ns     = 7;   // 0 if not measured
+  int64  duration_ns     = 7; // 0 if not measured
   string span_id         = 8;
   string parent_span_id  = 9;
 
@@ -101,6 +99,6 @@ message SerializedEvent {
 message StackTracerSnapshot {
   SerializedGraph        graph  = 1;
   repeated SerializedGraphDiff diffs  = 2;
-  repeated SerializedEvent     events = 3;   // recent event log (bounded)
+  repeated SerializedEvent     events = 3; // recent event log (bounded)
   string                 engine_version = 4;
 }

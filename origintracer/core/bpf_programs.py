@@ -42,8 +42,6 @@ class BPFProgramPart:
     probes: List[str] = field(default_factory=list)
 
 
-# ── Registry ──────────────────────────────────────────────────────────────────
-
 _registry: List[tuple] = (
     []
 )  # [(probe_name, BPFProgramPart), ...]
@@ -56,12 +54,12 @@ def register_bpf(name: str, part: BPFProgramPart) -> None:
     Called by each probe module at import time, before KprobeBridge.start().
     The name is used for logging and deduplication diagnostics only.
 
-    Example (inside nginx_probe.py at module level):
+    Example - inside nginx_probe.py:
         from stacktracer.core.bpf_programs import BPFProgramPart, register_bpf
         register_bpf("nginx", BPFProgramPart(
             headers=[...],
             maps=[...],
-            probes=[_NGINX_BPF],   # _NGINX_BPF defined privately in nginx_probe.py
+            probes=[_NGINX_BPF],
         ))
     """
     _registry.append((name, part))
@@ -77,28 +75,17 @@ def clear_bpf_registry() -> None:
     _registry.clear()
 
 
-# --------------- Shared bridge header ---------------------------------
 # Defines structs and maps that ALL probes depend on.
-# This is the ONLY BPF C string that lives in this file.
-#
-# Design rules enforced here:
-#   1. net/sock.h is NOT included — it causes bpf_wq incomplete-type errors
-#      on kernel 6.x. Probes that need socket structs include it themselves.
-#   2. kernel_events perf buffer is declared ONCE here. No probe may redeclare it.
-#   3. kernel_event_t is the single shared event struct. No probe may define
-#      its own event struct — doing so breaks the Python-side dispatcher.
-#   4. trace_context map key is u32 tid (lower 32 bits of pid_tgid).
-#      All probes must cast to u32 before calling trace_context.lookup().
-
+# This is the only BPF C string in this file.
 BRIDGE_BPF_HEADER = r"""
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
 
-// **** Trace context *******
-// Written by Python (KprobeBridge.register_trace / unregister_trace).
+/* -------------------Trace context -------------------------- */
+// Written by Python (KprobeBridge.register_trace/unregister_trace).
 // Read by probe functions to attribute kernel events to application traces.
 //
-// Key: u32 tid — always cast before lookup:
+// Key: u32 tid - cast before lookup:
 //   u64 pid_tid = bpf_get_current_pid_tgid();
 //   u32 tid = (u32)pid_tid;
 //   struct trace_entry_t *ctx = trace_context.lookup(&tid);
@@ -113,15 +100,14 @@ struct trace_entry_t {
 
 BPF_HASH(trace_context, u32, struct trace_entry_t, 65536);
 
-// ********** Shared event struct *********
-// ALL probes emit this struct into kernel_events.
+/* ------------------ Shared event struct ----------------- */
+// Probes emit this struct into kernel_events.
 // The Python dispatcher demultiplexes by event_type string.
 //
-// event_type naming convention:  "<probe>.<event>"
+// event_type naming convention: "<probe>.<event>"
 //   nginx.accept    nginx.epoll    nginx.data_out    nginx.data_in
-//   epoll.wait      tcp.connect    tcp.send          tcp.recv
 //
-// value1 / value2 interpretation depends on event_type — document in probe.
+// value1/value2 interpretation depends on event_type - document in probe.
 
 struct kernel_event_t {
     u64  timestamp_ns;
@@ -134,24 +120,20 @@ struct kernel_event_t {
     s64  value2;          // secondary payload (e.g. fd for sendmsg)
     u64  duration_ns;
     u32  saddr;           // source IP (network byte order) — 0 if unused
-    u32  daddr;           // dest IP   (network byte order) — 0 if unused
+    u32  daddr;           // dest IP (network byte order) — 0 if unused
     u16  sport;
     u16  dport;
     u16  _pad;
-    u32  client_ip;       // populated by accept probes — 0 otherwise
+    u32  client_ip;       // populated by accept probes - 0 otherwise
     u16  client_port;
 };
 
-// Declared ONCE here. Probes call kernel_events.perf_submit(...).
-// Never declare BPF_PERF_OUTPUT in a probe fragment.
+// Probes call kernel_events.perf_submit(...)
 BPF_PERF_OUTPUT(kernel_events);
 """
 
-# ---------- Bridge noop --------------------
-# BCC requires at least one callable probe function to compile and load a
-# program. This sentinel satisfies that requirement even when no probes are
-# registered (e.g. in tests or stripped-down deployments).
-
+# This sentinel satisfies that requirement even when no probes are
+# registered
 _BRIDGE_NOOP = r"""
 int _bridge_noop(struct pt_regs *ctx) { return 0; }
 """
@@ -164,11 +146,11 @@ def build_bpf_program() -> str:
 
     Sections in the output:
       1. BRIDGE_BPF_HEADER - shared structs + maps
-      2. #include headers        — deduplicated union of all probe headers
-      3. struct definitions      — deduplicated union of all probe structs
-      4. map declarations        — deduplicated union of all probe maps
-      5. probe functions         — in registration order, NOT deduplicated
-      6. _BRIDGE_NOOP            — sentinel (last)
+      2. #include headers - deduplicated union of all probe headers
+      3. struct definitions - deduplicated union of all probe structs
+      4. map declarations - deduplicated union of all probe maps
+      5. probe functions - in registration order, NOT deduplicated
+      6. _BRIDGE_NOOP - sentinel
 
     Deduplication: exact string match after stripping whitespace.
     Map naming convention (probe_mapname) prevents false deduplication of
