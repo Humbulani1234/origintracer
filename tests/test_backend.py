@@ -600,7 +600,7 @@ class TestTraces:
                 trace_id, "db.query.start", 1.0, 10_000_000
             ),
             self._event(
-                trace_id, "db.query.start", 1.01, 4_000_000
+                trace_id, "db.query.end", 1.01, 4_000_000
             ),
         ]
         await client.post(
