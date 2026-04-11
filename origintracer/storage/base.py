@@ -844,6 +844,14 @@ class InMemoryRepository(BaseRepository):
         # deque(maxlen=500) handles the truncation automatically.
         self._diffs[customer_id].append(diff)
 
+    def label_diff(
+        self, customer_id: str, label: str
+    ) -> Optional[Dict]:
+        for d in reversed(self._diffs[customer_id]):
+            if d.get("label") == label:
+                return d
+        return None
+
     def close(self) -> None:
         pass
 

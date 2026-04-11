@@ -291,7 +291,7 @@ class Engine:
         while self._running:
             time.sleep(self._snapshot_interval)
             try:
-                self.snapshot()
+                self.snapshot(label="origintracer-snapshot")
                 self._evict_stale_traces()
                 # Run graph compaction
                 self.compactor.compact(self.graph)

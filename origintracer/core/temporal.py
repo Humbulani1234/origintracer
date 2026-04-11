@@ -22,6 +22,8 @@ class GraphDiff:
     Stored, not the full graphs.
     """
 
+    _lock = RLock()
+
     timestamp: float
     label: Optional[str]  # e.g. "deployment:abc123"
 
@@ -107,7 +109,13 @@ class TemporalStore:
                 removed_edge_keys=self._prev_edge_keys
                 - current_edges,
             )
-            self._diffs.append(diff)
+            if (
+                diff.added_node_ids
+                or diff.removed_node_ids
+                or diff.added_edge_keys
+                or diff.removed_edge_keys
+            ):
+                self._diffs.append(diff)
             self._prev_node_ids = current_nodes
             self._prev_edge_keys = current_edges
 
@@ -134,10 +142,10 @@ class TemporalStore:
             return None
         last = self._diffs[-1]
         return {
-            "added_nodes": list(last.added_nodes),
-            "removed_nodes": list(last.removed_nodes),
-            "added_edges": list(last.added_edges),
-            "removed_edges": list(last.removed_edges),
+            "added_nodes": list(last.added_node_ids),
+            "removed_nodes": list(last.removed_node_ids),
+            "added_edges": list(last.added_edge_keys),
+            "removed_edges": list(last.removed_edge_keys),
             "timestamp": last.timestamp,
             "label": last.label,
         }

@@ -60,7 +60,7 @@ buffer_size: 10000
 
 snapshot_interval: 15.0   # seconds between temporal graph snapshots
 flush_interval: 10        # seconds between uploader batch flushes
-
+endpoint: http://localhost:8001
 # ------- Sampling ------------------------------------------
 
 snapshot_interval: 15.0 # seconds between temporal graph snapshots

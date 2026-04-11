@@ -362,7 +362,10 @@ class TestTemporalStore:
             fromlist=["RuntimeGraph"],
         ).RuntimeGraph()
         for _ in range(15):
-            store.capture(g.snapshot())
+            for i in range(15):
+                node_id = f"node::{i}"
+                g.upsert_node(node_id, "fn", "service")
+                store.capture(g.snapshot())
         assert len(store) == 10  # capped at max_diffs
 
 

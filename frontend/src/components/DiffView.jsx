@@ -38,23 +38,25 @@ function DiffSection({ title, items, color }) {
 }
 
 export default function DiffView({ diff }) {
-    if (!diff) {
+    const isEmpty = !diff ||
+        (!diff.added_nodes?.length   &&
+         !diff.removed_nodes?.length &&
+         !diff.added_edges?.length   &&
+         !diff.removed_edges?.length);
+
+    if (isEmpty) {
         return (
             <div style={{ padding:"32px 14px", fontFamily:"monospace",
                 fontSize:11, color:"var(--muted)", textAlign:"center" }}>
-                run{" "}
-                <span style={{color:"var(--amber)"}}>
-                    MARK DEPLOYMENT &lt;label&gt;
-                </span>
-                {" "}in the REPL to start tracking changes
+                No changes detected since last snapshot.
             </div>
         );
     }
 
-    const totalAdded   = (diff.added_nodes?.length   || 0) +
-                         (diff.added_edges?.length   || 0);
-    const totalRemoved = (diff.removed_nodes?.length || 0) +
-                         (diff.removed_edges?.length || 0);
+    const totalAdded   = (diff.added_node_ids?.length   || 0) +
+                         (diff.added_edge_keys?.length   || 0);
+    const totalRemoved = (diff.removed_node_ids?.length || 0) +
+                         (diff.removed_edge_keys?.length || 0);
 
     return (
         <div style={{ padding: 14 }}>

@@ -11,8 +11,6 @@ from origintracer.core.causal import (
 from origintracer.core.runtime_graph import RuntimeGraph
 from origintracer.core.temporal import TemporalStore
 
-# ----------------------- Worker imbalance ------------------------------
-
 
 def _worker_imbalance(
     graph: RuntimeGraph,
@@ -21,13 +19,13 @@ def _worker_imbalance(
 ) -> Tuple[bool, Dict]:
     """
     Detects when one gunicorn worker handles significantly more requests
-    than others — a signal that a worker is stuck on a blocking call.
+    than others - a signal that a worker is stuck on a blocking call.
 
     Uses the 'handled' edges from worker nodes to request nodes,
     built by RuntimeGraph._add_structural_edges when uvicorn.request.receive
     events arrive.
 
-    Fires when: busiest_worker / least_busy_worker >= 2.0
+    Fires when: busiest_worker/least_busy_worker >= 2.0
     AND at least 2 workers are present.
     """
     worker_nodes = [

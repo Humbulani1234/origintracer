@@ -852,7 +852,7 @@ def main():
         pass  # Windows, fine without it
 
     print(
-        c("\n  StackTracer REPL", BOLD, CYAN)
+        c("\n  OriginTracer REPL", BOLD, CYAN)
         + c("  live agent mode", DIM)
     )
     print(c("  Type \\help for commands, Ctrl+C to exit\n", DIM))

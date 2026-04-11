@@ -632,12 +632,14 @@ def _exec_diff(query: ParsedQuery, engine: Any) -> Dict:
 
     if since_label:
         diff = engine.temporal.label_diff(since_label)
+        print(">>>SINCE LABEL", diff)
         if diff:
             since_ts = diff.timestamp
         else:
             try:
                 since_ts = float(since_label)
             except ValueError:
+                print(">>>> WE HERE")
                 return {
                     "error": f"Cannot resolve SINCE '{since_label}' — no marker found"
                 }

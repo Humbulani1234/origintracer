@@ -262,25 +262,21 @@ class Uploader:
 
     def _flush_snapshot(self) -> None:
         """
-         Serialize the current RuntimeGraph and upload it to the backend.
+        Serialize the current RuntimeGraph and upload it to the backend.
 
-         This method runs on the uploader thread and is responsible for:
-         1. Serializing the in-memory graph into a compact binary format
-         2. Sending a full snapshot to the backend
-         3. Optionally sending the latest incremental diff
+        This method runs on the uploader thread and is responsible for:
+        1. Serializing the in-memory graph into a compact binary format
+        2. Sending a full snapshot to the backend
+        3. Optionally sending the latest incremental diff
 
+        Failure handling:
+        - Serialization failures abort the entire operation.
+        - Snapshot and diff uploads are tracked independently.
+        - All errors are logged at debug/warning level; no exceptions escape.
 
-
-        .
-
-         Failure handling:
-         - Serialization failures abort the entire operation.
-         - Snapshot and diff uploads are tracked independently.
-         - All errors are logged at debug/warning level; no exceptions escape.
-
-         Backend contract:
-         - POST /api/v1/graph/snapshot → full graph replacement
-         - POST /api/v1/graph/diff     → incremental update
+        Backend contract:
+        - POST /api/v1/graph/snapshot → full graph replacement
+        - POST /api/v1/graph/diff     → incremental update
         """
         if self._engine is None:
             logger.debug(
@@ -395,7 +391,7 @@ class Uploader:
             )
         except httpx.TimeoutException as e:
             logger.debug(
-                "Timeout — backend not responding: %s", e
+                "Timeout - backend not responding: %s", e
             )
         except httpx.ConnectError as e:
             logger.debug("Connection error: %s", e)

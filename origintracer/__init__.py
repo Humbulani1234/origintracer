@@ -624,7 +624,7 @@ def _init_uploader(
 
 def init(
     api_key: str = "test-key-123",
-    endpoint: str = "https://origintracer.app",
+    endpoint: str = "http://localhost:8001",
     config: Optional[str] = None,
     probes: Optional[List[str]] = None,
     rules: Optional[List[str]] = None,
@@ -662,7 +662,7 @@ def init(
         Omit or pass "" to run in local-only mode (no upload).
 
     endpoint
-        Backend URL. Default: https://origintracer.app
+        Backend URL. Default: http://localhost:8001
 
     config
         Explicit path to user origintracer.yaml.

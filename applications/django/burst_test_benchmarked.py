@@ -13,7 +13,7 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1:80"
+DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_WAVES = 6
 DEFAULT_BURST_SIZE = 100
 DEFAULT_WORKERS = 15

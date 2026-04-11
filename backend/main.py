@@ -83,6 +83,48 @@ class _BackendEngine:
         self.temporal = TemporalStore()
         self.repository = None
 
+    def critical_path(
+        self, trace_id: str
+    ) -> List[Dict[str, Any]]:
+        from origintracer.core.event_schema import ProbeTypes
+
+        # pull events from repository instead of _event_log
+        events = get_repository().query_events(
+            trace_id=trace_id, limit=1000
+        )
+
+        # repository returns dicts, sort by timestamp
+        events.sort(key=lambda e: e.get("timestamp", 0))
+
+        registered = list(ProbeTypes.all().keys())
+        filtered = [
+            e for e in events if e.get("probe") in registered
+        ]
+
+        path = []
+        last_ts = None
+        for e in filtered:
+            ts = e.get("timestamp")
+            duration_ms = (
+                round((ts - last_ts) * 1000, 3)
+                if last_ts and ts
+                else None
+            )
+            path.append(
+                {
+                    "probe": e.get("probe"),
+                    "service": e.get("service"),
+                    "name": e.get("name"),
+                    "timestamp": ts,
+                    "wall_time": e.get("wall_time"),
+                    "duration_ms": duration_ms,
+                    "metadata": e.get("metadata"),
+                }
+            )
+            last_ts = ts
+
+        return path
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -117,8 +159,6 @@ app.add_middleware(
 )
 
 
-# ------------------------- State --------------------------
-
 # One deserialised RuntimeGraph per customer.
 # This is the cache in front of st_snapshots in the database.
 # Populated on startup (from DB) and updated on every POST /graph/snapshot.
@@ -130,10 +170,8 @@ _graphs_lock = threading.Lock()
 # query_events(), insert_marker().
 _repository: Optional[Any] = None
 
-# API key → customer_id mapping.
+# API key:customer_id mapping.
 _valid_api_keys: Dict[str, str] = {}
-
-# -------------------------- Startup -----------------------------
 
 
 def _load_api_keys() -> None:
@@ -145,10 +183,10 @@ def _load_api_keys() -> None:
             key, customer = pair.split(":", 1)
             _valid_api_keys[key.strip()] = customer.strip()
     if not _valid_api_keys:
-        _valid_api_keys["dev-key-00000000"] = "dev_customer"
+        _valid_api_keys["test-key-123"] = "local_dev"
         logger.warning(
-            "STACKTRACER_API_KEYS not set — "
-            "dev-key-00000000 accepted (not safe for production)"
+            "STACKTRACER_API_KEYS not set - "
+            "test-key-123 accepted for development"
         )
 
 
@@ -251,11 +289,6 @@ def _load_snapshots_on_startup() -> None:
             )
 
 
-# ====================================================================== #
-# Auth
-# ====================================================================== #
-
-
 def _authenticate(authorization: Optional[str]) -> str:
     """Validate Bearer token, return customer_id."""
     if not authorization or not authorization.startswith(
@@ -272,9 +305,6 @@ def _authenticate(authorization: Optional[str]) -> str:
             status_code=401, detail="Invalid API key"
         )
     return customer_id
-
-
-# ----------------------- Graph helpers ------------------------
 
 
 def get_graph(customer_id: str) -> Optional[Any]:
@@ -298,11 +328,6 @@ def require_graph(customer_id: str) -> Any:
     return graph
 
 
-# ====================================================================== #
-# Pydantic schemas
-# ====================================================================== #
-
-
 class IngestPayload(BaseModel):
     events: List[Dict[str, Any]]
 
@@ -315,14 +340,11 @@ class DeploymentMarkRequest(BaseModel):
     label: str = "deployment"
 
 
-# ====================================================================== #
-# Routes: Graph snapshot (agent → backend)
-# ====================================================================== #
+# --------------- Routes: Graph snapshot -------------------------------
 
 
-# Dependency provider
 def get_repository() -> InMemoryRepository:
-    return _repository  # your global for production, overrideable in tests
+    return _repository
 
 
 @app.post("/api/v1/graph/snapshot")
@@ -332,7 +354,7 @@ async def receive_snapshot(
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
     """
-    Receive a serialised RuntimeGraph from the StackTracer agent.
+    Receive a serialised RuntimeGraph from the OriginTracer agent.
     The agent calls this every 60 seconds via the uploader._flush_snapshot().
     Deserialises the graph into memory and persists the raw bytes to storage
     so FastAPI restarts can reload without waiting for the next agent snapshot.
@@ -404,6 +426,7 @@ async def receive_snapshot(
 async def receive_graph_diff(
     request: Request,
     authorization: Optional[str] = Header(None),
+    repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
     """
     Receive a serialised RuntimeGraph from the StackTracer agent.
@@ -413,8 +436,15 @@ async def receive_graph_diff(
     """
     customer_id = _authenticate(authorization)
     body = await request.json()
-    if _repository is not None:
-        _repository.insert_graph_diff(customer_id, body)
+    repository.insert_graph_diff(customer_id, body)
+    print(">>>> GRAPH DIFF", body)
+    logger.info(
+        "Graph diff received: customer=%s nodes=%d edges=%d bytes=%d",
+        customer_id,
+        len(body.get("added_nodes") or []),
+        len(body.get("added_edges") or []),
+        len(body),
+    )
     return {"ok": True}
 
 
@@ -470,6 +500,13 @@ async def ingest_events(
             event = NormalizedEvent.from_dict(raw)
             if repository is not None:
                 repository.insert_event(event)
+                logger.info(
+                    "Events received: customer=%s nodes=%d edges=%d bytes=%d",
+                    customer_id,
+                    event.timestamp,
+                    event.wall_time,
+                    len(body),
+                )
             stored += 1
         except Exception as exc:
             errors += 1
@@ -480,7 +517,50 @@ async def ingest_events(
     return {"status": "ok", "stored": stored, "errors": errors}
 
 
+@app.get("/api/v1/events")
+def get_recent_events(
+    limit: int,
+    trace_id: Optional[str] = None,
+    probe: Optional[str] = None,
+    service: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+    repository: InMemoryRepository = Depends(get_repository),
+):
+    _authenticate(authorization)
+
+    if repository is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No storage backend configured — cannot retrieve traces.",
+        )
+
+    events = repository.query_events(
+        trace_id=trace_id,
+        probe=probe,
+        service=service,
+        limit=limit,
+    )
+    return {
+        "metric": "events",
+        "data": [
+            {
+                "probe": e.get("probe"),
+                "service": e.get("service"),
+                "name": e.get("name"),
+                "trace_id": e.get("trace_id"),
+                "wall_time": e.get("wall_time"),
+                "duration_ns": e.get("duration_ns"),
+                "ts": e.get("timestamp")
+                or e.get("timestamp_ns"),
+            }
+            for e in events
+        ],
+    }
+
+
 # ------------ Graph queries (all read from deserialised snapshot) --------
+
+
 @app.post("/api/v1/query")
 async def query(
     request: QueryRequest,
@@ -500,6 +580,7 @@ async def query(
         )
 
         parsed = parse_query(request.query)
+        print(">>>>IM PARSED:", parsed)
         return execute_query(parsed, engine)
     except ValueError as exc:
         raise HTTPException(
@@ -515,29 +596,29 @@ async def get_graph_route(
 ) -> Dict:
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
-    engine = _BackendEngine(graph)
 
-    from origintracer.query.parser import ParsedQuery
-    from origintracer.query.parser import (
-        execute as execute_query,
-    )
+    nodes = list(graph.all_nodes())
+    edges = list(graph.all_edges())
 
-    if system:
-        q = ParsedQuery(
-            verb="SHOW",
-            metric="graph",
-            filters={"system": system},
-        )
-    elif service:
-        q = ParsedQuery(
-            verb="SHOW",
-            metric="graph",
-            filters={"service": service},
-        )
-    else:
-        q = ParsedQuery(verb="SHOW", metric="graph")
+    node_scope = {x for x in (service, system) if x is not None}
+    if node_scope:
+        # Only show what the user specifically required
+        nodes = [n for n in nodes if n.id in node_scope]
 
-    return execute_query(q, engine)
+        # Only show connections between nodes inside this system
+        edges = [
+            e
+            for e in edges
+            if e.source in node_scope and e.target in node_scope
+        ]
+
+    return {
+        "metric": "graph",
+        "data": {
+            "nodes": [_node_dict(n) for n in nodes],
+            "edges": [_edge_dict(e) for e in edges],
+        },
+    }
 
 
 @app.get("/api/v1/causal")
@@ -566,10 +647,10 @@ async def causal(
     registry = PatternRegistry
     temporal = TemporalStore()  # empty - backend has no diffs
     matches = registry.evaluate(graph, temporal, tags=tag_list)
-
+    print(">>>> CAUSAL", matches)
     return {
         "match_count": len(matches),
-        "matches": [m.to_dict() for m in matches],
+        "data": [m.to_dict() for m in matches],
     }
 
 
@@ -603,6 +684,7 @@ async def hotspots(
 async def diff(
     since: Optional[str] = None,
     authorization: Optional[str] = Header(None),
+    repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
     """
     Graph diff since a named marker or timestamp.
@@ -612,22 +694,13 @@ async def diff(
     For now, this endpoint returns what is available in the snapshot.
     """
     customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
-    engine = _BackendEngine(graph)
-
-    from origintracer.query.parser import (
-        ParsedQuery,
-    )
-    from origintracer.query.parser import (
-        execute as execute_query,
-    )
-
-    q = ParsedQuery(
-        verb="DIFF",
-        metric="edges",
-        filters={"since": since} if since else {},
-    )
-    return execute_query(q, engine)
+    results = repository.label_diff(customer_id, since)
+    if results is None:
+        raise HTTPException(
+            status_code=404, detail="No graph diffs available"
+        )
+    print(">>>RESULTS", results)
+    return {"data": results}
 
 
 @app.get("/api/v1/traces/{trace_id}")
@@ -640,28 +713,41 @@ async def get_trace(
     Reconstruct the critical path for a trace from the event store.
     Requires raw events to have been persisted via POST /api/v1/events.
     """
-    _authenticate(authorization)
+    from origintracer.core.event_schema import ProbeTypes
 
+    _authenticate(authorization)
+    # pull events from repository instead of _event_log
     if repository is None:
         raise HTTPException(
             status_code=503,
-            detail="No storage backend configured — cannot retrieve traces.",
+            detail="No storage backend configured - cannot retrieve traces",
         )
-
     events = repository.query_events(
-        trace_id=trace_id, limit=500
+        trace_id=trace_id, limit=1000
     )
+
+    # repository returns dicts, sort by timestamp
+    events.sort(key=lambda e: e.get("timestamp", 0))
     if not events:
         raise HTTPException(
             status_code=404,
             detail=f"No events found for trace '{trace_id}'",
         )
+    registered = list(ProbeTypes.all().keys())
+    filtered = [
+        e for e in events if e.get("probe") in registered
+    ]
 
-    # Build critical path: sort by wall_time, compute durations
-    events.sort(key=lambda e: e.get("wall_time", 0))
     path = []
+    last_ts = None
     total_ms = 0.0
-    for e in events:
+    for e in filtered:
+        ts = e.get("timestamp")
+        duration_ms = (
+            round((ts - last_ts) * 1000, 3)
+            if last_ts and ts
+            else None
+        )
         dur_ns = e.get("duration_ns")
         dur_ms = round(dur_ns / 1e6, 3) if dur_ns else None
         if dur_ms:
@@ -671,18 +757,15 @@ async def get_trace(
                 "probe": e.get("probe"),
                 "service": e.get("service"),
                 "name": e.get("name"),
+                "timestamp": ts,
                 "wall_time": e.get("wall_time"),
-                "duration_ms": dur_ms,
-                "span_id": e.get("span_id"),
+                "duration_ms": duration_ms,
+                "metadata": e.get("metadata"),
             }
         )
-
-    return {
-        "trace_id": trace_id,
-        "stages": len(path),
-        "total_ms": round(total_ms, 3),
-        "path": path,
-    }
+        last_ts = ts
+    print(">>>TRACE:", path)
+    return {"data": path, "total_ms": round(total_ms, 3)}
 
 
 # ====================================================================== #
@@ -692,23 +775,25 @@ async def get_trace(
 
 @app.post("/api/v1/deployment")
 async def mark_deployment_endpoint(
-    body: DeploymentMarkRequest,
+    request: Request,
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
     customer_id = _authenticate(authorization)
+    body = await request.json()
     if repository is not None:
         repository.insert_deployment_marker(
-            customer_id, body.label
+            customer_id, body.get("label")
         )
+    print(">>>> WE DEPLOYED")
     logger.info(
         "Deployment marked: customer=%s label=%s",
         customer_id,
-        body.label,
+        body.get("label"),
     )
     return {
         "ok": True,
-        "label": body.label,
+        "label": body.get("label"),
         "timestamp": time.time(),
     }
 
@@ -721,8 +806,11 @@ async def mark_deployment_endpoint(
 @app.get("/api/v1/status")
 async def status(
     authorization: Optional[str] = Header(None),
+    repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
-    """Return snapshot metadata and system state for this customer."""
+    """
+    Return snapshot metadata and system state for this customer.
+    """
     customer_id = _authenticate(authorization)
     graph = get_graph(
         customer_id
@@ -737,10 +825,16 @@ async def status(
             "last_updated": getattr(graph, "last_updated", None),
         }
 
-    storage_info = "none"
-    if _repository is not None:
-        storage_info = type(_repository).__name__
-
+    storage_info = type(_repository).__name__ or "none"
+    print(
+        ">>>>> MY STATUS",
+        {
+            "customer_id": customer_id,
+            "snapshot": snapshot_info,
+            "storage": storage_info,
+            "timestamp": time.time(),
+        },
+    )
     return {
         "customer_id": customer_id,
         "snapshot": snapshot_info,
@@ -835,3 +929,36 @@ async def generic_error(
             "detail": str(exc),
         },
     )
+
+
+def _node_dict(n) -> Dict:
+    """
+    Full node representation - used by SHOW NODES and SHOW GRAPH.
+    """
+    return {
+        "id": n.id,
+        "service": n.service,
+        "type": n.node_type,
+        "call_count": n.call_count,
+        "duration_ns": n.total_duration_ns,
+        "avg_ms": (
+            round(n.avg_duration_ns / 1e6, 3)
+            if n.avg_duration_ns
+            else None
+        ),
+        "first_seen": n.first_seen,
+        "last_seen": n.last_seen,
+    }
+
+
+def _edge_dict(e) -> Dict:
+    """
+    Full edge representation - used by SHOW EDGES and SHOW GRAPH.
+    """
+    return {
+        "source": e.source,
+        "target": e.target,
+        "type": e.edge_type,
+        "call_count": e.call_count,
+        "weight": e.call_count,  # alias for REPL table renderer
+    }
