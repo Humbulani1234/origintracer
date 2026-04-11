@@ -551,6 +551,58 @@ class TestNPlusOne:
         matched, _ = N_PLUS_ONE.predicate(g, t, a)
         assert not matched
 
+    def test_fires_on_two_hop_n_plus_one(self, tracker):
+        """N+1 where view → author_query → book_query (two hops)."""
+        g, t, a = fresh(tracker)
+
+        # view
+        g.upsert_node(
+            "django::NPlusOneView",
+            node_type="django",
+            service="django",
+            metadata={"probe": "django.view.enter"},
+        )
+
+        # intermediate db query (144 calls)
+        for _ in range(144):
+            g.upsert_node(
+                "django::SELECT author",
+                node_type="django",
+                service="django",
+                metadata={"probe": "django.db.query"},
+            )
+
+        # leaf db query (1440 calls) — the N+1
+        for _ in range(1440):
+            g.upsert_node(
+                "django::SELECT book WHERE author_id=%s",
+                node_type="django",
+                service="django",
+                metadata={"probe": "django.db.query"},
+            )
+
+        # view → author (direct)
+        g.upsert_edge(
+            "django::NPlusOneView",
+            "django::SELECT author",
+            "calls",
+        )
+        # author → book (second hop)
+        g.upsert_edge(
+            "django::SELECT author",
+            "django::SELECT book WHERE author_id=%s",
+            "calls",
+        )
+
+        matched, evidence = N_PLUS_ONE.predicate(g, t, a)
+        assert matched
+        patterns = evidence["n_plus_one_patterns"]
+        target = next(
+            (p for p in patterns if "book" in p["query"]), None
+        )
+        assert target is not None
+        assert target["ratio"] >= 5  # 1440/1 = 1440x
+
     def test_confidence_is_high(self):
         """N_PLUS_ONE confidence must be >= 0.85 — it's a near-certain bug."""
         assert N_PLUS_ONE.confidence >= 0.85

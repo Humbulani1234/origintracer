@@ -41,39 +41,56 @@ def _n_plus_one_queries(
     THRESHOLD = 5
 
     hits = []
+    seen = set()
     for node in graph.all_nodes():
         if not _is_db_node(node):
             continue
         if node.call_count < THRESHOLD:
             continue
 
-        # Walk reverse edges to find the nearest view caller
+        def check_caller(caller, query_node):
+            if (
+                not _is_view_node(caller)
+                or caller.call_count <= 0
+            ):
+                return
+            key = (query_node.id, caller.id)
+            if key in seen:
+                return
+            ratio = query_node.call_count / caller.call_count
+            if ratio >= THRESHOLD:
+                seen.add(key)
+                hits.append(
+                    {
+                        "query": query_node.id,
+                        "view": caller.id,
+                        "query_count": query_node.call_count,
+                        "view_count": caller.call_count,
+                        "ratio": round(ratio, 1),
+                        "avg_query_ms": round(
+                            (query_node.avg_duration_ns or 0)
+                            / 1e6,
+                            2,
+                        ),
+                        "hint": (
+                            "Use select_related() or prefetch_related() to batch "
+                            f"this query. Estimated wasted queries per request: "
+                            f"{int(ratio) - 1}"
+                        ),
+                    }
+                )
+
         for edge in graph.callers(node.id):
             caller = graph._nodes.get(edge.source)
             if caller is None:
                 continue
-            if _is_view_node(caller) and caller.call_count > 0:
-                ratio = node.call_count / caller.call_count
-                if ratio >= THRESHOLD:
-                    hits.append(
-                        {
-                            "query": node.id,
-                            "view": caller.id,
-                            "query_count": node.call_count,
-                            "view_count": caller.call_count,
-                            "ratio": round(ratio, 1),
-                            "avg_query_ms": round(
-                                (node.avg_duration_ns or 0)
-                                / 1e6,
-                                2,
-                            ),
-                            "hint": (
-                                "Use select_related() or prefetch_related() to batch "
-                                f"this query. Estimated wasted queries per request: "
-                                f"{int(ratio) - 1}"
-                            ),
-                        }
-                    )
+            # direct view caller
+            check_caller(caller, node)
+            # one hop up
+            for edge2 in graph.callers(caller.id):
+                grandcaller = graph._nodes.get(edge2.source)
+                if grandcaller:
+                    check_caller(grandcaller, node)
 
     if not hits:
         return False, {}
@@ -112,9 +129,9 @@ def _db_query_hotspot(
     Django DB query nodes have node_type="django" (probe prefix).
     """
     db_nodes = [n for n in graph.all_nodes() if _is_db_node(n)]
+    print(">>>> DJANGO RULE", db_nodes)
     if not db_nodes:
         return False, {}
-
     total_calls = (
         sum(n.call_count for n in graph.all_nodes()) or 1
     )
@@ -124,6 +141,7 @@ def _db_query_hotspot(
         if n.call_count > 5
         and (n.call_count / total_calls > 0.30)
     ]
+    print(">>>> DJANGO RULE HOTSPOTS", hotspots)
     if not hotspots:
         return False, {}
 

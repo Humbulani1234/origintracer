@@ -31,6 +31,7 @@ export default function App() {
   const [causal, setCausal] = useState([]);
   const [loading, setLoading] = useState(false);
   const [backendError, setBackendError] = useState(null);
+  const [workers,       setWorkers]       = useState([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -40,6 +41,7 @@ export default function App() {
         api.diff(), api.graph()
       ]);
       const ca = await api.causal("origintracer-snapshot");
+      const ws = await api.workers();
       if (n?.data?.data?.length)  setNodes(n.data.data);
       if (e?.data?.data?.length)  setEdges(e.data.data);
       if (ev?.data?.length) setEvents(ev.data);
@@ -47,6 +49,7 @@ export default function App() {
       if (d?.data)                setDiff(d.data);
       if (g?.data?.data)          setGraph(g.data.data);
       if (ca?.data?.length) setCausal(ca.data);
+      if (ws?.data?.length) setWorkers(ws.data);
     } catch (err) {
       console.warn("Backend unavailable:", err?.message ?? err);
       setBackendError(err?.message ?? "Backend unavailable");
@@ -58,7 +61,7 @@ export default function App() {
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
   }, [refresh]);
-
+  
   const runQuery = async (q) => {
     const lower = q.toLowerCase().trim();
     if (lower.startsWith("\\stitch") || lower.startsWith("stitch")) {
@@ -103,10 +106,31 @@ export default function App() {
             </div>
           ))}
         </nav>
-        <div className="sockets">
-          <span className="socket-dot" />
-          {status?.sockets ?? "?"} socket{status?.sockets !== 1 ? "s" : ""} live
-        </div>
+
+        {workers.length > 1 && (
+          <div style={{ padding: "8px 14px", borderTop: "1px solid var(--border)" }}>
+            <div style={{ fontFamily: "monospace", fontSize: 9,
+                color: "var(--muted)", marginBottom: 6, letterSpacing: "0.06em" }}>
+              WORKERS
+            </div>
+            {workers.map(w => (
+              <div key={w.pid}
+                style={{
+                  fontFamily: "monospace", fontSize: 10, padding: "3px 0",
+                  cursor: "pointer",
+                  color: "var(--muted)",
+                }}>
+                <span style={{
+                  display: "inline-block", width: 6, height: 6,
+                  borderRadius: "50%", marginRight: 6,
+                  background: "#555",
+                  verticalAlign: "middle",
+                }} />
+                pid {w.pid}
+              </div>
+            ))}
+          </div>
+        )}
       </aside>
 
       <div className="main">

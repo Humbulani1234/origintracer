@@ -340,6 +340,47 @@ class DeploymentMarkRequest(BaseModel):
     label: str = "deployment"
 
 
+# Unix socket client
+_SOCKET_PREFIX = "/tmp/stacktracer-"
+_SOCKET_SUFFIX = ".sock"
+
+
+def discover_sockets() -> list[str]:
+    import glob
+
+    live = []
+    for path in sorted(
+        glob.glob(f"{_SOCKET_PREFIX}*{_SOCKET_SUFFIX}")
+    ):
+        pid = path.replace(_SOCKET_PREFIX, "").replace(
+            _SOCKET_SUFFIX, ""
+        )
+        try:
+            # Check if the process is actually alive
+            os.kill(int(pid), 0)
+            live.append(path)
+        except (ProcessLookupError, ValueError):
+            # Process is dead — remove the stale socket
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    return live
+
+
+@app.get("/api/v1/workers")
+def get_workers(authorization: Optional[str] = Header(None)):
+    _authenticate(authorization)
+    sockets = discover_sockets()  # reuse your existing function
+    workers = []
+    for path in sockets:
+        pid = path.replace(_SOCKET_PREFIX, "").replace(
+            _SOCKET_SUFFIX, ""
+        )
+        workers.append({"pid": pid, "socket": path})
+    return {"data": workers}
+
+
 # --------------- Routes: Graph snapshot -------------------------------
 
 
@@ -636,19 +677,58 @@ async def causal(
     """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
-    temporal = repository.label_diff(customer_id, since)
+    temporal_raw = repository.label_diff(customer_id, since)
     tag_list = (
         [t.strip() for t in tags.split(",")] if tags else None
     )
 
-    from origintracer.core.causal import PatternRegistry
+    from origintracer.core.causal import (
+        PatternRegistry,
+        _is_db_node,
+    )
+    from origintracer.core.temporal import (
+        GraphDiff,
+        TemporalStore,
+    )
+
+    temporal = TemporalStore()
+    if temporal_raw:
+        diff = GraphDiff(
+            added_node_ids=set(
+                temporal_raw.get("added_nodes", [])
+            ),
+            removed_node_ids=set(
+                temporal_raw.get("removed_nodes", [])
+            ),
+            added_edge_keys=set(
+                temporal_raw.get("added_edges", [])
+            ),
+            removed_edge_keys=set(
+                temporal_raw.get("removed_edges", [])
+            ),
+            timestamp=temporal_raw.get("timestamp", time.time()),
+            label=temporal_raw.get("label"),
+        )
+        temporal._diffs.append(diff)
+
+    def _register_causal_rules():
+        """Import rule modules to trigger global registration."""
+        import origintracer.rules.asyncio_rules  # noqa: F401
+        import origintracer.rules.django_rules  # noqa: F401
+
+        # add any other rule files here
+
+    _register_causal_rules()
 
     # No tracker — backend has no live requests.
-    # build_default_registry(tracker=None) registers the anomaly rule
+    # registry() registers the anomaly rule
     # but its predicate returns False immediately, which is correct.
     registry = PatternRegistry
     matches = registry.evaluate(graph, temporal, tags=tag_list)
     print(">>>> CAUSAL", matches)
+    print(">>>> TEMPORAL", temporal)
+    print(">>>> REGISTRY", registry._rules)
+    print(">>>> GRAPH", graph)
     return {
         "match_count": len(matches),
         "data": [m.to_dict() for m in matches],
