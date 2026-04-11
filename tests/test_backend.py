@@ -619,23 +619,45 @@ class TestTraces:
 # ====================================================================== #
 
 
+async def _post_diff_snapshot(client, bytes_: dict) -> None:
+    await client.post(
+        "/api/v1/graph/diff",
+        headers={**AUTH, "content-type": "application/json"},
+        json=bytes_,
+    )
+
+
+def _make_diff_bytes(node_count: int = 2) -> bytes:
+    """Build minimal msgpack snapshot bytes."""
+    from origintracer.core.runtime_graph import RuntimeGraph
+    from origintracer.core.temporal import TemporalStore
+
+    g = RuntimeGraph()
+    g.upsert_node("django::view", "fn", "django")
+    g.upsert_node("postgres::SELECT", "db", "postgres")
+    if node_count > 2:
+        g.upsert_node("redis::GET", "cache", "redis")
+    g.upsert_edge("django::view", "postgres::SELECT", "calls")
+    return (
+        TemporalStore()
+        .capture(g.snapshot(), label="origintracer-snapshot")
+        .to_dict()
+    )
+
+
 @pytest.mark.anyio
 class TestDiff:
 
     @pytest.fixture(autouse=True)
     async def load_snapshot(self, client):
-        pytest.importorskip("msgpack")
-        await _post_snapshot(client, _make_snapshot_bytes())
+        await _post_diff_snapshot(client, _make_diff_bytes())
 
-    # async def test_diff_returns_200_with_snapshot(self, client):
-    #     r = await client.get("/api/v1/diff", headers=AUTH)
-    #     assert r.status_code == 200
-
-    # async def test_diff_with_since_param(self, client):
-    #     r = await client.get(
-    #         "/api/v1/diff?since=v1.0.0", headers=AUTH
-    #     )
-    #     assert r.status_code == 200
+    async def test_diff_with_since_param(self, client):
+        r = await client.get(
+            "/api/v1/graph/diff?since=origintracer-snapshot",
+            headers=AUTH,
+        )
+        assert r.status_code == 200
 
     async def test_diff_before_snapshot_returns_404(
         self, client
@@ -643,11 +665,16 @@ class TestDiff:
         import backend.main as m
 
         m.get_repository()._diffs.clear()
-        r = await client.get("/api/v1/diff", headers=AUTH)
+        r = await client.get(
+            "/api/v1/graph/diff?since=origintracer-snapshot",
+            headers=AUTH,
+        )
         assert r.status_code == 404
 
     async def test_diff_requires_auth(self, client):
-        r = await client.get("/api/v1/diff")
+        r = await client.get(
+            "/api/v1/graph/diff?since=origintracer-snapshot"
+        )
         assert r.status_code == 401
 
 
@@ -701,34 +728,38 @@ class TestGraphDiff:
 class TestCausalTags:
 
     @pytest.fixture(autouse=True)
-    async def load_snapshot(self, client):
+    async def load_snapshot_graph(self, client):
         pytest.importorskip("msgpack")
         await _post_snapshot(client, _make_snapshot_bytes())
 
-    # async def test_causal_with_tags_param(self, client):
-    #     r = await client.get(
-    #         "/api/v1/causal?tags=latency,db", headers=AUTH
-    #     )
-    #     assert r.status_code == 200
-    #     body = r.json()
-    #     assert "matches" in body
-    #     assert "match_count" in body
+    @pytest.fixture(autouse=True)
+    async def load_snapshot_diff(self, client):
+        await _post_diff_snapshot(client, _make_diff_bytes())
 
-    # async def test_causal_match_count_matches_list_length(
-    #     self, client
-    # ):
-    #     r = await client.get("/api/v1/causal", headers=AUTH)
-    #     body = r.json()
-    #     assert body["match_count"] == len(body["matches"])
+    async def test_causal_with_tags_param(self, client):
+        r = await client.get(
+            "/api/v1/causal?tags=latency,db", headers=AUTH
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert "data" in body
+        assert "match_count" in body
 
-    # async def test_causal_before_snapshot_returns_404(
-    #     self, client
-    # ):
-    #     import backend.main as m
+    async def test_causal_match_count_matches_list_length(
+        self, client
+    ):
+        r = await client.get("/api/v1/causal", headers=AUTH)
+        body = r.json()
+        assert body["match_count"] == len(body["data"])
 
-    #     m._graphs.clear()
-    #     r = await client.get("/api/v1/causal", headers=AUTH)
-    #     assert r.status_code == 404
+    async def test_causal_before_snapshot_returns_404(
+        self, client
+    ):
+        import backend.main as m
+
+        m._graphs.clear()
+        r = await client.get("/api/v1/causal", headers=AUTH)
+        assert r.status_code == 404
 
 
 # ====================================================================== #

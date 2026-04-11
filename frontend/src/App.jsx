@@ -35,17 +35,18 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       setBackendError(null);
-      const [n, e, ev, s, d, g, ca] = await Promise.all([
+      const [n, e, ev, s, d, g,] = await Promise.all([
         api.nodes(), api.edges(), api.events(), api.status(),
-        api.diff(), api.graph(), api.causal()
+        api.diff(), api.graph()
       ]);
+      const ca = await api.causal("origintracer-snapshot");
       if (n?.data?.data?.length)  setNodes(n.data.data);
       if (e?.data?.data?.length)  setEdges(e.data.data);
       if (ev?.data?.length) setEvents(ev.data);
       if (s)                setStatus(s);
       if (d?.data)                setDiff(d.data);
       if (g?.data?.data)          setGraph(g.data.data);
-      if (ca?.data?.data?.length) setCausal(ca.data.data);
+      if (ca?.data?.length) setCausal(ca.data);
     } catch (err) {
       console.warn("Backend unavailable:", err?.message ?? err);
       setBackendError(err?.message ?? "Backend unavailable");

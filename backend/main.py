@@ -623,8 +623,10 @@ async def get_graph_route(
 
 @app.get("/api/v1/causal")
 async def causal(
+    since: str = "origintracer-snapshot",
     tags: Optional[str] = None,
     authorization: Optional[str] = Header(None),
+    repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
     """
     Run all causal rules against the latest snapshot.
@@ -634,18 +636,17 @@ async def causal(
     """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
+    temporal = repository.label_diff(customer_id, since)
     tag_list = (
         [t.strip() for t in tags.split(",")] if tags else None
     )
 
     from origintracer.core.causal import PatternRegistry
-    from origintracer.core.temporal import TemporalStore
 
     # No tracker — backend has no live requests.
     # build_default_registry(tracker=None) registers the anomaly rule
     # but its predicate returns False immediately, which is correct.
     registry = PatternRegistry
-    temporal = TemporalStore()  # empty - backend has no diffs
     matches = registry.evaluate(graph, temporal, tags=tag_list)
     print(">>>> CAUSAL", matches)
     return {
@@ -680,7 +681,7 @@ async def hotspots(
     }
 
 
-@app.get("/api/v1/diff")
+@app.get("/api/v1/graph/diff")
 async def diff(
     since: Optional[str] = None,
     authorization: Optional[str] = Header(None),
@@ -703,6 +704,7 @@ async def diff(
     return {"data": results}
 
 
+# tra
 @app.get("/api/v1/traces/{trace_id}")
 async def get_trace(
     trace_id: str,
