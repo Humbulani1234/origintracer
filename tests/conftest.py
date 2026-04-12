@@ -1,16 +1,3 @@
-"""
-tests/conftest.py
-
-Shared fixtures used across all test modules.
-
-Scope strategy:
-    function  — default, fresh state per test (most fixtures)
-    session   — expensive setup done once (none here yet — keep tests independent)
-
-All fixtures are zero-dependency — no BPF, no Django, no Postgres required.
-The test suite must run with: pytest tests/ -v
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -30,8 +17,6 @@ from origintracer.core.semantic import (
 from origintracer.sdk.emitter import bind_engine, unbind_engine
 from origintracer.storage.base import InMemoryRepository
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-
 
 def evt(
     probe: str = "function.call",
@@ -50,9 +35,6 @@ def evt(
         **({"duration_ns": duration_ns} if duration_ns else {}),
         **meta,
     )
-
-
-# ── Core fixtures ──────────────────────────────────────────────────────────
 
 
 @pytest.fixture

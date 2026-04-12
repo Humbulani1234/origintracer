@@ -16,18 +16,11 @@ from httpx import ASGITransport, AsyncClient
 from backend.main import app
 from origintracer.storage.base import InMemoryRepository
 
-# ── Test client fixture ────────────────────────────────────────────────────
-
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 AUTH = {"Authorization": "Bearer test-key-0000"}
 NOAUTH: dict = {}
-
-
-# ====================================================================== #
-# Auth
-# ====================================================================== #
 
 
 @pytest.mark.anyio
@@ -52,11 +45,6 @@ class TestAuth:
         r = await client.get("/health")
         assert r.status_code == 200
         assert r.json()["status"] == "healthy"
-
-
-# ====================================================================== #
-# Event ingest
-# ====================================================================== #
 
 
 @pytest.mark.anyio
@@ -93,11 +81,6 @@ class TestEventIngest:
         )
         assert r.status_code == 200
         assert r.json()["stored"] == 0
-
-
-# ====================================================================== #
-# Graph snapshot
-# ====================================================================== #
 
 
 @pytest.mark.anyio
@@ -178,11 +161,6 @@ class TestGraphSnapshot:
         assert r.status_code == 400
 
 
-# ====================================================================== #
-# Graph queries (require snapshot first)
-# ====================================================================== #
-
-
 @pytest.mark.anyio
 class TestGraphQueries:
 
@@ -243,11 +221,6 @@ class TestGraphQueries:
         assert r.status_code == 404
 
 
-# ====================================================================== #
-# Status
-# ====================================================================== #
-
-
 @pytest.mark.anyio
 class TestStatus:
 
@@ -280,11 +253,6 @@ class TestStatus:
         body = r.json()
         assert body["snapshot"]["available"] is True
         assert body["snapshot"]["nodes"] == 1
-
-
-# ====================================================================== #
-# Deployment marker
-# ====================================================================== #
 
 
 @pytest.mark.anyio
@@ -345,11 +313,6 @@ async def _post_snapshot(client, bytes_: bytes) -> None:
         content=bytes_,
         headers={**AUTH, "content-type": "application/msgpack"},
     )
-
-
-# ====================================================================== #
-# GET /api/v1/nodes
-# ====================================================================== #
 
 
 @pytest.mark.anyio
@@ -419,11 +382,6 @@ class TestNodes:
         assert r.status_code == 401
 
 
-# ====================================================================== #
-# GET /api/v1/edges
-# ====================================================================== #
-
-
 @pytest.mark.anyio
 class TestEdges:
 
@@ -472,11 +430,6 @@ class TestEdges:
     async def test_edges_requires_auth(self, client):
         r = await client.get("/api/v1/edges")
         assert r.status_code == 401
-
-
-# ====================================================================== #
-# GET /api/v1/traces/{trace_id}
-# ====================================================================== #
 
 
 @pytest.mark.anyio
@@ -604,11 +557,6 @@ class TestTraces:
         assert abs(r.json()["total_ms"] - 14.0) < 0.01
 
 
-# ====================================================================== #
-# GET /api/v1/diff
-# ====================================================================== #
-
-
 async def _post_diff_snapshot(client, bytes_: dict) -> None:
     await client.post(
         "/api/v1/graph/diff",
@@ -668,11 +616,6 @@ class TestDiff:
         assert r.status_code == 401
 
 
-# ====================================================================== #
-# POST /api/v1/graph/diff
-# ====================================================================== #
-
-
 @pytest.mark.anyio
 class TestGraphDiff:
 
@@ -707,11 +650,6 @@ class TestGraphDiff:
     async def test_post_graph_diff_requires_auth(self, client):
         r = await client.post("/api/v1/graph/diff", json={})
         assert r.status_code == 401
-
-
-# ====================================================================== #
-# GET /api/v1/causal — tag filtering
-# ====================================================================== #
 
 
 @pytest.mark.anyio
@@ -750,11 +688,6 @@ class TestCausalTags:
         m._graphs.clear()
         r = await client.get("/api/v1/causal", headers=AUTH)
         assert r.status_code == 404
-
-
-# ====================================================================== #
-# GET /api/v1/hotspots — edge cases
-# ====================================================================== #
 
 
 @pytest.mark.anyio

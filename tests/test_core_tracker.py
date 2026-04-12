@@ -23,10 +23,6 @@ from origintracer.core.semantic import (
     load_from_dict,
 )
 
-# ====================================================================== #
-# ActiveRequestTracker
-# ====================================================================== #
-
 
 class TestActiveRequestTracker:
 

@@ -1,79 +1,6 @@
-"""
-stacktracer/rules/celery_rules.py
-
-Custom causal rules for the Celery probe.
-
-Auto-discovered by StackTracer because:
-  - This file is named *_rules.py
-  - It lives in stacktracer/rules/ in the project root
-  - It exposes a register(registry) function
-
-Each rule is a predicate function that:
-  - Receives the live RuntimeGraph and TemporalStore
-  - Returns (bool, dict) — (fired, evidence)
-  - The evidence dict is what the engineer sees in the REPL
-
-These rules are queried via:
-    CAUSAL WHERE tags = "celery"
-    CAUSAL                          (runs all rules including these)
-"""
-
 from __future__ import annotations
 
 from origintracer.core.causal import CausalRule, PatternRegistry
-
-
-def register(registry: PatternRegistry) -> None:
-    """
-    Called automatically when this file is loaded.
-    Register all rules from this file here.
-    """
-    registry.register(
-        CausalRule(
-            name="celery_sync_db_call",
-            description=(
-                "A Celery task is making synchronous database calls. "
-                "In a prefork worker, this blocks the worker process thread "
-                "for the full query duration, reducing pool throughput."
-            ),
-            tags=["celery", "blocking", "database"],
-            predicate=_sync_db_in_celery,
-            confidence=0.85,
-        )
-    )
-
-    registry.register(
-        CausalRule(
-            name="celery_retry_amplification",
-            description=(
-                "Celery tasks are being retried at a high rate. "
-                "A downstream failure (database, external API) is amplifying "
-                "into many retried tasks consuming the worker pool."
-            ),
-            tags=["celery", "retry"],
-            predicate=_retry_amplification,
-            confidence=0.80,
-        )
-    )
-
-    registry.register(
-        CausalRule(
-            name="celery_task_duration_spike",
-            description=(
-                "One or more Celery tasks have significantly higher average "
-                "duration than the rest of the task queue. Likely a new "
-                "slow operation introduced in a recent deployment."
-            ),
-            tags=["celery", "latency"],
-            predicate=_task_duration_spike,
-            confidence=0.75,
-        )
-    )
-
-
-# ====================================================================== #
-# Predicates
-# ====================================================================== #
 
 
 def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
@@ -81,12 +8,8 @@ def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
     Fires when a celery node has a direct edge to a postgres/sqlite node
     where avg_duration_ns > 50ms.
 
-    Graph pattern:
-        celery::myapp.tasks.process_report
-            → postgres::PQexec  (avg=340ms, blocking_call=True)
-
     This means the Celery task is calling the database synchronously
-    on the worker thread — not via an async path or thread pool.
+    on the worker thread - not via an async path or thread pool.
     """
     evidence = []
 
@@ -258,3 +181,46 @@ def _task_duration_spike(graph, temporal) -> tuple[bool, dict]:
             "gained new slow edges after a recent deployment."
         ),
     }
+
+
+SYNC_DB_IN_CELERY = CausalRule(
+    name="celery_sync_db_call",
+    description=(
+        "A Celery task is making synchronous database calls. "
+        "In a prefork worker, this blocks the worker process thread "
+        "for the full query duration, reducing pool throughput."
+    ),
+    tags=["celery", "blocking", "database"],
+    predicate=_sync_db_in_celery,
+    confidence=0.85,
+)
+
+CELERY_RETRY_AMPLIFICATION = CausalRule(
+    name="celery_retry_amplification",
+    description=(
+        "Celery tasks are being retried at a high rate. "
+        "A downstream failure (database, external API) is amplifying "
+        "into many retried tasks consuming the worker pool."
+    ),
+    tags=["celery", "retry"],
+    predicate=_retry_amplification,
+    confidence=0.80,
+)
+
+CELERY_TASK_DURATION_SPIKE = CausalRule(
+    name="celery_task_duration_spike",
+    description=(
+        "One or more Celery tasks have significantly higher average "
+        "duration than the rest of the task queue. Likely a new "
+        "slow operation introduced in a recent deployment."
+    ),
+    tags=["celery", "latency"],
+    predicate=_task_duration_spike,
+    confidence=0.75,
+)
+
+
+def register(registry: PatternRegistry) -> None:
+    registry.register(SYNC_DB_IN_CELERY)
+    registry.register(CELERY_RETRY_AMPLIFICATION)
+    registry.register(CELERY_TASK_DURATION_SPIKE)

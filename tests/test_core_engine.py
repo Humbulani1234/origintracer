@@ -1,5 +1,5 @@
 """
-tests/test_core_engine.py
+
 
 Integration tests for Engine — the component that wires together
 RuntimeGraph, TemporalStore, PatternRegistry, SemanticLayer, and
@@ -9,7 +9,7 @@ These tests exercise the Engine as it would operate at runtime:
 feeding it realistic event sequences and asserting on the resulting
 graph structure, causal matches, and temporal diffs.
 
-No probes, no threads, no network. Engine.process() is called directly.
+Engine.process() is called directly.
 """
 
 from __future__ import annotations

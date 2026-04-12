@@ -1,5 +1,5 @@
 """
-tests/test_core_graph.py
+
 
 Tests for the four graph-layer components:
     RuntimeGraph     — topology store and query engine
@@ -9,7 +9,7 @@ Tests for the four graph-layer components:
 
 Tests here are a mix of unit (component in isolation) and integration
 (two components working together, e.g. Normalizer feeding Compactor).
-No Engine, no probes, no network.
+
 """
 
 from __future__ import annotations
@@ -19,10 +19,6 @@ import time
 import pytest
 
 from .conftest import evt
-
-# ====================================================================== #
-# RuntimeGraph
-# ====================================================================== #
 
 
 class TestRuntimeGraph:
@@ -273,11 +269,6 @@ class TestRuntimeGraph:
         )  # 5 services × 100 nodes each
 
 
-# ====================================================================== #
-# TemporalStore
-# ====================================================================== #
-
-
 class TestTemporalStore:
 
     def setup_method(self):
@@ -369,9 +360,7 @@ class TestTemporalStore:
         assert len(store) == 10  # capped at max_diffs
 
 
-# ====================================================================== #
-# GraphNormalizer
-# ====================================================================== #
+#
 
 
 class TestGraphNormalizer:
@@ -461,11 +450,6 @@ class TestGraphNormalizer:
             "overflow" in r or "high_cardinality" in r
             for r in results
         )
-
-
-# ====================================================================== #
-# GraphCompactor
-# ====================================================================== #
 
 
 class TestGraphCompactor:

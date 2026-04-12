@@ -398,14 +398,7 @@ Run tests matching a name pattern:
 pytest stacktracer/tests/ -k "test_n_plus_one" -v
 ```
  
-### Code formatting
- 
-```bash
-black stacktracer/          # format in place
-black --check stacktracer/  # check only, no changes (what CI runs)
-ruff check stacktracer/     # lint
-ruff check --fix stacktracer/  # lint + auto-fix
-```
+
  
 ### Pre-commit hooks (local CI)
  
@@ -416,14 +409,7 @@ pip install pre-commit
 pre-commit install
 ```
  
-After that, every `git commit` automatically runs black, ruff, and pytest.
-If any check fails the commit is aborted. Fix the issues and commit again.
- 
-Run hooks manually without committing:
- 
-```bash
-pre-commit run --all-files
-```
+A
 ---
 
 ## OTel Bridge Mode - optional

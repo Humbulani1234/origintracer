@@ -6,18 +6,7 @@ allowing `\stitch` in the REPL to join both sides into one timeline.
 
 ---
 
-## Process model
 
-```
-Terminal 1: gunicorn → forks → UvicornWorker → runs Django
-Terminal 2: celery main process → forks → ForkPoolWorker
-Terminal 3: Redis server (standalone TCP — no StackTracer involvement)
-```
-
-Gunicorn and Celery fork independently. They have no parent-child relationship.
-Django's `.delay()` writes a JSON message to Redis. Celery main polls Redis
-and hands it to ForkPoolWorker. The two engines (one per process group) produce
-separate graphs that `\stitch` merges at query time.
 
 ---
 
@@ -122,25 +111,7 @@ probes:
 
 ---
 
-## celery_probe.py — key design decisions
 
-**Pre-fork event parking** — same pattern as gunicorn_probe. `_on_main_ready`
-(connected to `celeryd_after_setup`) emits `celery.main.start` into
-`_pre_fork_events` before fork. `_on_worker_fork` calls `stacktracer.init()`
-then `_drain_pre_fork_events()` so the worker's engine gets the MainProcess node.
-
-**`_task_state` dict** — single dict keyed by task request id. Not two separate
-dicts, not stored on `task.request`.
-
-**`_on_task_failure` uses `.get()`** — never owns token reset.
-**`_on_task_end` is sole owner of `.pop()` and `reset_trace()`** with try/except guard.
-
-**No duplicate signal connections** — `_on_worker_fork` defined once as class method.
-Defining it twice causes the second to shadow the first silently.
-
-**Signals connected:**
-`celeryd_after_setup`, `task_prerun`, `task_postrun`,
-`task_retry`, `task_failure`, `worker_process_init`, `worker_process_shutdown`
 
 ---
 
@@ -243,41 +214,3 @@ Copy a `trace_id` value from the output, then pass it to `\stitch`.
 
 ---
 
-## Expected graph — celery worker
-
-```
-celery::MainProcess  ──spawned──►  celery::ForkPoolWorker
-celery::ForkPoolWorker  ──ran──►   celery::myapp.tasks.process_report
-```
-
-## Expected graph — gunicorn worker (cross-process edge)
-
-```
-django::/tasks/report/1/  ──dispatched──►  celery::myapp.tasks.process_report
-```
-
----
-
-## Known issues encountered
-
-**`node.name` AttributeError in `_add_structural_edges`** — `GraphNode` has no
-`name` attribute. Use `nid.split("::", 1)[1]` to extract the name from the node id.
-Exceptions in `_add_structural_edges` are swallowed by a broad `except` in the
-engine — add `logger.warning` or `logger.exception` there to surface them.
-
-**Duplicate `_on_worker_fork`** — defining the method twice in the class body
-causes the second definition to shadow the first. Only one is registered as a
-signal handler. Remove the duplicate.
-
-**`worker/__init__.py` importing celery app** — causes `stacktracer.init()` to
-run at module import time in the Celery process before `worker_process_init` fires.
-Keep `worker/__init__.py` empty.
-
-**`_task_state` KeyError in `_on_task_failure`** — use `.get()` not direct key
-access in failure handler since `task_prerun` may not have fired for all failure paths.
-
-**Stale `__pycache__`** — clear after editing probe files:
-
-```bash
-find applications/celery -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
-```

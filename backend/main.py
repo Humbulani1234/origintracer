@@ -14,7 +14,7 @@ Surfaces:
     GET  /health - liveness probe
 
 Architecture:
-    The agent owns the authoritative graph and builds it locally.
+    OriginTracer owns the authoritative graph and builds it locally.
     FastAPI receives serialised graph snapshots every 60s,
     deserialises them, and serves all queries from the deserialised graph.
     FastAPI never rebuilds a graph from raw events - that is the
@@ -25,7 +25,7 @@ Architecture:
     60s for the next agent snapshot.
 
 Run with:
-    uvicorn origintracer.backend.main:app --host 0.0.0.0 --port 8000
+    uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 Environment variables:
     ORIGINTRACER_API_KEYS - comma-separated key:customer pairs
@@ -209,8 +209,7 @@ def _load_snapshots_on_startup() -> None:
     """
     if _repository is None:
         return
-    # Known customers come from the API key map.
-    # For multi-tenant production: iterate a customers table instead.
+
     customer_ids = set(_valid_api_keys.values())
     for customer_id in customer_ids:
         try:
@@ -416,7 +415,7 @@ async def receive_graph_diff(
     """
     customer_id = _authenticate(authorization)
     repository.insert_graph_diff(customer_id, body.model_dump())
-    print(">>>> GRAPH DIFF", body)
+
     logger.info(
         "Graph diff received: customer=%s nodes=%d edges=%d bytes=%d",
         customer_id,
@@ -611,10 +610,7 @@ async def causal(
     # No tracker - backend has no live requests.
     # rules that depends on it won't be executed
     matches = registry.evaluate(graph, temporal, tags=tag_list)
-    print(">>>> CAUSAL", matches)
-    print(">>>> TEMPORAL", temporal)
-    print(">>>> REGISTRY", registry._rules)
-    print(">>>> GRAPH", graph)
+
     return {
         "match_count": len(matches),
         "data": [m.to_dict() for m in matches],
@@ -757,7 +753,7 @@ async def mark_deployment_endpoint(
         repository.insert_deployment_marker(
             customer_id, body.label
         )
-    print(">>>> WE DEPLOYED")
+
     logger.info(
         "Deployment marked: customer=%s label=%s",
         customer_id,

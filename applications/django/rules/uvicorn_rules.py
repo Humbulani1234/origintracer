@@ -125,20 +125,4 @@ REQUEST_DURATION_ANOMALY = CausalRule(
 
 
 def register(registry: PatternRegistry) -> None:
-    """
-    Called automatically when this file is loaded.
-    Register all rules from this file here.
-    """
-    registry.register(
-        CausalRule(
-            name="request_duration_anomaly",
-            description=(
-                "Recent request latency has diverged from the historical baseline "
-                "by 3x or more. Check probe_sequence of slow in-flight requests "
-                "to identify the new bottleneck."
-            ),
-            predicate=_request_duration_anomaly,
-            confidence=0.85,
-            tags=["latency", "anomaly", "live"],
-        )
-    )
+    registry.register(REQUEST_DURATION_ANOMALY)

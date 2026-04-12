@@ -125,7 +125,7 @@ def _db_query_hotspot(
     Django DB query nodes have node_type="django" (probe prefix).
     """
     db_nodes = [n for n in graph.all_nodes() if _is_db_node(n)]
-    print(">>>> DJANGO RULE", db_nodes)
+
     if not db_nodes:
         return False, {}
     total_calls = (

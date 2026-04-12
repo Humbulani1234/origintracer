@@ -51,8 +51,6 @@ from origintracer.rules.django_rules import (
     N_PLUS_ONE,
 )
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-
 
 def fresh(tracker):
     """Return a clean (graph, temporal) pair."""
@@ -63,7 +61,6 @@ def fresh(tracker):
     )
 
 
-# PatternRegistry
 class TestPatternRegistry:
 
     def teardown_method(self):
@@ -205,7 +202,6 @@ class TestPatternRegistry:
         assert anomalies == []
 
 
-# retry_amplification rule
 class TestRetryAmplification:
 
     def teardown_method(self):
@@ -232,11 +228,6 @@ class TestRetryAmplification:
         g.upsert_edge("A", "B", "calls")
         matched, _ = RETRY_AMPLIFICATION.predicate(g, t, a)
         assert not matched
-
-
-# ====================================================================== #
-# new_sync_call_after_deployment rule
-# ====================================================================== #
 
 
 class TestNewSyncCallAfterDeployment:
@@ -330,11 +321,6 @@ class TestNewSyncCallAfterDeployment:
         assert not matched
 
 
-# ====================================================================== #
-# asyncio_event_loop_starvation rule
-# ====================================================================== #
-
-
 class TestLoopStarvation:
 
     def teardown_method(self):
@@ -365,11 +351,6 @@ class TestLoopStarvation:
         node.node_type = "asyncio"
         matched, _ = LOOP_STARVATION.predicate(g, t, a)
         assert not matched
-
-
-# ====================================================================== #
-# db_query_hotspot rule
-# ====================================================================== #
 
 
 class TestDbQueryHotspot:
@@ -441,11 +422,6 @@ class TestDbQueryHotspot:
         matched, _ = DB_HOTSPOT.predicate(g, t, a)
         # Should not fire — call_count <= 5
         assert not matched
-
-
-# ====================================================================== #
-# n_plus_one rule
-# ====================================================================== #
 
 
 class TestNPlusOne:
@@ -608,7 +584,6 @@ class TestNPlusOne:
         assert N_PLUS_ONE.confidence >= 0.85
 
 
-# worker_imbalance rule
 class TestWorkerImbalance:
     """
     WORKER_IMBALANCE fires when one gunicorn worker handles significantly
@@ -684,11 +659,6 @@ class TestWorkerImbalance:
         assert "busiest_worker" in evidence
         assert "ratio" in evidence
         assert evidence["ratio"] >= 2.0
-
-
-# ====================================================================== #
-# request_duration_anomaly rule
-# ====================================================================== #
 
 
 class TestRequestDurationAnomaly1:
@@ -782,11 +752,6 @@ class TestRequestDurationAnomaly1:
         matched, evidence = rule.predicate(g, t, None)
         assert not matched
         assert evidence == {}
-
-
-# ====================================================================== #
-# User rule discovery convention
-# ====================================================================== #
 
 
 class TestUserRuleConvention:
