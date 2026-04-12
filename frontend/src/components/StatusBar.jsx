@@ -1,6 +1,6 @@
 export default function StatusBar({ nodes, edges, events, status }) {
   const customer = status?.customer_id ?? "—";
-  const stored   = status?.storage?.event_count ?? null;
+  const stored = status?.storage?.event_count ?? null;
   const snapLabel = status?.snapshot?.label ?? null;
 
   return (

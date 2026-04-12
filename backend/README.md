@@ -1,28 +1,27 @@
-# StackTracer Backend
+# OriginTracer Backend
 
-FastAPI backend that receives graph snapshots and events from StackTracer agents,
-serves graph queries, and exposes the runtime graph to the React UI.
+FastAPI backend that receives graph snapshots and events from OriginTracer, serves graph queries, and exposes the runtime graph to the React UI.
 
 ---
 
 ## What it does
 
-The backend is stateless except for graph snapshots. The agent (Django/Celery
-process) owns the live `RuntimeGraph` — it builds it, updates it, and snapshots
+The backend is stateless except for graph snapshots. OriginTracer (Django/Celery
+process) owns the live `RuntimeGraph` - it builds it, updates it, and snapshots
 it. The backend receives those snapshots, stores them in memory (or PostgreSQL),
 and serves read queries against them.
 
 ```
-Agent process                    Backend
+OriginTracer process                    Backend
 ─────────────────────────────────────────────────────
 RuntimeGraph (live)
-  → Uploader flushes every 10s
-  → POST /api/v1/events          → persists raw events
-  → POST /api/v1/graph/snapshot  → deserialises + stores graph
-                                 ← GET /api/v1/graph
-                                 ← GET /api/v1/status
-                                 ← GET /api/v1/hotspots
-                                 ← POST /api/v1/query
+  >> Uploader flushes every 10s
+  >> POST /api/v1/events >> persists raw events
+  >> POST /api/v1/graph/snapshot >> deserialises + stores graph
+                                 >> GET /api/v1/graph
+                                 >> GET /api/v1/status
+                                 >> GET /api/v1/hotspots
+                                 >> POST /api/v1/query
 ```
 
 ---
@@ -31,7 +30,7 @@ RuntimeGraph (live)
 
 ```bash
 pip install fastapi uvicorn httpx msgpack
-pip install -e /path/to/stack-tracer
+pip install -e /path/to/origintracer
 ```
 
 ---
@@ -41,7 +40,7 @@ pip install -e /path/to/stack-tracer
 ```bash
 cd backend
 
-STACKTRACER_API_KEYS=test-key-123:local-dev \
+ORIGINTRACER_API_KEYS=test-key-123:local-dev \
 uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info
 ```
 
@@ -50,7 +49,7 @@ storage key. Use the same key in `stacktracer.init()` on the agent side.
 
 ---
 
-## Quick start — PostgreSQL (production)
+## Quick start — PostgreSQL
 
 ```bash
 STACKTRACER_API_KEYS=test-key-123:local-dev \
@@ -68,37 +67,21 @@ The backend creates tables on startup automatically.
 
 ---
 
-## Agent configuration
+## OriginTracer configuration
 
 In the Django app's `apps.py`:
 
 ```python
-stacktracer.init(
+origintracer.init(
     api_key  = "test-key-123",
     endpoint = "http://localhost:8000",
-    debug    = True,
+    debug = True,
 )
 ```
 
 The Uploader starts automatically when `api_key` is set. It batches events
 and flushes every `flush_interval` seconds (default 10). Graph snapshots
 are sent every `snapshot_interval` seconds (default 15).
-
----
-
-## Authentication
-
-Every request requires `Authorization: Bearer <api_key>`.
-
-```bash
-curl http://localhost:8000/api/v1/status \
-  -H "Authorization: Bearer test-key-123"
-```
-
-When `STACKTRACER_API_KEYS` is not set, a dev key `dev-key-00000000` is
-accepted with a warning logged. Never use this in production.
-
-Format: `KEY1:CUSTOMER_ID1,KEY2:CUSTOMER_ID2` — comma-separated, colon-delimited.
 
 ---
 
@@ -114,38 +97,7 @@ Format: `KEY1:CUSTOMER_ID1,KEY2:CUSTOMER_ID2` — comma-separated, colon-delimit
 | `GET`  | `/api/v1/hotspots` | Top N nodes by call count — `?top=10` |
 | `GET`  | `/api/v1/causal` | Run causal rules — `?tags=latency,async` |
 | `GET`  | `/api/v1/traces/{id}` | Critical path for a trace (requires event storage) |
-| `POST` | `/api/v1/deployment` | Mark a deployment `{"label": "v1.2.3"}` |
+| `POST` | `/api/v1/deployment` | Mark a deployment `{"label": "deployment"}` |
 | `GET`  | `/health` | Liveness probe |
 
 ---
-
-## Storage backends
-
-| Backend | Activated by | Data survives restart |
-|---------|-------------|----------------------|
-| `InMemoryRepository` | default — no env var | No |
-| PostgreSQL | `STACKTRACER_DB_DSN=postgresql://...` | Yes |
-
-`InMemoryRepository` is a dict keyed by `customer_id`. Sufficient for dev
-and demos. Use PostgreSQL for anything that needs persistence.
-
----
-
-## Key design notes
-
-**`_BackendEngine` shim** — the DSL executor expects an engine object with
-`graph`, `semantic`, `causal`, and `temporal` attributes. The backend wraps
-the deserialised graph in a minimal shim so the executor works without a
-live engine process.
-
-**Ingest endpoints accept msgpack** — the agent serialises events as msgpack
-binary. The endpoint reads raw bytes and deserialises based on `Content-Type`,
-not via FastAPI's Pydantic body parsing.
-
-**Idempotent snapshot storage** — each POST to `/api/v1/graph/snapshot`
-overwrites the previous snapshot for that `customer_id`. The latest snapshot
-is always what is served.
-
-**Causal rules on the backend** — the `request_duration_anomaly` rule requires
-a live `ActiveRequestTracker` which only exists in the agent process. It returns
-no matches from the backend. Use the REPL for live anomaly detection.

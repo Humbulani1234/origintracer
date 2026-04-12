@@ -3,17 +3,17 @@ export default function StatusView({ nodes, edges, events, status }) {
   return (
     <div style={{ padding:14, fontFamily:"monospace", fontSize:11 }}>
       {[
-        ["customer",      status?.customer_id],
-        ["storage",       status?.storage],
-        ["timestamp",     status?.timestamp
+        ["customer", status?.customer_id],
+        ["storage", status?.storage],
+        ["timestamp", status?.timestamp
             ? new Date(status.timestamp * 1000).toLocaleTimeString() : null],
-        ["nodes (live)",  nodes?.length],
-        ["edges (live)",  edges?.length],
+        ["nodes (live)", nodes?.length],
+        ["edges (live)", edges?.length],
         ["events (live)", events?.length],
-        ["snapshot",      status?.snapshot?.available ? "available" : "unavailable"],
-        ["snap nodes",    status?.snapshot?.nodes],
-        ["snap edges",    status?.snapshot?.edges],
-        ["last updated",  status?.snapshot?.last_updated
+        ["snapshot", status?.snapshot?.available ? "available" : "unavailable"],
+        ["snap nodes", status?.snapshot?.nodes],
+        ["snap edges", status?.snapshot?.edges],
+        ["last updated", status?.snapshot?.last_updated
             ? new Date(status.snapshot.last_updated * 1000).toLocaleTimeString() : null],
       ].map(([label, value]) => (
         <div key={label} style={{

@@ -1,4 +1,3 @@
-// src/components/EdgeTable.jsx
 import { SvcPill, short } from "./NodeTable";
 
 const EDGE_COLORS = {

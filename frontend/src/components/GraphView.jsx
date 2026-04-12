@@ -1,4 +1,3 @@
-// src/components/GraphView.jsx
 import { svcColor, short } from "./NodeTable";
 
 const EDGE_DIM = "rgba(120,120,120,0.45)";
@@ -32,10 +31,10 @@ function NodeRow({ node }) {
 }
 
 function EdgeRow({ edge }) {
-  const src   = edge.source ?? edge.from ?? "?";
-  const tgt   = edge.target ?? edge.to   ?? "?";
+  const src = edge.source ?? edge.from ?? "?";
+  const tgt = edge.target ?? edge.to   ?? "?";
   const etype = edge.type ?? "";
-  const cnt   = edge.call_count ?? edge.weight ?? null;
+  const cnt = edge.call_count ?? edge.weight ?? null;
   const suffix = [etype, cnt ? `×${cnt}` : ""].filter(Boolean).join(" ");
 
   return (
@@ -79,7 +78,7 @@ export default function GraphView({ nodes = [], edges = [] }) {
         padding: "32px 14px", fontFamily: "monospace",
         fontSize: 11, color: "var(--muted)", textAlign: "center",
       }}>
-        No graph data — nodes and edges appear here once the engine is running.
+        No graph data - nodes and edges appear here once the engine is running.
       </div>
     );
   }
@@ -88,13 +87,13 @@ export default function GraphView({ nodes = [], edges = [] }) {
     <div>
       {nodes.length > 0 && (
         <>
-          <SectionLabel text={`NODES  ·  ${nodes.length}`} />
+          <SectionLabel text={`NODES · ${nodes.length}`} />
           {nodes.map(n => <NodeRow key={n.id} node={n} />)}
         </>
       )}
       {edges.length > 0 && (
         <>
-          <SectionLabel text={`EDGES  ·  ${edges.length}`} />
+          <SectionLabel text={`EDGES · ${edges.length}`} />
           {edges.map((e, i) => <EdgeRow key={i} edge={e} />)}
         </>
       )}

@@ -1,4 +1,3 @@
-// src/components/EventLog.jsx
 import { svcColor, short } from "./NodeTable";
 
 function fmtTime(wall_time) {
@@ -10,18 +9,18 @@ function fmtTime(wall_time) {
 
 function fmtDuration(ns) {
   if (ns == null) return "—";
-  if (ns < 1_000_000)     return (ns / 1_000).toFixed(1) + "µs";
+  if (ns < 1_000_000) return (ns / 1_000).toFixed(1) + "µs";
   if (ns < 1_000_000_000) return (ns / 1_000_000).toFixed(1) + "ms";
   return (ns / 1_000_000_000).toFixed(2) + "s";
 }
 
 const COL = {
-  time:     { width: 80 },
-  service:  { width: 90 },
-  probe:    { width: 180 },
-  name:     { },           // flex
-  duration: { width: 72,  textAlign: "right" },
-  trace:    { width: 110 },
+  time: { width: 80 },
+  service: { width: 90 },
+  probe: { width: 180 },
+  name: { }, // flex
+  duration: { width: 72, textAlign: "right" },
+  trace: { width: 110 },
 };
 
 const TH = {
@@ -53,12 +52,12 @@ export default function EventLog({ events }) {
           tableLayout: "fixed", minWidth: 600 }}>
         <thead>
           <tr style={{ borderBottom: "0.5px solid var(--color-border-secondary)" }}>
-            <th style={{ ...TH, width: COL.time.width    }}>time</th>
+            <th style={{ ...TH, width: COL.time.width }}>time</th>
             <th style={{ ...TH, width: COL.service.width }}>service</th>
-            <th style={{ ...TH, width: COL.probe.width   }}>probe</th>
-            <th style={{ ...TH                            }}>name</th>
+            <th style={{ ...TH, width: COL.probe.width }}>probe</th>
+            <th style={{ ...TH }}>name</th>
             <th style={{ ...TH, width: COL.duration.width, textAlign: "right" }}>duration</th>
-            <th style={{ ...TH, width: COL.trace.width   }}>trace id</th>
+            <th style={{ ...TH, width: COL.trace.width }}>trace id</th>
           </tr>
         </thead>
         <tbody>

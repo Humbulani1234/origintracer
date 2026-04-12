@@ -1,8 +1,7 @@
-// src/components/DiffView.jsx
 import { svcColor } from "./NodeTable";
 
-const ADDED   = "#3c9";    // green
-const REMOVED = "#c06040"; // red/amber
+const ADDED   = "#3c9";
+const REMOVED = "#c06040";
 
 function DiffSection({ title, items, color }) {
     if (!items?.length) return null;
@@ -14,9 +13,9 @@ function DiffSection({ title, items, color }) {
                 {title} ({items.length})
             </div>
             {items.map((item, i) => {
-                const svc  = item.split("::")[0];
+                const svc = item.split("::")[0];
                 const name = item.split("::")[1] || item;
-                const c    = color === ADDED ? svcColor(svc) : color;
+                const c = color === ADDED ? svcColor(svc) : color;
                 return (
                     <div key={i} style={{ display:"flex", alignItems:"center",
                         gap: 8, padding:"3px 0",
@@ -39,9 +38,9 @@ function DiffSection({ title, items, color }) {
 
 export default function DiffView({ diff }) {
     const isEmpty = !diff ||
-        (!diff.added_nodes?.length   &&
+        (!diff.added_nodes?.length &&
          !diff.removed_nodes?.length &&
-         !diff.added_edges?.length   &&
+         !diff.added_edges?.length &&
          !diff.removed_edges?.length);
 
     if (isEmpty) {
@@ -53,7 +52,7 @@ export default function DiffView({ diff }) {
         );
     }
 
-    const totalAdded   = (diff.added_node_ids?.length   || 0) +
+    const totalAdded = (diff.added_node_ids?.length   || 0) +
                          (diff.added_edge_keys?.length   || 0);
     const totalRemoved = (diff.removed_node_ids?.length || 0) +
                          (diff.removed_edge_keys?.length || 0);

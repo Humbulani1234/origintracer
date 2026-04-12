@@ -1,6 +1,6 @@
 function ConfidenceBar({ pct }) {
   const filled = Math.round(pct / 10);
-  const color  = pct >= 80 ? "var(--red, #e05252)" : "var(--amber, #d4a843)";
+  const color = pct >= 80 ? "var(--red, #e05252)" : "var(--amber, #d4a843)";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <div style={{ display: "flex", gap: 2 }}>
@@ -32,8 +32,8 @@ export default function CausalView({ causal }) {
   return (
     <div style={{ padding: 14 }}>
       {causal.map((m, i) => {
-        const pct     = Math.round((m.confidence ?? 0) * 100);
-        const color   = pct >= 80 ? "var(--red, #e05252)" : "var(--amber, #d4a843)";
+        const pct = Math.round((m.confidence ?? 0) * 100);
+        const color = pct >= 80 ? "var(--red, #e05252)" : "var(--amber, #d4a843)";
         const evidence = m.evidence && Object.keys(m.evidence).length
           ? m.evidence : null;
 

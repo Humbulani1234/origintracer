@@ -1,27 +1,26 @@
 import { useState, useEffect, useCallback } from "react";
-import NodeTable     from "./components/NodeTable";
-import EdgeTable     from "./components/EdgeTable";
+import NodeTable from "./components/NodeTable";
+import EdgeTable from "./components/EdgeTable";
 import TraceTimeline from "./components/TraceTimeline";
-import EventLog      from "./components/EventLog";
-import StatusBar     from "./components/StatusBar";
-import QueryBar      from "./components/QueryBar";
-import DiffView      from "./components/DiffView";
-import GraphView      from "./components/GraphView";
+import EventLog from "./components/EventLog";
+import StatusBar from "./components/StatusBar";
+import QueryBar from "./components/QueryBar";
+import DiffView from "./components/DiffView";
+import GraphView from "./components/GraphView";
 import CausalView from "./components/CausalView";
 import StatusView from "./components/StatusView";
-import { api }       from "./api/client";
+import { api } from "./api/client";
 
-// ✅ Added missing constant
 const VIEWS = ["nodes", "edges", "trace", "events", "diff",
   "status", "graph", "causal"];
 
 export default function App() {
-  const [view,    setView]    = useState("nodes");
-  const [nodes,   setNodes]   = useState([]);
-  const [edges,   setEdges]   = useState([]);
-  const [trace,   setTrace]   = useState(null);
-  const [events,  setEvents]  = useState([]);
-  const [diff,    setDiff]    = useState(null);
+  const [view, setView] = useState("nodes");
+  const [nodes, setNodes] = useState([]);
+  const [edges, setEdges] = useState([]);
+  const [trace, setTrace] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [diff, setDiff] = useState(null);
   const [status, setStatus] = useState({
     customer_id: null,
     snapshot: null,
@@ -31,7 +30,7 @@ export default function App() {
   const [causal, setCausal] = useState([]);
   const [loading, setLoading] = useState(false);
   const [backendError, setBackendError] = useState(null);
-  const [workers,       setWorkers]       = useState([]);
+  const [workers, setWorkers] = useState([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -42,12 +41,12 @@ export default function App() {
       ]);
       const ca = await api.causal("origintracer-snapshot");
       const ws = await api.workers();
-      if (n?.data?.data?.length)  setNodes(n.data.data);
-      if (e?.data?.data?.length)  setEdges(e.data.data);
+      if (n?.data?.data?.length) setNodes(n.data.data);
+      if (e?.data?.data?.length) setEdges(e.data.data);
       if (ev?.data?.length) setEvents(ev.data);
-      if (s)                setStatus(s);
-      if (d?.data)                setDiff(d.data);
-      if (g?.data?.data)          setGraph(g.data.data);
+      if (s) setStatus(s);
+      if (d?.data) setDiff(d.data);
+      if (g?.data?.data) setGraph(g.data.data);
       if (ca?.data?.length) setCausal(ca.data);
       if (ws?.data?.length) setWorkers(ws.data);
     } catch (err) {
@@ -75,19 +74,19 @@ export default function App() {
         setView("trace");
       } catch { setView("trace"); }
       finally  { setLoading(false); }
-    } else if (lower.includes("node"))  setView("nodes");
-    else if (lower.includes("edge"))    setView("edges");
-    else if (lower.includes("event"))   setView("events");
-    else if (lower.includes("trace"))   setView("trace");
+    } else if (lower.includes("node")) setView("nodes");
+    else if (lower.includes("edge")) setView("edges");
+    else if (lower.includes("event")) setView("events");
+    else if (lower.includes("trace")) setView("trace");
   };
 
   const badge = {
-    nodes:  `${nodes.length} nodes`,
-    edges:  `${edges.length} edges`,
-    trace:  trace ? `${trace.stages.length} stages` : "—",
+    nodes: `${nodes.length} nodes`,
+    edges: `${edges.length} edges`,
+    trace: trace ? `${trace.stages.length} stages` : "—",
     events: `${events.length} events`,
-    diff:   diff ? `${(diff.added_nodes?.length || 0) + (diff.added_edges?.length || 0)} changes` : "—",
-    graph:  `${nodes.length} nodes · ${edges.length} edges`,
+    diff: diff ? `${(diff.added_nodes?.length || 0) + (diff.added_edges?.length || 0)} changes` : "—",
+    graph: `${nodes.length} nodes · ${edges.length} edges`,
     causal: `${causal.length} patterns`,
     status: "live",
   };
@@ -146,11 +145,11 @@ export default function App() {
         </div>
         <QueryBar onRun={runQuery} loading={loading} />
         <div className="content">
-          {view === "nodes"  && <NodeTable     nodes={nodes} />}
-          {view === "edges"  && <EdgeTable     edges={edges} />}
-          {view === "trace"  && <TraceTimeline trace={trace} />}
-          {view === "events" && <EventLog      events={events} />}
-          {view === "diff"   && <DiffView      diff={diff} />}
+          {view === "nodes" && <NodeTable nodes={nodes} />}
+          {view === "edges" && <EdgeTable edges={edges} />}
+          {view === "trace" && <TraceTimeline trace={trace} />}
+          {view === "events" && <EventLog events={events} />}
+          {view === "diff" && <DiffView diff={diff} />}
           {view === "graph" && <GraphView nodes={nodes} edges={edges} />}
           {view === "causal" && <CausalView causal={causal} />}
           {view === "status" && (

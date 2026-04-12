@@ -18,8 +18,8 @@ export default function TraceTimeline({ trace }) {
 
   const { id, stages } = trace;
   const durations = stages.map(s => parseFloat(s.duration_ms)).filter(n => n > 0);
-  const maxDur    = durations.length ? Math.max(...durations) : 1;
-  const totalMs   = durations.reduce((a, b) => a + b, 0);
+  const maxDur = durations.length ? Math.max(...durations) : 1;
+  const totalMs = durations.reduce((a, b) => a + b, 0);
 
   return (
     <div style={{ padding:14 }}>
@@ -29,8 +29,8 @@ export default function TraceTimeline({ trace }) {
       </div>
       {stages.map((s, i) => {
         const durMs = s.duration_ms != null ? parseFloat(s.duration_ms) : null;
-        const barW  = durMs > 0 ? Math.max(2, (durMs / maxDur) * 100) : 0;
-        const c     = svcColor(s.service);
+        const barW = durMs > 0 ? Math.max(2, (durMs / maxDur) * 100) : 0;
+        const c = svcColor(s.service);
         return (
           <div key={i} style={{ display:"grid", gridTemplateColumns:"64px 1fr 220px",
             gap:10, alignItems:"center", padding:"3px 0",

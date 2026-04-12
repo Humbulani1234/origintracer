@@ -16,12 +16,25 @@
 }
 
 html, body, #root { height: 100%; }
-body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; }
+body { 
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+}
 
 .shell { display: flex; height: 100vh; }
 
 /* Sidebar */
-.sidebar { width: 180px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.sidebar { 
+  width: 180px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
 .logo { padding: 16px 14px 12px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; color: var(--amber); border-bottom: 1px solid var(--border); }
 .logo span { color: var(--muted); font-weight: 400; }
 .nav { padding: 8px 0; flex: 1; }
