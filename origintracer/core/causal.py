@@ -59,7 +59,8 @@ class CausalMatch:
 
 # A rule predicate returns (matched, evidence_dict)
 RuleFn = Callable[
-    [RuntimeGraph, TemporalStore], Tuple[bool, Dict[str, Any]]
+    [RuntimeGraph, TemporalStore, ActiveRequestTracker],
+    Tuple[bool, Dict[str, Any]],
 ]
 
 

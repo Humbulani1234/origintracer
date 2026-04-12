@@ -12,8 +12,6 @@ from origintracer.core.causal import (
 from origintracer.core.runtime_graph import RuntimeGraph
 from origintracer.core.temporal import TemporalStore
 
-# ------------------------- N+1 query detection --------------------------
-
 
 def _n_plus_one_queries(
     graph: RuntimeGraph,
@@ -27,16 +25,16 @@ def _n_plus_one_queries(
     How it works:
         For each DB query node, look up its callers via reverse edges.
         Find the nearest view node among callers.
-        If query.call_count / view.call_count >= THRESHOLD → N+1.
+        If query.call_count/view.call_count >= THRESHOLD → N+1.
 
     Threshold: 5x. A query firing 5+ times per view invocation is
     almost certainly an N+1. Tuned to avoid false positives on batch
     endpoints that legitimately run multiple queries.
 
     Real example from this codebase:
-        django::NPlusOneView               call_count=1
-        django::SELECT author              call_count=1   ← fine
-        django::SELECT book (author_id=%s) call_count=10  ← N+1, ratio=10x
+        django::NPlusOneView - call_count=1
+        django::SELECT author - call_count=1 # fine
+        django::SELECT book (author_id=%s) - call_count=10 # N+1, ratio=10x
     """
     THRESHOLD = 5
 
@@ -103,7 +101,7 @@ N_PLUS_ONE = CausalRule(
     name="n_plus_one_queries",
     description=(
         "A database query fires N times per view invocation (ratio ≥5x). "
-        "Classic ORM N+1 — the query is inside a loop iterating over a queryset. "
+        "Classic ORM N+1 - the query is inside a loop iterating over a queryset. "
         "Use select_related() or prefetch_related() to batch into one query. "
         "Check the 'query' field for the exact SQL pattern."
     ),
@@ -111,8 +109,6 @@ N_PLUS_ONE = CausalRule(
     confidence=0.90,
     tags=["db", "performance", "n+1"],
 )
-
-# ---------------------- DB query hotspot --------------------------------
 
 
 def _db_query_hotspot(
@@ -141,7 +137,7 @@ def _db_query_hotspot(
         if n.call_count > 5
         and (n.call_count / total_calls > 0.30)
     ]
-    print(">>>> DJANGO RULE HOTSPOTS", hotspots)
+
     if not hotspots:
         return False, {}
 

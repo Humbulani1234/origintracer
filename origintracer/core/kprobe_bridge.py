@@ -18,7 +18,7 @@ Proposed solution - a shared BPF hash map:
 
     Structure:
         BPF_HASH(trace_context, u64, struct trace_entry)
-        key   = tid - unique per thread
+        key = tid - unique per thread
         value = { trace_id: char[36], start_ns: u64, service: char[32] }
 
 Usage - Python side:
@@ -35,11 +35,11 @@ Usage - Python side:
 
     bridge.stop()
 
-Usage (BPF program side) — include in every kprobe that needs Python context:
+Usage (BPF program side) - include in every kprobe that needs Python context:
 
     // shared map defined once in kprobe_bridge BPF program
     // other BPF programs reference it by map name via BPF map pinning
-    // or we compile them together (preferred for simplicity)
+    // or we compile them together.
 
     struct trace_entry {
         char trace_id[36];
@@ -99,7 +99,7 @@ class KprobeBridge:
 
     Startup contract:
       1. Import all probe modules  >> each calls register_bpf() at module level
-      2. bridge.start()            >> compiles everything registered so far
+      2. bridge.start() >> compiles everything registered so far
       3. probe.start(bridge, ...)  >> attaches tracepoints, opens perf buffers
     """
 
@@ -116,7 +116,7 @@ class KprobeBridge:
     @property
     def bpf(self):
         """
-        The compiled BPF object — all probes use this to attach and poll.
+        The compiled BPF object - all probes use this to attach and poll.
         """
         return self._bpf
 

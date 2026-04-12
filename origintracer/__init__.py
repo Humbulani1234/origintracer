@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, List, Optional
 import yaml
 
 from .context.vars import get_trace_id
-from .core.causal import CausalRule, PatternRegistry
+from .core.causal import PatternRegistry
 from .core.engine import Engine
 from .core.event_schema import NormalizedEvent
 from .core.runtime_graph import RuntimeGraph
@@ -166,8 +166,8 @@ def _deep_merge(base: Dict, override: Dict) -> Dict:
             and key in result
             and isinstance(val, list)
         ):
-            # If the user provides an empty list, it means "clear the defaults"
-            # If they provide rules, they override the defaults
+            # For an empty list, clear the defaults
+            # For provided rules, override the defaults
             if not val:
                 result[key] = []
             else:
@@ -404,7 +404,6 @@ def _init_probes(
 ) -> List[Any]:
     """
     1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
-       Side-effect: each module registers its BaseProbe subclass with ProbeRegistry.
 
     2. Discover user probes from <app_root>/origintracer/probes/*_probe.py.
 
@@ -494,15 +493,13 @@ def _init_rules(
     cfg: ResolvedConfig, engine: Any, app_root: str
 ) -> List[Any]:
     """
-    1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
-       Side-effect: each module registers its BaseProbe subclass with ProbeRegistry.
+    1. Import builtin rules modules listed in defaults.yaml under builtin_rules.
 
-    2. Discover user probes from <app_root>/origintracer/probes/*_probe.py.
+    2. Discover user probes from <app_root>/origintracer/rules/*_rule.py.
 
-    3. Start probes named in cfg.probes (user origintracer.yaml takes precedence
-       over defaults.yaml probes list via _deep_merge).
+    3. Discover rules named in cfg.rules (user origintracer.yaml takes precedence
     """
-    # 1. Builtins — import triggers PatternRegistry.registry.register(...)
+    # 1. Builtins - import triggers PatternRegistry.register(...)
     for module_path in cfg.builtin_rules:
         try:
             importlib.import_module(
@@ -515,7 +512,7 @@ def _init_rules(
                 exc,
             )
 
-    # 2. User rules — also registers into PatternRegistry.registry
+    # 2. User rules - also registers into PatternRegistry.registry
     _discover_user_rules(app_root)
 
     # 3. Filter to intersection with cfg.rules
@@ -659,23 +656,22 @@ def init(
     ----------
     api_key
         API key for remote upload to OriginTracer backend.
-        Omit or pass "" to run in local-only mode (no upload).
 
     endpoint
         Backend URL. Default: http://localhost:8001
 
     config
         Explicit path to user origintracer.yaml.
-        If omitted, searched automatically from cwd upward (max 5 levels).
+        If omitted, searched automatically from cwd upward.
 
     probes
         List of probe names to activate.
-        REPLACES the default list entirely.
+        Replaces the default list entirely.
         Default: ["django", "asyncio", "uvicorn", "gunicorn", "nginx"]
 
     semantic
         Extra semantic alias dicts to add or override.
-        MERGED with defaults by label — your label wins on same key.
+        Merged with defaults by label — your label takes precedence on same key.
 
     snapshot_interval
         Seconds between temporal graph snapshots. Default: 15.0
@@ -693,12 +689,12 @@ def init(
 
     normalize
         Additional normalization rules beyond built-in patterns and yaml rules.
-        EXTENDS — does not replace — the merged yaml normalize list.
+        Extends the merged yaml normalize list.
         Each rule: {"service": "django", "pattern": "...", "replacement": "..."}
 
     compactor
         Override specific compactor settings.
-        MERGES key-by-key — unspecified keys keep their yaml / default values.
+        Merges key-by-key - unspecified keys keep their yaml / default values.
         Keys: max_nodes, evict_to_ratio, node_ttl_s, min_call_count
 
     active_requests
@@ -755,6 +751,7 @@ def init(
     _active_rules = _init_rules(_config, _engine, app_root)
     _engine.causal = _active_rules
 
+    # Opentelemetry check
     if not otel_mode:
         _active_probes = _init_probes(_config, _engine, app_root)
         _engine.probes = _active_probes

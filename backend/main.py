@@ -11,30 +11,27 @@ Surfaces:
     GET  /api/v1/diff - graph diff since marker
     POST /api/v1/deployment - store deployment marker
     GET  /api/v1/status - snapshot metadata + system info
-    POST /api/v1/query - raw DSL query on latest snapshot
     GET  /health - liveness probe
 
 Architecture:
     The agent owns the authoritative graph and builds it locally.
-    FastAPI receives serialised graph snapshots (msgpack, ~1MB) every 60s,
+    FastAPI receives serialised graph snapshots every 60s,
     deserialises them, and serves all queries from the deserialised graph.
-    FastAPI never rebuilds a graph from raw events — that is the agent's job.
+    FastAPI never rebuilds a graph from raw events - that is the
+    OriginTracer's job.
 
     On startup, the latest snapshot is loaded from the storage backend
     so queries work immediately after a FastAPI restart without waiting
     60s for the next agent snapshot.
 
-    Raw events are stored in PostgreSQL or ClickHouse for historical
-    trace queries (GET /api/v1/traces/{id}).
-
 Run with:
-    uvicorn stacktracer.backend.main:app --host 0.0.0.0 --port 8000
+    uvicorn origintracer.backend.main:app --host 0.0.0.0 --port 8000
 
 Environment variables:
-    STACKTRACER_API_KEYS  — comma-separated key:customer pairs
-                            e.g. "sk_prod_xxx:acme,sk_dev_yyy:dev_customer"
-    STACKTRACER_DB_DSN    — PostgreSQL DSN for event + snapshot storage
-    STACKTRACER_CH_HOST   — ClickHouse host (alternative to Postgres)
+    ORIGINTRACER_API_KEYS - comma-separated key:customer pairs
+                            e.g. "sk_dev_yyy:dev_customer"
+    ORIGINTRACER_DB_DSN - PostgreSQL DSN for event + snapshot storage
+    ORIGINTRACER_CH_HOST - ClickHouse host (alternative to Postgres)
 """
 
 from __future__ import annotations
@@ -45,13 +42,14 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import (
     Depends,
     FastAPI,
     Header,
     HTTPException,
+    Query,
     Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,79 +62,40 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
-logger = logging.getLogger("stacktracer.backend")
+logger = logging.getLogger("origintracer.fastapi")
 
 
-class _BackendEngine:
+class DeploymentRequest(BaseModel):
+    label: Optional[str] = None
+
+
+class GraphDiffRequest(BaseModel):
+    added_nodes: Optional[list] = None
+    removed_nodes: Optional[list] = None
+    added_edges: Optional[list] = None
+    removed_edges: Optional[list] = None
+    timestamp: Optional[float] = None
+    label: Optional[str] = None
+
+
+def _register_causal_rules():
     """
-    Minimal engine shim for the backend.
-    The real Engine lives in the agent process.
-    The backend only has a deserialised RuntimeGraph and no live components.
+    Import rule modules to trigger global registration.
     """
-
-    def __init__(self, graph):
-        from origintracer.core.semantic import SemanticLayer
-        from origintracer.core.temporal import TemporalStore
-
-        self.graph = graph
-        self.semantic = SemanticLayer()
-        self.temporal = TemporalStore()
-        self.repository = None
-
-    def critical_path(
-        self, trace_id: str
-    ) -> List[Dict[str, Any]]:
-        from origintracer.core.event_schema import ProbeTypes
-
-        # pull events from repository instead of _event_log
-        events = get_repository().query_events(
-            trace_id=trace_id, limit=1000
-        )
-
-        # repository returns dicts, sort by timestamp
-        events.sort(key=lambda e: e.get("timestamp", 0))
-
-        registered = list(ProbeTypes.all().keys())
-        filtered = [
-            e for e in events if e.get("probe") in registered
-        ]
-
-        path = []
-        last_ts = None
-        for e in filtered:
-            ts = e.get("timestamp")
-            duration_ms = (
-                round((ts - last_ts) * 1000, 3)
-                if last_ts and ts
-                else None
-            )
-            path.append(
-                {
-                    "probe": e.get("probe"),
-                    "service": e.get("service"),
-                    "name": e.get("name"),
-                    "timestamp": ts,
-                    "wall_time": e.get("wall_time"),
-                    "duration_ms": duration_ms,
-                    "metadata": e.get("metadata"),
-                }
-            )
-            last_ts = ts
-
-        return path
+    import origintracer.rules.asyncio_rules  # noqa: F401
+    import origintracer.rules.django_rules  # noqa: F401
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # STARTUP code
     _load_api_keys()
     _init_repository()
     _load_snapshots_on_startup()
-    logger.info("StackTracer backend ready")
+    _register_causal_rules()
+    logger.info("OriginTracer backend ready")
     try:
         yield
     finally:
-        # SHUTDOWN code
         if _repository and hasattr(_repository, "close"):
             try:
                 _repository.close()
@@ -146,14 +105,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     lifespan=lifespan,
-    title="StackTracer API",
-    description="Runtime observability backend for Python async services",
+    title="OriginTracer API",
+    description="Runtime observability backend for async services",
     version="0.1.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # in production use explicit origins
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -176,7 +135,7 @@ _valid_api_keys: Dict[str, str] = {}
 
 def _load_api_keys() -> None:
     global _valid_api_keys
-    raw = os.getenv("STACKTRACER_API_KEYS", "")
+    raw = os.getenv("ORIGINTRACER_API_KEYS", "")
     for pair in raw.split(","):
         pair = pair.strip()
         if ":" in pair:
@@ -185,7 +144,7 @@ def _load_api_keys() -> None:
     if not _valid_api_keys:
         _valid_api_keys["test-key-123"] = "local_dev"
         logger.warning(
-            "STACKTRACER_API_KEYS not set - "
+            "ORIGINTRACER_API_KEYS not set - "
             "test-key-123 accepted for development"
         )
 
@@ -193,13 +152,13 @@ def _load_api_keys() -> None:
 def _init_repository() -> None:
     """
     Connect to the configured storage backend.
-    Tries PostgreSQL first (STACKTRACER_DB_DSN), then ClickHouse
-    (STACKTRACER_CH_HOST), then falls back to InMemoryRepository for dev.
+    Tries PostgreSQL first (ORIGINTRACER_DB_DSN), then ClickHouse
+    (ORIGINTRACER_CH_HOST), then falls back to InMemoryRepository for dev.
     """
     global _repository
 
-    db_dsn = os.getenv("STACKTRACER_DB_DSN")
-    ch_host = os.getenv("STACKTRACER_CH_HOST")
+    db_dsn = os.getenv("ORIGINTRACER_DB_DSN")
+    ch_host = os.getenv("ORIGINTRACER_CH_HOST")
 
     if db_dsn:
         try:
@@ -235,8 +194,6 @@ def _init_repository() -> None:
                 "ClickHouse connect failed: %s — falling back",
                 exc,
             )
-
-    from origintracer.storage.base import InMemoryRepository
 
     _repository = InMemoryRepository()
     logger.info(
@@ -321,27 +278,15 @@ def require_graph(customer_id: str) -> Any:
             status_code=404,
             detail=(
                 "No graph snapshot received yet for this account. "
-                "Ensure the StackTracer agent is running — "
+                "Ensure the OriginTracer agent is running — "
                 "it ships a snapshot every 60 seconds after startup."
             ),
         )
     return graph
 
 
-class IngestPayload(BaseModel):
-    events: List[Dict[str, Any]]
-
-
-class QueryRequest(BaseModel):
-    query: str
-
-
-class DeploymentMarkRequest(BaseModel):
-    label: str = "deployment"
-
-
 # Unix socket client
-_SOCKET_PREFIX = "/tmp/stacktracer-"
+_SOCKET_PREFIX = "/tmp/origintracer-"
 _SOCKET_SUFFIX = ".sock"
 
 
@@ -381,10 +326,7 @@ def get_workers(authorization: Optional[str] = Header(None)):
     return {"data": workers}
 
 
-# --------------- Routes: Graph snapshot -------------------------------
-
-
-def get_repository() -> InMemoryRepository:
+def get_repository() -> Any:
     return _repository
 
 
@@ -465,40 +407,30 @@ async def receive_snapshot(
 
 @app.post("/api/v1/graph/diff")
 async def receive_graph_diff(
-    request: Request,
+    body: GraphDiffRequest,
     authorization: Optional[str] = Header(None),
-    repository: InMemoryRepository = Depends(get_repository),
+    repository: Any = Depends(get_repository),
 ) -> Dict:
     """
-    Receive a serialised RuntimeGraph from the StackTracer agent.
-    The agent calls this every 60 seconds via the uploader._flush_snapshot().
-    Deserialises the graph into memory and persists the raw bytes to storage
-    so FastAPI restarts can reload without waiting for the next agent snapshot.
+    Receive an incremental graph diff from the OriginTracer agent
     """
     customer_id = _authenticate(authorization)
-    body = await request.json()
-    repository.insert_graph_diff(customer_id, body)
+    repository.insert_graph_diff(customer_id, body.model_dump())
     print(">>>> GRAPH DIFF", body)
     logger.info(
         "Graph diff received: customer=%s nodes=%d edges=%d bytes=%d",
         customer_id,
-        len(body.get("added_nodes") or []),
-        len(body.get("added_edges") or []),
-        len(body),
+        len(body.added_nodes or []),
+        len(body.added_edges or []),
     )
     return {"ok": True}
-
-
-# ====================================================================== #
-# Routes: Event ingest (agent → backend, persistence only)
-# ====================================================================== #
 
 
 @app.post("/api/v1/events")
 async def ingest_events(
     request: Request,
     authorization: Optional[str] = Header(None),
-    repository: InMemoryRepository = Depends(get_repository),
+    repository: Any = Depends(get_repository),
 ) -> Dict:
     """
     Receive raw probe events from the agent uploader for persistence.
@@ -512,7 +444,6 @@ async def ingest_events(
         raise HTTPException(status_code=400, detail="Empty body")
 
     content_type = request.headers.get("content-type", "")
-    import pdb
 
     try:
         if "msgpack" in content_type:
@@ -560,7 +491,7 @@ async def ingest_events(
 
 @app.get("/api/v1/events")
 def get_recent_events(
-    limit: int,
+    limit: int = Query(default=30, ge=1, le=100),
     trace_id: Optional[str] = None,
     probe: Optional[str] = None,
     service: Optional[str] = None,
@@ -572,7 +503,7 @@ def get_recent_events(
     if repository is None:
         raise HTTPException(
             status_code=503,
-            detail="No storage backend configured — cannot retrieve traces.",
+            detail="No storage backend configured - cannot retrieve traces.",
         )
 
     events = repository.query_events(
@@ -599,36 +530,6 @@ def get_recent_events(
     }
 
 
-# ------------ Graph queries (all read from deserialised snapshot) --------
-
-
-@app.post("/api/v1/query")
-async def query(
-    request: QueryRequest,
-    authorization: Optional[str] = Header(None),
-) -> Dict:
-    """Execute a raw DSL query against the latest graph snapshot."""
-    customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
-    engine = _BackendEngine(graph)
-
-    try:
-        from origintracer.query.parser import (
-            execute as execute_query,
-        )
-        from origintracer.query.parser import (
-            parse as parse_query,
-        )
-
-        parsed = parse_query(request.query)
-        print(">>>>IM PARSED:", parsed)
-        return execute_query(parsed, engine)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Query parse error: {exc}"
-        )
-
-
 @app.get("/api/v1/graph")
 async def get_graph_route(
     service: Optional[str] = None,
@@ -643,10 +544,7 @@ async def get_graph_route(
 
     node_scope = {x for x in (service, system) if x is not None}
     if node_scope:
-        # Only show what the user specifically required
         nodes = [n for n in nodes if n.id in node_scope]
-
-        # Only show connections between nodes inside this system
         edges = [
             e
             for e in edges
@@ -671,9 +569,7 @@ async def causal(
 ) -> Dict:
     """
     Run all causal rules against the latest snapshot.
-    No tracker on the backend — request_duration_anomaly will not fire here.
-    That rule requires the live ActiveRequestTracker in the agent process.
-    Use the REPL (connects to agent Unix socket) for live anomaly detection.
+
     """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
@@ -684,7 +580,6 @@ async def causal(
 
     from origintracer.core.causal import (
         PatternRegistry,
-        _is_db_node,
     )
     from origintracer.core.temporal import (
         GraphDiff,
@@ -711,19 +606,10 @@ async def causal(
         )
         temporal._diffs.append(diff)
 
-    def _register_causal_rules():
-        """Import rule modules to trigger global registration."""
-        import origintracer.rules.asyncio_rules  # noqa: F401
-        import origintracer.rules.django_rules  # noqa: F401
-
-        # add any other rule files here
-
-    _register_causal_rules()
-
-    # No tracker — backend has no live requests.
-    # registry() registers the anomaly rule
-    # but its predicate returns False immediately, which is correct.
+    # rules registered once at startup in lifespan
     registry = PatternRegistry
+    # No tracker - backend has no live requests.
+    # rules that depends on it won't be executed
     matches = registry.evaluate(graph, temporal, tags=tag_list)
     print(">>>> CAUSAL", matches)
     print(">>>> TEMPORAL", temporal)
@@ -737,10 +623,12 @@ async def causal(
 
 @app.get("/api/v1/hotspots")
 async def hotspots(
-    top: int = 10,
+    top: int = Query(10, ge=1, le=100),
     authorization: Optional[str] = Header(None),
 ) -> Dict:
-    """Return the top N nodes by call count from the latest snapshot."""
+    """
+    Return the top N nodes by call count from the latest snapshot.
+    """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
 
@@ -819,6 +707,14 @@ async def get_trace(
     filtered = [
         e for e in events if e.get("probe") in registered
     ]
+    if not filtered:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Events found for trace '{trace_id}' but none matched "
+                f"registered probe types. Check ProbeTypes registration."
+            ),
+        )
 
     path = []
     last_ts = None
@@ -850,39 +746,28 @@ async def get_trace(
     return {"data": path, "total_ms": round(total_ms, 3)}
 
 
-# ====================================================================== #
-# Routes: Deployment markers
-# ====================================================================== #
-
-
 @app.post("/api/v1/deployment")
 async def mark_deployment_endpoint(
-    request: Request,
+    body: DeploymentRequest,
     authorization: Optional[str] = Header(None),
-    repository: InMemoryRepository = Depends(get_repository),
+    repository: Any = Depends(get_repository),
 ) -> Dict:
     customer_id = _authenticate(authorization)
-    body = await request.json()
     if repository is not None:
         repository.insert_deployment_marker(
-            customer_id, body.get("label")
+            customer_id, body.label
         )
     print(">>>> WE DEPLOYED")
     logger.info(
         "Deployment marked: customer=%s label=%s",
         customer_id,
-        body.get("label"),
+        body.label,
     )
     return {
         "ok": True,
-        "label": body.get("label"),
+        "label": body.label,
         "timestamp": time.time(),
     }
-
-
-# ====================================================================== #
-# Routes: Status and health
-# ====================================================================== #
 
 
 @app.get("/api/v1/status")
@@ -989,11 +874,6 @@ async def get_edges(
     }
 
 
-# ====================================================================== #
-# Error handling
-# ====================================================================== #
-
-
 @app.exception_handler(Exception)
 async def generic_error(
     request: Request, exc: Exception
@@ -1015,7 +895,7 @@ async def generic_error(
 
 def _node_dict(n) -> Dict:
     """
-    Full node representation - used by SHOW NODES and SHOW GRAPH.
+    Full node representation - used by SHOW GRAPH.
     """
     return {
         "id": n.id,
@@ -1035,7 +915,7 @@ def _node_dict(n) -> Dict:
 
 def _edge_dict(e) -> Dict:
     """
-    Full edge representation - used by SHOW EDGES and SHOW GRAPH.
+    Full edge representation - used by SHOW GRAPH.
     """
     return {
         "source": e.source,

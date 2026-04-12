@@ -1,7 +1,7 @@
 """
 Unix domain socket server that the OriginTracer REPL connects to.
 
-The agent process (gunicorn worker) starts this server at init() time.
+OriginTracer starts this server at init() time.
 The REPL (running in a separate terminal) connects to the socket and
 sends query strings. The server evaluates them against the live engine
 and returns JSON responses.

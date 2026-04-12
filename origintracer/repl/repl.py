@@ -3,17 +3,16 @@
 StackTracer REPL - connects to a running agent via Unix socket.
 
 Run from any terminal while gunicorn is running:
-    python scripts/repl.py
+    python repl.py
 
 The REPL auto-discovers /tmp/stacktracer-{pid}.sock and connects.
 All queries run against the live engine in the worker process.
-No engine is bootstrapped here — this file has zero origintracer imports.
 
-Protocol: newline-delimited JSON over Unix domain socket.
-    Send: {"id": "1", "query": "SHOW NODES"}\\n
-    Receive: {"id": "1", "ok": true, "data": {...}}\\n
+Protocol: JSON over Unix domain socket.
+    Send: {"id": "1", "query": "SHOW NODES"}
+    Receive: {"id": "1", "ok": true, "data": {...}}
 
-DSL queries (forwarded verbatim to engine.query()):
+DSL queries:
     SHOW latency WHERE service = "django"
     SHOW latency WHERE system = "export"
     SHOW graph
@@ -26,7 +25,7 @@ DSL queries (forwarded verbatim to engine.query()):
     DIFF SINCE deployment
     TRACE <trace_id>
 
-REPL meta-commands (prefixed with \\):
+REPL meta-commands:
     \\status - engine stats (graph size, uptime, etc.)
     \\probes - registered probe adapters
     \\rules - registered causal rules
@@ -49,12 +48,6 @@ import sys
 import textwrap
 import time
 import uuid
-
-# Make sure the project root is on the path (harmless if already there)
-sys.path.insert(
-    0,
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-)
 
 # Colour helpers
 RESET = "\033[0m"
@@ -120,7 +113,7 @@ def discover_sockets() -> list[str]:
 
 def pick_socket() -> str:
     """
-    Auto-discover sockets. If exactly one exists, use it silently.
+    Auto-discover sockets.
     If multiple exist, prompt the user to pick one.
     If none exist, print instructions and exit.
     """
@@ -169,9 +162,8 @@ def pick_socket() -> str:
 
 def query(sock_path: str, query_str: str) -> dict:
     """
-    Send one query to the agent. Opens and closes a fresh connection
-    per call — matches the server's one-query-per-connection protocol.
-    Returns the full parsed response dict (always has 'ok' key).
+    Send one query to OriginTracer. Opens and closes a fresh connection
+    per call. Returns the full parsed response dict.
     """
     msg = (
         json.dumps(
@@ -210,7 +202,9 @@ def query(sock_path: str, query_str: str) -> dict:
 
 # Result rendering
 def render(result: dict) -> None:
-    """Pretty-print a query result returned by the agent."""
+    """
+    Pretty-print a query result returned by the agent.
+    """
 
     # Socket-level failure
     if not result.get("ok"):

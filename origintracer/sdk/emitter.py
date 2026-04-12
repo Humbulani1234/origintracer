@@ -4,7 +4,7 @@ Probes do not import Engine directly - they call emit().
 
 This design allows the Engine be swapped.
 
-Architecture:
+Flow:
     Probe >> emit(event) >> EventBuffer >> Engine.process(event)
 """
 
@@ -24,9 +24,8 @@ logger = logging.getLogger("origintracer.emitter")
 
 class _DrainEventBuffer:
     """
-    Lock-free-ish bounded ring buffer for in-process use.
+    Bounded ring buffer for in-process use.
     Events are drained by the Engine on each call to process().
-    For MVP: direct call-through. For production: batch drain thread.
     """
 
     def __init__(self, max_size: int = 50_000) -> None:
@@ -58,9 +57,6 @@ class _DrainEventBuffer:
 class _DrainThread(threading.Thread):
     """
     Background thread that drains the EventBuffer into the Engine.
-    Runs independently of the application thread.
-    The application thread only ever calls _buffer.push() — one lock,
-    one deque.append(), done. Cost: ~0.5 microseconds per emit().
     """
 
     def __init__(
@@ -83,7 +79,7 @@ class _DrainThread(threading.Thread):
             try:
                 events = self._buffer.drain(max_batch=500)
                 if not events:
-                    time.sleep(0.001)  # Remove?
+                    time.sleep(0.001)
                     continue
                 if _engine is not None:
                     for event in events:
@@ -97,13 +93,9 @@ class _DrainThread(threading.Thread):
                 logger.debug("drain: loop error: %s", exc)
 
 
-# --------------- Module-level state -------------------------
-
 _engine: Optional[Engine] = None  # Set by bind_engine()
 _buffer = _DrainEventBuffer()
-_drain_thread: Optional[_DrainThread] = (
-    None  # add to module-level state
-)
+_drain_thread: Optional[_DrainThread] = None
 
 
 # For testing
@@ -118,11 +110,9 @@ def enable_sync_mode():
 def bind_engine(engine: Engine) -> None:
     global _engine, _drain_thread
 
-    # 1. If a thread is already running, stop it.
     if _drain_thread:
         _drain_thread.stop()
 
-    # 2. Flush any remaining events
     if _engine:
         flush()
 
@@ -169,13 +159,11 @@ def emit(event: NormalizedEvent) -> None:
         else:
             _buffer.push(event)
     except Exception as exc:
-        # We catch everything. If the tracer fails, we log a warning
-        # (if debug is on) and let the host app continue living.
         if (
             _SYNC_MODE
         ):  # Only log in sync mode to avoid spamming the buffer
             logger.warning(
-                "StackTracer failed to process event: %s", exc
+                "OriginTracer failed to process event: %s", exc
             )
 
 
@@ -202,7 +190,7 @@ def _restart_drain_thread() -> None:
     """
     Restart the drain thread after os.fork().
 
-    Threads do not survive fork — the child process has the parent's
+    Threads do not survive fork - the child process has the parent's
     buffer but no running drain thread. Call this in post_fork hooks
     (gunicorn st_post_fork, celery worker_process_init) before any
     emit() calls so the buffer drains correctly in the worker.
@@ -218,7 +206,9 @@ def _restart_drain_thread() -> None:
 
 
 def flush() -> None:
-    """Drain buffer into engine (used in non-direct mode)."""
+    """
+    Drain buffer into engine (used in non-direct mode).
+    """
     if _engine is None:
         return
     for event in _buffer.drain():

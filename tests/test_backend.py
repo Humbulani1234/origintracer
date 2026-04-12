@@ -242,16 +242,6 @@ class TestGraphQueries:
         r = await client.get("/api/v1/graph", headers=AUTH)
         assert r.status_code == 404
 
-    async def test_dsl_query_endpoint(self, client):
-        r = await client.post(
-            "/api/v1/query",
-            json={
-                "query": 'SHOW latency WHERE service = "django"'
-            },
-            headers=AUTH,
-        )
-        assert r.status_code == 200
-
 
 # ====================================================================== #
 # Status
@@ -791,50 +781,4 @@ class TestHotspotsEdgeCases:
 
     async def test_hotspots_requires_auth(self, client):
         r = await client.get("/api/v1/hotspots")
-        assert r.status_code == 401
-
-
-# ====================================================================== #
-# POST /api/v1/query — error paths
-# ====================================================================== #
-
-
-@pytest.mark.anyio
-class TestQueryErrorPaths:
-
-    @pytest.fixture(autouse=True)
-    async def load_snapshot(self, client):
-        pytest.importorskip("msgpack")
-        await _post_snapshot(client, _make_snapshot_bytes())
-
-    async def test_invalid_dsl_returns_400(self, client):
-        r = await client.post(
-            "/api/v1/query",
-            json={"query": "INVALID GARBAGE !!!"},
-            headers=AUTH,
-        )
-        assert r.status_code == 400
-
-    async def test_query_before_snapshot_returns_404(
-        self, client
-    ):
-        import backend.main as m
-
-        m._graphs.clear()
-        r = await client.post(
-            "/api/v1/query",
-            json={
-                "query": 'SHOW latency WHERE service = "django"'
-            },
-            headers=AUTH,
-        )
-        assert r.status_code == 404
-
-    async def test_query_requires_auth(self, client):
-        r = await client.post(
-            "/api/v1/query",
-            json={
-                "query": 'SHOW latency WHERE service = "django"'
-            },
-        )
         assert r.status_code == 401

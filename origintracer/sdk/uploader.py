@@ -16,8 +16,6 @@ class _UploaderEventBuffer:
     """
     A bounded FIFO buffer of event dicts.
     Bounded at maxlen - oldest events are silently dropped when full.
-    This is intentional: dropping old events under sustained overload
-    is safer than growing memory without bound.
     """
 
     def __init__(self, maxlen: int = 20_000) -> None:
@@ -39,11 +37,10 @@ class _UploaderEventBuffer:
         return len(self._q)
 
 
-# Serialisation helpers
-
-
 def _serialize_events(payload: Dict) -> tuple:
-    """Serialise event batch to msgpack (preferred) or JSON (fallback)."""
+    """
+    Serialise event batch to msgpack (preferred) or JSON (fallback).
+    """
     try:
         import msgpack
 
@@ -58,7 +55,9 @@ def _serialize_events(payload: Dict) -> tuple:
 
 
 def _serialize_graph(graph: Any) -> tuple:
-    """Serialise RuntimeGraph — prefers protobuf, falls back to msgpack."""
+    """
+    Serialise RuntimeGraph — prefers protobuf, falls back to msgpack.
+    """
     try:
         from origintracer.core.graph_serializer import (
             MsgpackSerializer,
@@ -90,10 +89,8 @@ class Uploader:
     Usage in stacktracer/__init__.py:
         uploader = Uploader(endpoint=..., api_key=...)
         uploader.start()
-        uploader.bind_engine(engine)      # must be called after start()
-        engine.repository = uploader      # Engine calls insert_event() per event
-
-
+        uploader.bind_engine(engine) # must be called after start()
+        engine.repository = uploader  # Engine calls insert_event() per event
     """
 
     def __init__(
@@ -135,7 +132,7 @@ class Uploader:
         """
         Repository interface. Called by Engine.process() for every event.
         Converts NormalizedEvent to dict and queues for batch upload.
-        Never raises — must not disrupt the drain thread.
+        Never raises - must not disrupt the drain thread.
         """
         try:
             self._event_buffer.push(event.to_dict())
@@ -145,7 +142,7 @@ class Uploader:
     def bind_engine(self, engine: Any) -> None:
         """
         Wire the engine so the uploader can serialise its graph for snapshots.
-        Call this after start() from stacktracer/__init__.py _init_uploader().
+        Call this after start() from origintracer/__init__.py _init_uploader().
         """
         self._engine = engine
 
@@ -169,10 +166,10 @@ class Uploader:
     def stop(self) -> None:
         """
         Stop the background thread and perform one final flush of both
-        events and snapshot before returning. Called by stacktracer.shutdown().
+        events and snapshot before returning. Called by origintracer.shutdown().
         """
         self._running = False
-        # Final flushes on the calling thread (not the daemon thread)
+        # Final flushes on the calling thread
         self._flush_events()
         self._flush_snapshot()
         if self._thread:
@@ -182,8 +179,6 @@ class Uploader:
             self._events_sent_total,
             self._snapshots_sent,
         )
-
-    # ---------------------- Background loop ------------------
 
     def _run(self) -> None:
         """
@@ -212,7 +207,7 @@ class Uploader:
     def _flush_events(self) -> None:
         """
         Drain the event buffer and POST to /api/v1/events.
-        Silently discards on any error — probe events are best-effort.
+        Silently discards on any error - probe events are best-effort.
         """
         batch = self._event_buffer.drain(self._max_batch)
         if not batch:
@@ -247,7 +242,7 @@ class Uploader:
 
         except ImportError:
             logger.debug(
-                "httpx not installed — uploader inactive  "
+                "httpx not installed - uploader inactive  "
                 "(pip install httpx)"
             )
         except httpx.TimeoutException as e:
@@ -275,8 +270,8 @@ class Uploader:
         - All errors are logged at debug/warning level; no exceptions escape.
 
         Backend contract:
-        - POST /api/v1/graph/snapshot → full graph replacement
-        - POST /api/v1/graph/diff     → incremental update
+        - POST /api/v1/graph/snapshot >> full graph replacement
+        - POST /api/v1/graph/diff >> incremental update
         """
         if self._engine is None:
             logger.debug(
@@ -284,7 +279,7 @@ class Uploader:
             )
             return
 
-        # --- Serialize graph ---
+        # Serialize graph
         try:
             data, content_type = _serialize_graph(
                 self._engine.graph
@@ -293,9 +288,7 @@ class Uploader:
             logger.debug("Graph serialization failed: %s", exc)
             return
 
-        import httpx
-
-        # --- Send snapshot ---
+        # Send snapshot
         try:
             snapshot_resp = httpx.post(
                 f"{self._endpoint}/api/v1/graph/snapshot",
@@ -338,7 +331,7 @@ class Uploader:
             logger.debug("Snapshot upload error: %s", exc)
             return
 
-        # --- Send latest diff (optional) ---
+        # Send latest diff
         latest_diff = self._engine.temporal.latest_diff()
         if not latest_diff:
             return

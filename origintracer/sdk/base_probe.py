@@ -1,22 +1,10 @@
-"""
-sdk/base_probe.py + sdk/registry.py combined
-
-BaseProbe defines the probe contract.
-ProbeRegistry enables dynamic loading from YAML config.
-"""
-
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Type
 
-logger = logging.getLogger("stacktracer.probes")
-
-
-# ====================================================================== #
-# Base Probe
-# ====================================================================== #
+logger = logging.getLogger("origintracer.probes")
 
 
 class BaseProbe(ABC):
@@ -26,11 +14,11 @@ class BaseProbe(ABC):
     Subclass requirements
     ---------------------
     - Set class attribute `name: str`  (must be unique, matches YAML config key)
-    - Implement `start()` — attach hooks, monkey-patch, or register middleware
-    - Implement `stop()`  — detach and clean up
+    - Implement `start()` - attach hooks, monkey-patch, or register middleware
+    - Implement `stop()` - detach and clean up
 
     Probes communicate ONLY via `sdk.emitter.emit(event)`.
-    They NEVER import Engine, RuntimeGraph, or any core layer directly.
+    They never import Engine, RuntimeGraph, or any core layer directly.
     """
 
     name: str = ""  # Override in each subclass
@@ -42,19 +30,18 @@ class BaseProbe(ABC):
 
     @abstractmethod
     def start(self) -> None:
-        """Attach the probe. Called once at startup."""
+        """
+        Attach the probe. Called once at startup.
+        """
 
     @abstractmethod
     def stop(self) -> None:
-        """Detach the probe and reverse any monkey-patching."""
+        """
+        Detach the probe and reverse any monkey-patching.
+        """
 
     def __repr__(self) -> str:
         return f"<Probe:{self.name}>"
-
-
-# ====================================================================== #
-# Probe Registry
-# ====================================================================== #
 
 
 class ProbeRegistry:
@@ -64,7 +51,9 @@ class ProbeRegistry:
     def register(
         cls, probe_class: Type[BaseProbe]
     ) -> Type[BaseProbe]:
-        """Register a probe class. Called automatically via __init_subclass__."""
+        """
+        Register a probe class. Called automatically via __init_subclass__.
+        """
         cls._registry[probe_class.name] = probe_class
         return probe_class
 

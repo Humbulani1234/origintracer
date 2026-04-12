@@ -17,7 +17,9 @@ class BaseRepository(ABC):
 
     @abstractmethod
     def insert_event(self, event: NormalizedEvent) -> None:
-        """Store one probe event."""
+        """
+        Store one probe event.
+        """
         ...
 
     @abstractmethod
@@ -66,27 +68,29 @@ class BaseRepository(ABC):
 
     @abstractmethod
     def close(self) -> None:
-        """Release any open connections."""
+        """
+        Release any open connections.
+        """
         ...
 
     @abstractmethod
     def insert_deployment_marker(
         self, customer_id: str, label: str
     ) -> None:
-        """Store a deployment marker with the current timestamp."""
+        """
+        Store a deployment marker with the current timestamp.
+        """
         ...
 
     @abstractmethod
     def insert_graph_diff(
         self, customer_id: str, diff: Dict
     ) -> None:
-        """Store one graph diff snapshot from the agent."""
+        """
+        Store one graph diff snapshot from the agent.
+        """
         ...
 
-
-# ====================================================================== #
-# PostgreSQL
-# ====================================================================== #
 
 _PG_CREATE_EVENTS = """
 CREATE TABLE IF NOT EXISTS st_events (
@@ -169,8 +173,6 @@ class PGEventRepository(BaseRepository):
             cur.execute(_PG_CREATE_MARKERS)
             cur.execute(_PG_CREATE_GRAPH_DIFFS)
         self._conn.commit()
-
-    # ── Events ──────────────────────────────────────────────────────────
 
     def insert_event(self, event: NormalizedEvent) -> None:
         try:
@@ -267,8 +269,6 @@ class PGEventRepository(BaseRepository):
             logger.error("PG query_events failed: %s", exc)
             return []
 
-    # ── Snapshots ────────────────────────────────────────────────────────
-
     def insert_snapshot(
         self,
         customer_id: str,
@@ -332,8 +332,6 @@ class PGEventRepository(BaseRepository):
             )
             return None
 
-    # --------------------- Graph diffs-------------------------------
-
     def insert_graph_diff(
         self, customer_id: str, diff: Dict
     ) -> None:
@@ -360,8 +358,6 @@ class PGEventRepository(BaseRepository):
                 ),
             )
         self._conn.commit()
-
-    # ── Markers ──────────────────────────────────────────────────────────
 
     def insert_marker(
         self, customer_id: str, label: str
@@ -392,8 +388,6 @@ class PGEventRepository(BaseRepository):
         except Exception:
             pass
 
-
-# -------------------- ClickHouse ---------------------------
 
 _CH_EVENTS_DDL = """
 CREATE TABLE IF NOT EXISTS st_probe_events (
@@ -434,7 +428,8 @@ FROM st_probe_events
 GROUP BY customer_id, trace_id
 """
 
-# ClickHouse has no BYTEA — store snapshots base64-encoded in a String column.
+# ClickHouse has no BYTEA - store snapshots base64-encoded
+# in a String column.
 _CH_SNAPSHOTS_DDL = """
 CREATE TABLE IF NOT EXISTS st_snapshots (
     customer_id     String,
@@ -521,8 +516,6 @@ class ClickHouseRepository(BaseRepository):
                 logger.debug(
                     "ClickHouse DDL skip (may exist): %s", exc
                 )
-
-    # ── Events ──────────────────────────────────────────────────────────
 
     def insert_event(self, event: NormalizedEvent) -> None:
         from datetime import datetime
@@ -681,8 +674,6 @@ class ClickHouseRepository(BaseRepository):
             )
             return None
 
-    # ── Markers ──────────────────────────────────────────────────────────
-
     def insert_deployment_marker(
         self, customer_id: str, label: str
     ) -> None:
@@ -725,11 +716,6 @@ class ClickHouseRepository(BaseRepository):
         pass  # clickhouse-driver manages connections internally
 
 
-# ====================================================================== #
-# InMemory — dev / tests
-# ====================================================================== #
-
-
 class InMemoryRepository(BaseRepository):
     """
     Refactored In-Memory store using collections for performance.
@@ -740,22 +726,18 @@ class InMemoryRepository(BaseRepository):
     def __init__(
         self, max_events: int = 100_000, max_diffs: int = 500
     ) -> None:
-        # Events: Global rolling buffer
+        # Events, global rolling buffer
         self._events: deque = deque(maxlen=max_events)
-
-        # Snapshots: Usually one-per-customer, so a dict is fine
+        # Snapshots, usually one-per-customer
         self._snapshots: Dict[str, Dict] = {}
-
-        # Markers: Using defaultdict(list) means we never need .setdefault()
+        # Markers, using defaultdict(list)
         self._markers: Dict[str, List[Dict]] = defaultdict(list)
-
-        # Diffs: Using defaultdict with a lambda to create deques automatically
-        # This keeps exactly the last 500 diffs per customer with zero manual work.
+        # Diffs, using defaultdict with a lambda to create deques automatically
+        # This keeps exactly the last 500 diffs per customer with zero
+        # manual work.
         self._diffs: Dict[str, deque] = defaultdict(
             lambda: deque(maxlen=max_diffs)
         )
-
-    # ── Events ──────────────────────────────────────────────────────────
 
     def insert_event(self, event: NormalizedEvent) -> None:
         # deque handles the maxlen=100_000 internally
@@ -771,7 +753,6 @@ class InMemoryRepository(BaseRepository):
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         results = []
-        # reversed() on a deque is O(1) for the iterator setup
         for e in reversed(self._events):
             if trace_id and e.get("trace_id") != trace_id:
                 continue
@@ -785,8 +766,6 @@ class InMemoryRepository(BaseRepository):
             if len(results) >= limit:
                 break
         return results
-
-    # ── Snapshots ────────────────────────────────────────────────────────
 
     def insert_snapshot(
         self,
@@ -804,8 +783,6 @@ class InMemoryRepository(BaseRepository):
             "edge_count": edge_count,
         }
 
-    # ── Snapshots (Continued) ──────────────────────────────────────────
-
     def get_latest_snapshot(
         self,
         customer_id: str,
@@ -814,7 +791,6 @@ class InMemoryRepository(BaseRepository):
         Retrieves the most recent full graph snapshot for a customer.
         Returns None if no snapshot exists.
         """
-        # .get() is perfect here—it handles the "None" case automatically
         entry = self._snapshots.get(customer_id)
 
         if entry is None:
@@ -828,12 +804,9 @@ class InMemoryRepository(BaseRepository):
             "edge_count": entry.get("edge_count", 0),
         }
 
-    # ── Markers & Diffs ──────────────────────────────────────────────────
-
     def insert_deployment_marker(
         self, customer_id: str, label: str
     ) -> None:
-        # No more .setdefault()! defaultdict handles the creation of the list.
         self._markers[customer_id].append(
             {"label": label, "created_at": time.time()}
         )
@@ -841,7 +814,6 @@ class InMemoryRepository(BaseRepository):
     def insert_graph_diff(
         self, customer_id: str, diff: Dict
     ) -> None:
-        # deque(maxlen=500) handles the truncation automatically.
         self._diffs[customer_id].append(diff)
 
     def label_diff(

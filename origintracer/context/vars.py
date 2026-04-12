@@ -1,6 +1,4 @@
 """
-context/vars.py
-
 ContextVar-based trace propagation.
 Works correctly across asyncio coroutines, threads, and task boundaries.
 
@@ -15,12 +13,13 @@ from typing import Optional
 
 # The single source of truth for "which request are we in?"
 current_trace_id: ContextVar[Optional[str]] = ContextVar(
-    "stacktracer_trace_id", default=None
+    "origintracer_trace_id", default=None
 )
 
-# The span ID of the most recently emitted event — used to build parent_span chains
+# The span ID of the most recently emitted event used to
+# build parent_span chains
 current_span_id: ContextVar[Optional[str]] = ContextVar(
-    "stacktracer_span_id", default=None
+    "origintracer_span_id", default=None
 )
 
 

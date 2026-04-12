@@ -25,11 +25,11 @@ class BPFProgramPart:
 
         structs: Any extra C struct definitions the probe needs.
                  The shared kernel_event_t and trace_entry_t are already
-                 defined in BRIDGE_BPF_HEADER — do not redefine them here.
+                 defined in BRIDGE_BPF_HEADER.
 
         maps : BPF map declarations (BPF_HASH, BPF_ARRAY, etc.).
                kernel_events perf output is already declared in
-               BRIDGE_BPF_HEADER — do not redeclare it here.
+               BRIDGE_BPF_HEADER.
 
         probes: TRACEPOINT_PROBE and kprobe function bodies.
                 Order within a probe's list is preserved.

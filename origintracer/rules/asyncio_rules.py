@@ -8,8 +8,6 @@ from origintracer.core.causal import CausalRule, PatternRegistry
 from origintracer.core.runtime_graph import RuntimeGraph
 from origintracer.core.temporal import TemporalStore
 
-# ------------- New synchronous call after deployment -----------
-
 
 def _new_sync_call_after_deployment(
     graph: RuntimeGraph,
@@ -83,8 +81,6 @@ NEW_SYNC_CALL = CausalRule(
     confidence=0.85,
     tags=["deployment", "latency", "async"],
 )
-
-# --------------------- asyncio event loop starvation -------------------
 
 
 def _asyncio_loop_starvation(

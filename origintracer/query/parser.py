@@ -210,9 +210,6 @@ def _parse_filters(tokens: List[str]) -> Dict[str, Any]:
     return filters
 
 
-# --------------------------- Executor entry point ---------------------
-
-
 def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
     dispatch = {
         "SHOW": _exec_show,
@@ -289,7 +286,6 @@ def _exec_show(
     return handler()
 
 
-# ----------------------- SHOW metric handlers ---------------------------
 def _show_latency(
     engine: Any,
     filters: Dict,
@@ -534,7 +530,7 @@ def _show_semantic(engine: Any) -> Dict:
     return {"metric": "semantic", "data": labels}
 
 
-# ---------------------- Other verb handlers -----------------------------
+#
 def _exec_trace(query: ParsedQuery, engine: Any) -> Dict:
     trace_id = query.filters.get("trace_id")
     if not trace_id:
