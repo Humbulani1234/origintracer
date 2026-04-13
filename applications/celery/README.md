@@ -1,8 +1,7 @@
-# StackTracer — Celery Application
+# OriginTracer - Celery Application
 
-Traces the cross-process path: Django view → Redis (task queue) → Celery worker.
-The trace_id travels inside task kwargs (`_trace_id`) across the Redis boundary,
-allowing `\stitch` in the REPL to join both sides into one timeline.
+Traces the cross-process path: Django view --> Redis (task queue) --> Celery worker. The trace_id travels inside task kwargs (`_trace_id`) across the
+Redis boundary, allowing `\stitch` in the REPL to join both sides into one timeline.
 
 ---
 
@@ -34,7 +33,7 @@ applications/celery/
 ## Prerequisites
 
 ```bash
-pip install stacktracer gunicorn uvicorn django celery redis
+pip install origintracer gunicorn uvicorn django celery redis
 
 ```
 
@@ -61,15 +60,15 @@ __all__ = ["celery_app"]
 ```
 ---
 
-## TracedRedis — subclass pattern
+## TracedRedis - subclass pattern
 
 `redis_probe.py` in the app's `probes/` directory uses subclassing, not composition.
 
 ```python
 import redis
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.context.vars import get_trace_id
-from stacktracer.sdk.emitter import emit
+from origintracer.core.event_schema import NormalizedEvent
+from origintracer.context.vars import get_trace_id
+from origintracer.sdk.emitter import emit
 import time
 
 class TracedRedis(redis.Redis):
@@ -102,7 +101,7 @@ class TracedRedis(redis.Redis):
             return result
 
 # use in views.py:
-# from probes.redis_probe import TracedRedis   ← absolute import
+# from probes.redis_probe import TracedRedis
 # r = TracedRedis(host="localhost", port=6379, db=0)
 ```
 ---
@@ -123,7 +122,7 @@ class WorkerConfig(AppConfig):
 
 ---
 
-## stacktracer.yaml
+## origintracer.yaml
 
 ```yaml
 probes:
@@ -145,9 +144,9 @@ node name is `celery::task_name`, not `django::task_name`. The edge then reads:
 
 ```python
 
-from stacktracer.context.vars import get_trace_id
-from stacktracer.sdk.emitter import emit
-from stacktracer.core.event_schema import NormalizedEvent
+from origintracer.context.vars import get_trace_id
+from origintracer.sdk.emitter import emit
+from origintracer.core.event_schema import NormalizedEvent
 
 def _dispatch(task_fn, *args, **kwargs):
     trace_id = get_trace_id()
@@ -165,10 +164,10 @@ def _dispatch(task_fn, *args, **kwargs):
 
 ## Run
 
-**Terminal 1 — gunicorn:**
+**Terminal 1 - gunicorn:**
 
 ```bash
-cd /path/to/stack-tracer/applications/celery
+cd /path/to/origintracer/applications/celery
 
 export DJANGO_SETTINGS_MODULE=config.settings
 
@@ -179,26 +178,22 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
   --workers 1
 ```
 
-**Terminal 2 — celery worker:**
+**Terminal 2 - celery worker:**
 
 ```bash
-cd /path/to/stack-tracer/applications/celery
+cd /path/to/origintracer/applications/celery
 
 DJANGO_SETTINGS_MODULE=config.settings \
-STACKTRACER_CONFIG=/path/to/stack-tracer/applications/celery/stacktracer.yaml \
+ORIGINTRACER_CONFIG=/path/to/origintracer/applications/celery/origintracer.yaml\
 celery -A config worker --loglevel=info --concurrency=1
 ```
-
-`STACKTRACER_CONFIG` must be set explicitly for Celery — the cwd-upward search
-does not always find the yaml from within the Celery process.
-
 ---
 
 ## REPL
 
 
 ```bash
-python -m stacktracer.scripts.repl
+python -m origintracer.repl.repl
 ```
 
 ```

@@ -31,7 +31,7 @@ applications/django/
 ## Prerequisites
 
 ```bash
-pip install stacktracer gunicorn uvicorn django redis
+pip install origintracer gunicorn uvicorn django redis
 ```
 ---
 
@@ -42,7 +42,7 @@ pip install stacktracer gunicorn uvicorn django redis
 
 ```python
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware", # MUST be first
+    "origintracer.probes.django_probe.TracerMiddleware", # MUST be first
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     ...
@@ -60,29 +60,24 @@ class WorkerConfig(AppConfig):
     name = "worker"
 
     def ready(self):
-        import stacktracer
-        stacktracer.init(debug=True)
+        import origintracer
+        origintracer.init(debug=True)
 ```
 
 `AppConfig.ready()` runs once per process after Django is fully loaded.
-This is the only place `stacktracer.init()` is called for the gunicorn worker.
+This is the only place `origintracer.init()` is called for the gunicorn worker.
 Never call `init()` at module level or in `settings.py`.
 
 ---
 
-## stacktracer.yaml
+## origintracer.yaml
 
 ```yaml
 probes:
-  - django
-  - asyncio
+  - nginx
   - gunicorn
   - uvicorn
-  - redis
-
-observe:
-  modules:
-    - worker.views
+  - django
 ```
 
 ---
@@ -90,17 +85,17 @@ observe:
 ## nginx setup: 
 
 nginx sits in front of gunicorn and is observed via log tail (default), Lua UDP,
-or kprobe — configured in `stacktracer.yaml` under the `nginx` key.
+or kprobe - configured in `origintracer.yaml` under the `nginx` key.
 
 ### Log tail
 
-The simplest mode. nginx writes a JSON access log. StackTracer tails it.
+The simplest mode. nginx writes a JSON access log. OriginTracer tails it.
 
-**nginx.conf** — add a JSON log format and point the access log to it:
+**nginx.conf** - add a JSON log format and point the access log to it:
 
 ```nginx
 http {
-    log_format stacktracer escape=json
+    log_format origintracer escape=json
         '{"remote_addr":"$remote_addr",'
         '"request_time":$request_time,'
         '"upstream_response_time":"$upstream_response_time",'
@@ -112,7 +107,7 @@ http {
     server {
         listen 80;
 
-        access_log /var/log/nginx/access.log stacktracer;
+        access_log /var/log/nginx/access.log origintracer;
 
         location / {
             proxy_pass http://127.0.0.1:8000;
@@ -121,23 +116,6 @@ http {
     }
 }
 ```
-
-**stacktracer.yaml** — configure the log path and mode:
-
-```yaml
-nginx:
-  mode: log
-  log_path: /var/log/nginx/access.log
-```
-
-On Windows/WSL2 where nginx writes to a custom path:
-
-```yaml
-nginx:
-  mode: log
-  log_path: /mnt/c/Users/<you>/nginx-1.24.0/logs/access.log
-```
-
 ---
 
 ## Probes
@@ -150,7 +128,7 @@ The probes for: nginx, gunicorn and uvicorn are available on
 ## Run
 
 ```bash
-cd /path/to/stack-tracer/applications/django
+cd /path/to/origintracer/applications/django
 
 export DJANGO_SETTINGS_MODULE=config.settings
 

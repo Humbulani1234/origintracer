@@ -1,8 +1,8 @@
 # OriginTracer
 
-**Live causal graph for Python async services.**
+**Live causal graph for async services.**
 
-StackTracer instruments your production stack — nginx, gunicorn, uvicorn, Django, asyncio, Celery — to capture *why* execution flowed the way it did, not just that it was slow. It builds a live graph of your service's execution structure, detects causal patterns, and answers questions like `BLAME WHERE system = "export"` or `DIFF SINCE deployment` against the running process.
+OriginTracer instruments your production stack - nginx, gunicorn, uvicorn, Django, asyncio, Celery - to capture *why* execution flowed the way it did, not just that it was slow. It builds a live graph of your service's execution structure, detects causal patterns, and answers questions like `BLAME WHERE system = "export"` or `DIFF SINCE deployment` against the running process.
 
 **What you get:**
 
@@ -12,13 +12,13 @@ StackTracer instruments your production stack — nginx, gunicorn, uvicorn, Djan
 - Visualizing control flow  
 - Developer introspection  
 
-The engine is open source. Deeper knowledge — traced book chapters and the rule libraries that implement what each chapter explains — is sold separately at [origintracer.app](https://origintracer.app).
+The engine is open source. Deeper knowledge - traced book chapters and the rule libraries that implement what each chapter explains - is available on [origintracer.app](https://origintracer.app).
 
 ---
 
 ## How it works
 
-Every probe in the system observes one framework or layer. When something happens — a Django view executes, an asyncio task steps, the kernel returns I/O events from epoll — the probe emits a `NormalizedEvent` through `emit()`. The engine receives it, updates the runtime graph, appends it to the event log, and checks it against the temporal store. Nothing else. Probes never touch the engine, and the engine never touches probes - that's the decoupling between the
+Every probe in the system observes one framework or layer. When something happens - a Django view executes, an asyncio task steps, the kernel returns I/O events from epoll - the probe emits a `NormalizedEvent` through `emit()`. The engine receives it, updates the runtime graph, appends it to the event log, and checks it against the temporal store. Nothing else. Probes never touch the engine, and the engine never touches probes - that's the decoupling between the
 user application and engine.
 
 ---
@@ -35,7 +35,7 @@ pip install -e .
 
 ## Quick start - Django application
 
-**settings.py** — middleware must be first:
+**settings.py**
 
 ```python
 MIDDLEWARE = [
@@ -54,20 +54,18 @@ class MyAppConfig(AppConfig):
     name = "myapp"
 
     def ready(self):
-        import stacktracer
-        stacktracer.init(debug=True)
+        import origintracer
+        origintracer.init(debug=True)
 ```
 
-**stacktracer.yaml** — place in your project root:
+**origintracer.yaml** - place in your project root:
 
 ```yaml
 probes:
-  - django
-  - asyncio
+  - nginx
   - gunicorn
   - uvicorn
-  - nginx
-  - redis
+  - django
 ```
 
 **Run:**
@@ -95,7 +93,7 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 ```
 
-The Celery worker calls `init()` inside `worker_process_init` — handled
+The Celery worker calls `init()` inside `worker_process_init` - handled
 automatically by `CeleryProbe`. Add `celery` to your probes list and it works.
 
 **Run:**
@@ -105,10 +103,6 @@ DJANGO_SETTINGS_MODULE=config.settings \
 ORIGINTRACER_CONFIG=/path/to/your/origintracer.yaml \
 celery -A config worker --loglevel=info --concurrency=1
 ```
-
-Set `ORIGINTRACER_CONFIG` explicitly for Celery — the cwd search is not reliable
-from within the Celery process.
-
 ---
 
 ## REPL
@@ -151,14 +145,13 @@ For Windows users, **WSL2 (Windows Subsystem for Linux)** is a strict requiremen
     git clone
     cd origintracer
     pip install -e .
-  ```
 ---
 
 ## Probe reference
 
 These probes observe real production stacks. Add them to `origintracer.yaml`.
 
-### nginx - on [origintracer.app](https://origintracer.app)
+### nginx - available on [origintracer.app](https://origintracer.app)
 
 Two modes, auto-selected at startup:
 
@@ -172,15 +165,15 @@ probes:
 
 ProbeTypes: `nginx.connection.accept`, `nginx.request.parse`, `nginx.request.route`, `nginx.recv`, `nginx.upstream.dispatch`, `nginx.epoll.tick`
 
-### gunicorn - on [origintracer.app](https://origintracer.app)
+### gunicorn - available on [origintracer.app](https://origintracer.app)
 
 Patches `Arbiter.spawn_worker`, `Arbiter._kill_worker`, `Worker.init_process`, `Worker.notify`, and `SyncWorker.handle_request`. Observes worker process lifecycle in the master process and per-request handling in sync workers. For `UvicornWorker`, request handling is covered by the uvicorn probe.
 
 ProbeTypes: `gunicorn.worker.spawn`, `gunicorn.worker.init`, `gunicorn.worker.exit`, `gunicorn.request.handle`, `gunicorn.worker.heartbeat`
 
-### uvicorn - on [origintracer.app](https://origintracer.app)
+### uvicorn - available on [origintracer.app](https://origintracer.app)
 
-Patches `run_asgi()` on both `H11Protocol` and `HttpToolsProtocol` — the two HTTP/1.1 backends uvicorn ships with. Captures the full ASGI lifecycle from parsed request to response sent. Reads `X-Request-ID` forwarded by nginx so nginx and uvicorn events share the same trace ID automatically.
+Patches `run_asgi()` on both `H11Protocol` and `HttpToolsProtocol` - the two HTTP/1.1 backends uvicorn ships with. Captures the full ASGI lifecycle from parsed request to response sent. Reads `X-Request-ID` forwarded by nginx so nginx and uvicorn events share the same trace ID automatically.
 
 Add to nginx config to enable cross-layer trace correlation:
 ```nginx
@@ -197,18 +190,12 @@ ProbeTypes: `django.middleware.enter`, `django.middleware.exit`, `django.url.res
 
 ### asyncio - builtin
 
-Three layers applied in combination by Python version:
+Layers applied in combination by Python version:
 
-| Layer | Mechanism | Python | What it observes |
-|---|---|---|---|
-| 1 | eBPF on `BaseEventLoop._run_once()` | All versions | `select()`/`epoll_wait()` duration, events returned by kernel, ready queue depth before and after |
-| 2 | sys monitoring on `Task.__step()` | 3.12+ Python | Per-step timing |
-| 3 | `asyncio.create_task()` wrap | All versions | Task creation with coro name |
-
-Layer 1 is crucial. `_run_once()` is Python in all versions.
+Layer 1: `_run_once()` instrumentation.
 
 ```python
-event_list = self._selector.select(timeout)  # ← we intercept here
+event_list = self._selector.select(timeout)  # we intercept here
 ```
 
 The `asyncio.loop.select` event tells you how long `epoll_wait()` blocked and what it returned. The `asyncio.loop.run_once` event gives you the full tick breakdown: select time, process_events time, ready queue depth. These two events make event loop starvation visible without requiring any task-level patching.
@@ -219,32 +206,30 @@ ProbeTypes: `asyncio.loop.select`, `asyncio.loop.run_once`, `asyncio.loop.tick`,
 
 ## Extending with custom probes and rules
 
-StackTracer auto-discovers probes and rules from your project directory. Create this layout in your project:
+OriginTracer auto-discovers probes and rules from your project directory. Create this layout in your project:
 
 ```
 myapp/
-├── stacktracer.yaml
-└── stacktracer/
+├── origintracer.yaml
+└── origintracer/
     ├── probes/
-    │   └── celery_probe.py     << auto-discovered (*_probe.py)
+    │   └── celery_probe.py  << auto-discovered (*_probe.py)
     └── rules/
-        └── celery_rules.py     << auto-discovered (*_rules.py)
+        └── celery_rules.py  << auto-discovered (*_rules.py)
 ```
-
-No YAML entry required for files in these directories following the naming convention.
 
 ### Writing a probe
 
 ```python
 # origintracer/probes/celery_probe.py
-from stacktracer.sdk.base_probe import BaseProbe
-from stacktracer.sdk.emitter import emit
-from stacktracer.core.event_schema import NormalizedEvent, ProbeTypes
-from stacktracer.context.vars import get_trace_id
+from origintracer.sdk.base_probe import BaseProbe
+from origintracer.sdk.emitter import emit
+from origintracer.core.event_schema import NormalizedEvent, ProbeTypes
+from origintracer.context.vars import get_trace_id
 
 # Register your probe types - happens at module import time
 ProbeTypes.register("celery.task.start", "Celery task started")
-ProbeTypes.register("celery.task.end",   "Celery task completed")
+ProbeTypes.register("celery.task.end", "Celery task completed")
 
 class CeleryProbe(BaseProbe):
     name = "celery"
@@ -335,13 +320,13 @@ ProbeTypes.register_many({
 | Rule | Detects |
 |---|---|
 | `new_sync_call_after_deployment` | New call edges appearing after a deployment marker | 
-| `asyncio_loop_starvation` on [stacktracer.io](https://stacktracer.io) | asyncio tick nodes averaging > 10ms |
+| `asyncio_loop_starvation` on [origintracer.app](https://originracer.app) | asyncio tick nodes averaging > 10ms |
 | `retry_amplification` | Task nodes with retry count > 3 |
 | `db_query_hotspot` | Single query node > 30% of all DB calls on the trace |
 | `n_plus_one` | Query call count ≥ 2× the view call count |
 | `worker_imbalance` | One worker handling > 80% of requests while others sit idle |
 
-Drop a `*_rules.py` file in `<your_app>/stacktracer/rules/` to add your own.
+Drop a `*_rules.py` file in `<your_app>/origintracer/rules/` to add your own.
 Expose a `register(registry)` function — it receives the live registry.
 
 ---
@@ -349,7 +334,7 @@ Expose a `register(registry)` function — it receives the live registry.
 ## React UI
 
 A minimal terminal-aesthetic dashboard that mirrors the REPL. Polls the HTTP
-bridge every 5 seconds. Views: nodes, edges, trace timeline, event log.
+bridge. Views: nodes, edges, trace timeline, event log.
 
 ```bash
 cd frontend
@@ -379,8 +364,6 @@ Run tests matching a name pattern:
 ```bash
 pytest origintracer/tests/ -k "test_n_plus_one" -v
 ```
- 
-
  
 ### Pre-commit hooks (local CI)
  
