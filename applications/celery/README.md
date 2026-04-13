@@ -6,34 +6,29 @@ allowing `\stitch` in the REPL to join both sides into one timeline.
 
 ---
 
-
-
-
-
 ## Directory layout
 
 ```
 applications/celery/
 ├── config/
-│   ├── __init__.py          ← exports celery_app
-│   ├── settings.py          ← TracerMiddleware MUST be first in MIDDLEWARE
-│   ├── celery.py            ← Celery app — NO stacktracer.init() here
+│   ├── __init__.py << exports celery_app
+│   ├── settings.py << TracerMiddleware MUST be first in MIDDLEWARE
+│   ├── celery.py << Celery app - nO stacktracer.init() here
 │   ├── asgi.py
 │   └── urls.py
-├── worker/                  ← Django app directory (not a celery module)
-│   ├── __init__.py          ← empty
-│   ├── apps.py              ← AppConfig.ready() — init() for gunicorn only
+├── worker/ << Django app directory (not a celery module)
+│   ├── __init__.py
+│   ├── apps.py << AppConfig.ready() — init() for gunicorn only
 │   ├── views.py
 │   ├── tasks.py
 │   └── urls.py
-├── probes/                  ← user extension probes (absolute imports)
+├── probes/ << user extension probes
 │   ├── __init__.py
-│   ├── celery_probe.py      ← CeleryProbe — handles fork + task lifecycle
-│   └── redis_probe.py       ← TracedRedis subclass
+│   ├── celery_probe.py << CeleryProbe - handles fork + task lifecycle
+│   └── redis_probe.py << TracedRedis subclass
 ├── stacktracer.yaml
 └── gunicorn.conf.py
 ```
-
 ---
 
 ## Prerequisites
@@ -42,10 +37,6 @@ applications/celery/
 pip install stacktracer gunicorn uvicorn django celery redis
 
 ```
-
-
-
-
 
 ---
 
@@ -68,7 +59,52 @@ app.autodiscover_tasks()
 from .celery import app as celery_app
 __all__ = ["celery_app"]
 ```
+---
 
+## TracedRedis — subclass pattern
+
+`redis_probe.py` in the app's `probes/` directory uses subclassing, not composition.
+
+```python
+import redis
+from stacktracer.core.event_schema import NormalizedEvent
+from stacktracer.context.vars import get_trace_id
+from stacktracer.sdk.emitter import emit
+import time
+
+class TracedRedis(redis.Redis):
+    def execute_command(self, *args, **options):
+        trace_id = get_trace_id()
+        command  = args[0] if args else "UNKNOWN"
+        key = str(args[1])[:100] if len(args) > 1 else ""
+        t0 = time.perf_counter()
+        try:
+            result = super().execute_command(*args, **options)
+        except Exception as exc:
+            duration_ns = int((time.perf_counter() - t0) * 1e9)
+            if trace_id:
+                emit(NormalizedEvent.now(
+                    probe="redis.command.execute", trace_id=trace_id,
+                    service="redis", name=command,
+                    duration_ns=duration_ns, key=key,
+                    error=str(exc)[:200], success=False,
+                ))
+            raise
+        else:
+            duration_ns = int((time.perf_counter() - t0) * 1e9)
+            if trace_id:
+                emit(NormalizedEvent.now(
+                    probe="redis.command.execute", trace_id=trace_id,
+                    service="redis", name=command,
+                    duration_ns=duration_ns, key=key,
+                    success=True, result_type=type(result).__name__,
+                ))
+            return result
+
+# use in views.py:
+# from probes.redis_probe import TracedRedis   ← absolute import
+# r = TracedRedis(host="localhost", port=6379, db=0)
+```
 ---
 
 ## worker/apps.py 
@@ -98,9 +134,6 @@ probes:
   - celery
   - redis
 ```
-
-
-
 
 ---
 
@@ -164,21 +197,20 @@ does not always find the yaml from within the Celery process.
 ## REPL
 
 
-
 ```bash
 python -m stacktracer.scripts.repl
 ```
 
 ```
 # On gunicorn worker socket:
-SHOW nodes        ← gunicorn/uvicorn/django/redis nodes
-SHOW edges        ← gunicorn::master ──spawned──► gunicorn::UvicornWorker-{pid}
+SHOW nodes << gunicorn/uvicorn/django/redis nodes
+SHOW edges << gunicorn::master -- spawned --> gunicorn::UvicornWorker-{pid}
 
 # On celery worker socket:
-SHOW nodes        ← celery::MainProcess, ForkPoolWorker, task nodes
-SHOW edges        ← MainProcess ──spawned──► ForkPoolWorker ──ran──► task
+SHOW nodes << celery::MainProcess, ForkPoolWorker, task nodes
+SHOW edges << MainProcess -- spawned --> ForkPoolWorker -- ran --> task
 
-# Cross-process — find trace_id from SHOW events, then:
+# Cross-process - find trace_id from SHOW events, then:
 \stitch <trace_id>
 ```
 

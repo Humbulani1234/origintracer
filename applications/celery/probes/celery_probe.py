@@ -1,9 +1,3 @@
-"""
-stacktracer/probes/celery_probe.py
-
-Custom Celery probe for StackTracer — user extension mechanism demo.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -11,21 +5,30 @@ import os
 import time
 from typing import Any
 
-from stacktracer.context.vars import reset_trace, set_trace
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.sdk.base_probe import BaseProbe
-from stacktracer.sdk.emitter import emit
+import origintracer
+from origintracer.context.vars import reset_trace, set_trace
+from origintracer.core.event_schema import (
+    NormalizedEvent,
+    ProbeTypes,
+)
+from origintracer.sdk.base_probe import BaseProbe
+from origintracer.sdk.emitter import emit
 
-TASK_START = "celery.task.start"
-TASK_END = "celery.task.end"
-TASK_RETRY = "celery.task.retry"
-TASK_FAILURE = "celery.task.failure"
+logger = logging.getLogger("origintracer.probes.celery")
 
-logger = logging.getLogger("stacktracer.probes.celery")
-
+ProbeTypes.register_many(
+    {
+        "celery.main.start": "celeryd_after_setup (parked pre-fork, drained in worker)",
+        "celery.worker.fork": "worker_process_init (re-init confirmation)",
+        "celery.task.start": "task_prerun",
+        "celery.task.end": "task_postrun (with duration)",
+        "celery.task.retry": "task_retry",
+        "celery.task.failure": "task_failure",
+    }
+)
 _task_state: dict[str, dict] = {}
 
-# Events emitted before fork — drained into each worker's engine after re-init.
+# Events emitted before fork - drained into each worker's engine after re-init.
 # Same pattern as gunicorn's _pre_fork_events.
 _pre_fork_events: list = []
 
@@ -34,11 +37,10 @@ def _drain_pre_fork_events() -> None:
     """
     Feed events captured in the main process into the worker's fresh engine.
     Called from _on_worker_fork after stacktracer.init() succeeds.
-    fork() copies _pre_fork_events into every worker — we drain once then clear.
+    fork() copies _pre_fork_events into every worker - we drain once then clear.
     """
-    import stacktracer
 
-    engine = stacktracer.get_engine()
+    engine = origintracer.get_engine()
     if not _pre_fork_events or engine is None:
         return
     drained = 0
@@ -60,14 +62,6 @@ def _drain_pre_fork_events() -> None:
 class CeleryProbe(BaseProbe):
     """
     Observes the Celery task lifecycle via Celery's signal system.
-
-    Emits:
-        celery.main.start    celeryd_after_setup (parked pre-fork, drained in worker)
-        celery.worker.fork   worker_process_init (re-init confirmation)
-        celery.task.start    task_prerun
-        celery.task.end      task_postrun (with duration)
-        celery.task.retry    task_retry
-        celery.task.failure  task_failure
     """
 
     name = "celery"
@@ -129,10 +123,6 @@ class CeleryProbe(BaseProbe):
 
         logger.info("celery probe: signals disconnected")
 
-    # ------------------------------------------------------------------ #
-    # Lifecycle handlers
-    # ------------------------------------------------------------------ #
-
     def _on_main_ready(self, sender, instance, **_) -> None:
         """
         Fires in the main process after Celery is set up, before any fork.
@@ -159,16 +149,14 @@ class CeleryProbe(BaseProbe):
         Fires inside each forked prefork worker before it starts consuming tasks.
         Re-inits StackTracer, drains pre-fork events, then emits the fork event.
         """
-        import stacktracer
-
         worker_pid = os.getpid()
         master_pid = os.getppid()
         config_path = os.environ.get(
-            "STACKTRACER_CONFIG", "stacktracer.yaml"
+            "ORIGINTRACER_CONFIG", "origintracer.yaml"
         )
 
         try:
-            stacktracer.init(config=config_path)
+            origintracer.init(config=config_path)
         except Exception as exc:
             logger.warning(
                 "celery probe: re-init failed pid=%d: %s",
@@ -202,10 +190,6 @@ class CeleryProbe(BaseProbe):
             "celery probe: worker exiting (pid=%d)", os.getpid()
         )
 
-    # ------------------------------------------------------------------ #
-    # Task handlers
-    # ------------------------------------------------------------------ #
-
     def _on_task_start(
         self,
         task_id: str,
@@ -226,7 +210,7 @@ class CeleryProbe(BaseProbe):
 
         emit(
             NormalizedEvent.now(
-                probe=TASK_START,
+                probe="celery.task.start",
                 trace_id=trace_id,
                 service="celery",
                 name=task.name,
@@ -264,7 +248,7 @@ class CeleryProbe(BaseProbe):
 
         emit(
             NormalizedEvent.now(
-                probe=TASK_END,
+                probe="celery.task.end",
                 trace_id=trace_id,
                 service="celery",
                 name=task.name,
@@ -288,7 +272,7 @@ class CeleryProbe(BaseProbe):
     ) -> None:
         emit(
             NormalizedEvent.now(
-                probe=TASK_RETRY,
+                probe="celery.task.retry",
                 trace_id=request.id,
                 service="celery",
                 name=request.task,
@@ -323,7 +307,7 @@ class CeleryProbe(BaseProbe):
 
         emit(
             NormalizedEvent.now(
-                probe=TASK_FAILURE,
+                probe="celery.task.failure",
                 trace_id=trace_id,
                 service="celery",
                 name=task_name,

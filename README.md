@@ -1,4 +1,4 @@
-# StackTracer
+# OriginTracer
 
 **Live causal graph for Python async services.**
 
@@ -12,7 +12,7 @@ StackTracer instruments your production stack — nginx, gunicorn, uvicorn, Djan
 - Visualizing control flow  
 - Developer introspection  
 
-The engine is open source. Deeper knowledge — traced book chapters and the rule libraries that implement what each chapter explains — is sold separately at [stacktracer.io](https://stacktracer.io).
+The engine is open source. Deeper knowledge — traced book chapters and the rule libraries that implement what each chapter explains — is sold separately at [origintracer.app](https://origintracer.app).
 
 ---
 
@@ -26,27 +26,26 @@ user application and engine.
 ## Installation
 
 ```bash
-pip install stacktracer
-
-# or editable from source:
-pip install -e /path/to/stack-tracer
+git clone
+cd origintracer
+pip install -e .
 ```
 
 ---
 
-## Quick start — Django application
+## Quick start - Django application
 
 **settings.py** — middleware must be first:
 
 ```python
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware",  # MUST be first
+    "stacktracer.probes.django_probe.TracerMiddleware", # MUST be first
     "django.middleware.security.SecurityMiddleware",
     ...
 ]
 ```
 
-**apps.py** — one init() per process, after Django is fully loaded:
+**apps.py**
 
 ```python
 from django.apps import AppConfig
@@ -81,7 +80,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 
 ---
 
-## Quick start — Celery application
+## Quick start - Celery application
 
 Celery forks independently from gunicorn. Each process group gets its own engine.
 
@@ -103,11 +102,11 @@ automatically by `CeleryProbe`. Add `celery` to your probes list and it works.
 
 ```bash
 DJANGO_SETTINGS_MODULE=config.settings \
-STACKTRACER_CONFIG=/path/to/your/stacktracer.yaml \
+ORIGINTRACER_CONFIG=/path/to/your/origintracer.yaml \
 celery -A config worker --loglevel=info --concurrency=1
 ```
 
-Set `STACKTRACER_CONFIG` explicitly for Celery — the cwd search is not reliable
+Set `ORIGINTRACER_CONFIG` explicitly for Celery — the cwd search is not reliable
 from within the Celery process.
 
 ---
@@ -115,7 +114,7 @@ from within the Celery process.
 ## REPL
 
 ```bash
-python -m stacktracer.scripts.repl
+python -m origintracer.repl.repl
 ```
 
 ```
@@ -125,7 +124,7 @@ SHOW events LIMIT 20
 SHOW latency WHERE service = "django"
 HOTSPOT TOP 10
 TRACE <trace_id>
-\stitch <trace_id>       ← merges timeline across all live process sockets
+\stitch <trace_id>  <-- merges timeline across all live process sockets
 STATUS
 CAUSAL
 ```
@@ -140,7 +139,7 @@ into one chronological view with proportional duration bars.
 
 For Windows users, **WSL2 (Windows Subsystem for Linux)** is a strict requirement for the following features:
 
-* **Unix Domain Sockets:** The Local Query Server (`/tmp/stacktracer-*.sock`) used by the REPL for live inspection.
+* **Unix Domain Sockets:** The Local Query Server (`/tmp/origintracer-*.sock`) used by the REPL for live inspection.
 * **Nginx kprobes:** Kernel-level tracing and log-tailing triggers.
 * **Performance Stability:** High-concurrency benchmarking via Gunicorn/Uvicorn.
 
@@ -149,15 +148,17 @@ For Windows users, **WSL2 (Windows Subsystem for Linux)** is a strict requiremen
 1. Ensure you are running **WSL2**.
 2. Install dependencies within the Linux terminal:
    ```bash
-   pip install stacktracer
-
+    git clone
+    cd origintracer
+    pip install -e .
+  ```
 ---
 
 ## Probe reference
 
-These probes observe real production stacks. Add them to `stacktracer.yaml`.
+These probes observe real production stacks. Add them to `origintracer.yaml`.
 
-### nginx - on [stacktracer.io](https://stacktracer.io)
+### nginx - on [origintracer.app](https://origintracer.app)
 
 Two modes, auto-selected at startup:
 
@@ -166,18 +167,18 @@ Two modes, auto-selected at startup:
 
 ```yaml
 probes:
-  - nginx   # auto-selects eBPF if root, log-tail otherwise
+  - nginx # auto-selects eBPF if root, log-tail otherwise
 ```
 
 ProbeTypes: `nginx.connection.accept`, `nginx.request.parse`, `nginx.request.route`, `nginx.recv`, `nginx.upstream.dispatch`, `nginx.epoll.tick`
 
-### gunicorn - on [stacktracer.io](https://stacktracer.io)
+### gunicorn - on [origintracer.app](https://origintracer.app)
 
 Patches `Arbiter.spawn_worker`, `Arbiter._kill_worker`, `Worker.init_process`, `Worker.notify`, and `SyncWorker.handle_request`. Observes worker process lifecycle in the master process and per-request handling in sync workers. For `UvicornWorker`, request handling is covered by the uvicorn probe.
 
 ProbeTypes: `gunicorn.worker.spawn`, `gunicorn.worker.init`, `gunicorn.worker.exit`, `gunicorn.request.handle`, `gunicorn.worker.heartbeat`
 
-### uvicorn - on [stacktracer.io](https://stacktracer.io)
+### uvicorn - on [origintracer.app](https://origintracer.app)
 
 Patches `run_asgi()` on both `H11Protocol` and `HttpToolsProtocol` — the two HTTP/1.1 backends uvicorn ships with. Captures the full ASGI lifecycle from parsed request to response sent. Reads `X-Request-ID` forwarded by nginx so nginx and uvicorn events share the same trace ID automatically.
 
@@ -225,7 +226,6 @@ myapp/
 ├── stacktracer.yaml
 └── stacktracer/
     ├── probes/
-    │   ├── celery_types.py     << register ProbeType constants here
     │   └── celery_probe.py     << auto-discovered (*_probe.py)
     └── rules/
         └── celery_rules.py     << auto-discovered (*_rules.py)
@@ -236,15 +236,15 @@ No YAML entry required for files in these directories following the naming conve
 ### Writing a probe
 
 ```python
-# stacktracer/probes/celery_probe.py
+# origintracer/probes/celery_probe.py
 from stacktracer.sdk.base_probe import BaseProbe
 from stacktracer.sdk.emitter import emit
 from stacktracer.core.event_schema import NormalizedEvent, ProbeTypes
 from stacktracer.context.vars import get_trace_id
 
-# Register your probe types — happens at module import time
-TASK_START = ProbeTypes.register("celery.task.start", "Celery task started")
-TASK_END   = ProbeTypes.register("celery.task.end",   "Celery task completed")
+# Register your probe types - happens at module import time
+ProbeTypes.register("celery.task.start", "Celery task started")
+ProbeTypes.register("celery.task.end",   "Celery task completed")
 
 class CeleryProbe(BaseProbe):
     name = "celery"
@@ -283,8 +283,8 @@ Three rules: always call the original (probes never prevent execution), only emi
 ### Writing a causal rule
 
 ```python
-# stacktracer/rules/celery_rules.py
-from stacktracer.core.causal import CausalRule, PatternRegistry
+# origintracer/rules/celery_rules.py
+from origintracer.core.causal import CausalRule, PatternRegistry
 
 def register(registry: PatternRegistry) -> None:
     registry.register(CausalRule(
@@ -317,28 +317,17 @@ def _sync_db_in_celery(graph, temporal):
 Add new probe type strings without touching the core:
 
 ```python
-from stacktracer.core.event_schema import ProbeTypes
+from origintracer.core.event_schema import ProbeTypes
 
-# In your probe file — registration at import time
-MY_EVENT = ProbeTypes.register("myapp.thing.start", "Thing started")
+# In your probe file - registration at import time
+ProbeTypes.register("myapp.thing.start", "Thing started")
 
 # Or in bulk
 ProbeTypes.register_many({
     "myapp.export.start": "Export job started",
-    "myapp.export.end":   "Export job completed",
+    "myapp.export.end": "Export job completed",
 })
-
-# Or in stacktracer.yaml
 ```
-
-```yaml
-probe_types:
-  - name: myapp.export.start
-    description: Export job started
-```
-
-Unknown probe type strings are warned in debug logs but never rejected. The registry is for tooling visibility (`\probes` in the REPL), not enforcement.
-
 ---
 
 ## Causal rules
@@ -363,15 +352,10 @@ A minimal terminal-aesthetic dashboard that mirrors the REPL. Polls the HTTP
 bridge every 5 seconds. Views: nodes, edges, trace timeline, event log.
 
 ```bash
-cd stacktracer-ui
+cd frontend
 npm install
-npm run dev      # http://localhost:5173
+npm run dev # http://localhost:5173
 ```
-
-Add the bridge to your stacktracer package (`stacktracer/bridge.py`) — a
-20-line FastAPI app that wraps the Unix socket queries as HTTP endpoints.
-See `stacktracer-ui/src/api/client.js` for the full bridge spec.
-
 ---
 
 ## Development
@@ -381,21 +365,19 @@ See `stacktracer-ui/src/api/client.js` for the full bridge spec.
 ```bash
 # from the repo root
 pip install -e ".[dev]"
-pytest stacktracer/tests/ -x -q
+pytest origintracer/tests/ -x -q
 ```
- 
-`-x` stops on the first failure. Remove it to run the full suite.
  
 Run a specific test file:
  
 ```bash
-pytest stacktracer/tests/test_core_causal.py -x -q
+pytest origintracer/tests/test_core_causal.py -x -q
 ```
  
 Run tests matching a name pattern:
  
 ```bash
-pytest stacktracer/tests/ -k "test_n_plus_one" -v
+pytest origintracer/tests/ -k "test_n_plus_one" -v
 ```
  
 
@@ -409,13 +391,12 @@ pip install pre-commit
 pre-commit install
 ```
  
-A
 ---
 
-## OTel Bridge Mode - optional
+## OTel Bridge Mode - new (optional) and still requires testting
 
-StackTracer can run in OpenTelemetry bridge mode instead of native probe mode.
-In this mode OTel is the event source — StackTracer's own probes are disabled
+OriginTracer can run in OpenTelemetry bridge mode instead of native probe mode.
+In this mode OTel is the event source - OriginTracer's own probes are disabled
 and the engine receives events translated from OTel spans instead.
 
 **When to use OTel mode:**
@@ -445,7 +426,7 @@ pip install opentelemetry-sdk \
 Set the flag in `settings.py`:
 
 ```python
-STACKTRACER_OTEL_MODE = True   # False = native probes (default)
+ORIGINTRACER_OTEL_MODE = True  # False = native probes (default)
 ```
 
 `apps.py` reads this flag automatically and switches between native and OTel
@@ -454,25 +435,25 @@ initialisation. No other code changes needed.
 ### What `apps.py` does in each mode
 
 ```
-STACKTRACER_OTEL_MODE = False (default)
-    → stacktracer.init()               starts engine + native probes
-    → TracerMiddleware                 sets trace_id per request
-    → django/asyncio/gunicorn probes   emit NormalizedEvents directly
+ORIGINTRACER_OTEL_MODE = False (default)
+    >> stacktracer.init() starts engine + native probes
+    >> TracerMiddleware sets trace_id per request
+    >> django/asyncio/gunicorn probes emit NormalizedEvents directly
 
-STACKTRACER_OTEL_MODE = True
-    → stacktracer.init(otel_mode=True) starts engine only, no probes
-    → DjangoInstrumentor               OTel instruments Django automatically
-    → Psycopg2Instrumentor             OTel instruments DB queries
-    → BatchSpanProcessor               batches completed spans
-    → StackTracerSpanExporter          converts OTel spans → NormalizedEvents
-    → engine.process(event)            same graph, same causal rules
+ORIGINTRACER_OTEL_MODE = True
+    >> stacktracer.init(otel_mode=True) starts engine only, no probes
+    >> DjangoInstrumentor OTel instruments Django automatically
+    >> Psycopg2Instrumentor OTel instruments DB queries
+    >> BatchSpanProcessor batches completed spans
+    >> StackTracerSpanExporter converts OTel spans --> NormalizedEvents
+    >> engine.process(event) ame graph, same causal rules
 ```
 
 ---
 
 ## Performance Profile - script in django app
 
-Recent architectural benchmarks on a 4-core environment (t3.small equivalent) demonstrate the efficiency of the StackTracer kernel:
+Recent architectural benchmarks on a 4-core environment demonstrate the efficiency of the OriginTracer kernel:
 
 * **Ultra-Low Latency:** Mean overhead of **~22ms** per request during high-concurrency bursts (175+ req/s).
 * **Asynchronous Draining:** Background threads ensure the tracing engine never blocks the Django request/response cycle.

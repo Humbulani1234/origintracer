@@ -1,7 +1,7 @@
-# StackTracer — Django Application
+# OriginTracer - Django Application
 
-Traces the full request path: nginx → gunicorn → uvicorn → Django → Redis.
-StackTracer instruments automatically via probes — no decorators, no SDK calls in your views.
+Traces the full request path: nginx >> gunicorn >> uvicorn >> Django >> Redis.
+OriginTracer instruments automatically via probes - no decorators, no SDK calls in your views.
 
 ---
 
@@ -14,16 +14,14 @@ applications/django/
 │   ├── settings.py
 │   ├── asgi.py
 │   └── urls.py
-├── worker/                  ← Django app
-│   ├── __init__.py          ← empty
-│   ├── apps.py              ← AppConfig.ready() — single init() point
+├── worker/ << Django app
+│   ├── __init__.py
+│   ├── apps.py << AppConfig.ready() — single init() point
 │   ├── views.py
 │   ├── models.py
 │   └── urls.py
-├── probes/                  ← user extension probes
-│   ├── __init__.py
-│   └── redis_probe.py       ← TracedRedis (subclass, not composition)
-├── stacktracer.yaml         ← user config — overrides defaults.yaml
+│   
+├── stacktracer.yaml << user config — overrides defaults.yaml
 ├── gunicorn.conf.py
 └── manage.py
 ```
@@ -35,19 +33,16 @@ applications/django/
 ```bash
 pip install stacktracer gunicorn uvicorn django redis
 ```
-
-S
-
 ---
 
-## settings.py — critical requirement
+## settings.py
 
 `TracerMiddleware` **must be the first entry** in `MIDDLEWARE`. Without this,
-`get_trace_id()` returns `None` in all probes — events are silently dropped.
+`get_trace_id()` returns `None` in all probes - events are silently dropped.
 
 ```python
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware",  # MUST be first
+    "stacktracer.probes.django_probe.TracerMiddleware", # MUST be first
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     ...
@@ -59,7 +54,6 @@ MIDDLEWARE = [
 ## apps.py
 
 ```python
-# worker/apps.py
 from django.apps import AppConfig
 
 class WorkerConfig(AppConfig):
@@ -93,66 +87,12 @@ observe:
 
 ---
 
-## TracedRedis — subclass pattern
-
-`redis_probe.py` in the app's `probes/` directory uses subclassing, not composition.
-Composition breaks because `__getattr__` returns bound methods of the inner object,
-so `r.get()` never reaches the wrapper's `execute_command()`.
-
-```python
-# probes/redis_probe.py
-import redis
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.context.vars import get_trace_id
-from stacktracer.sdk.emitter import emit
-import time
-
-class TracedRedis(redis.Redis):
-    def execute_command(self, *args, **options):
-        trace_id = get_trace_id()
-        command  = args[0] if args else "UNKNOWN"
-        key      = str(args[1])[:100] if len(args) > 1 else ""
-        t0 = time.perf_counter()
-        try:
-            result = super().execute_command(*args, **options)
-        except Exception as exc:
-            duration_ns = int((time.perf_counter() - t0) * 1e9)
-            if trace_id:
-                emit(NormalizedEvent.now(
-                    probe="redis.command.execute", trace_id=trace_id,
-                    service="redis", name=command,
-                    duration_ns=duration_ns, key=key,
-                    error=str(exc)[:200], success=False,
-                ))
-            raise
-        else:
-            duration_ns = int((time.perf_counter() - t0) * 1e9)
-            if trace_id:
-                emit(NormalizedEvent.now(
-                    probe="redis.command.execute", trace_id=trace_id,
-                    service="redis", name=command,
-                    duration_ns=duration_ns, key=key,
-                    success=True, result_type=type(result).__name__,
-                ))
-            return result
-
-# use in views.py:
-# from probes.redis_probe import TracedRedis   ← absolute import
-# r = TracedRedis(host="localhost", port=6379, db=0)
-```
-
-Import as an **absolute** import in views — relative imports (`from ..probes`) fail
-because gunicorn adds `applications/django/` to `sys.path`, making `worker` and
-`probes` top-level packages with no shared parent.
-
----
-
-## nginx setup: this probe is available on the origintracer website.
+## nginx setup: 
 
 nginx sits in front of gunicorn and is observed via log tail (default), Lua UDP,
 or kprobe — configured in `stacktracer.yaml` under the `nginx` key.
 
-### Log tail (zero-privilege fallback)
+### Log tail
 
 The simplest mode. nginx writes a JSON access log. StackTracer tails it.
 
@@ -198,7 +138,12 @@ nginx:
   log_path: /mnt/c/Users/<you>/nginx-1.24.0/logs/access.log
 ```
 
+---
 
+## Probes
+
+The probes for: nginx, gunicorn and uvicorn are available on
+[origintracer.app](https://origintracer.app)
 
 ---
 
@@ -216,13 +161,12 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
   --workers 1
 ```
 
-
 ---
 
 ## REPL
 
 ```bash
-python -m stacktracer.scripts.repl
+python -m origintracer.repl.repl
 ```
 
 ```
@@ -240,7 +184,7 @@ SHOW events LIMIT 20
 # steady concurrent load
 python load_test.py --requests 200 --workers 20 --delay 0
 
-# burst waves — watch graph between waves
+# burst waves - watch graph between waves
 python burst_test.py --waves 6 --burst 100 --workers 15 --quiet 5
 ```
 ---

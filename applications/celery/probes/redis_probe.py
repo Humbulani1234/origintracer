@@ -1,15 +1,13 @@
 """
-stacktracer/probes/redis_probe.py
-
 Observes Redis commands without patching the global Redis class.
 
-Approach — TracedRedis subclass:
+Approach - TracedRedis subclass:
     We provide a TracedRedis class that subclasses redis.client.Redis
-    and overrides execute_command() — the single method that all
+    and overrides execute_command() - the single method that all
     redis-py commands funnel through.
 
     The user constructs TracedRedis instead of redis.Redis:
-        from stacktracer.probes.redis_probe import TracedRedis
+        from origintracer.probes.redis_probe import TracedRedis
         r = TracedRedis(host="localhost", port=6379, db=0)
 
     This is a documented pattern. redis-py is designed for subclassing —
@@ -17,32 +15,32 @@ Approach — TracedRedis subclass:
     No global patching. Other code using redis.Redis directly is unaffected.
 
     For connection pools:
-        from stacktracer.probes.redis_probe import make_traced_pool
+        from origintracer.probes.redis_probe import make_traced_pool
         pool = make_traced_pool(host="localhost", port=6379)
-        r    = TracedRedis(connection_pool=pool)
+        r = TracedRedis(connection_pool=pool)
 
 What we observe:
     Every Redis command: GET, SET, HGET, LPUSH, ZADD, etc.
     Captured via execute_command() which is the universal dispatch point.
 
     For each command:
-        command name    (GET, SET, HGET, ...)
-        key             (first argument after command name, if string)
-        duration_ns     (entry to return)
-        success         (True or False)
-        error           (exception message if failed)
+        command name - (GET, SET, HGET, ...)
+        key - (first argument after command name, if string)
+        duration_ns - (entry to return)
+        success - (True or False)
+        error - (exception message if failed)
 
-    We do NOT capture the full value — Redis values can be large
+    We do not capture the full value - Redis values can be large
     (serialized objects, binary blobs) and are not useful for causal
     reasoning. The command + key is sufficient for graph building.
 
 ProbeTypes:
-    redis.command.execute   any Redis command
+    redis.command.execute any Redis command
 
 Graph node naming:
     We use the command name as the node name:
-        redis::GET      "all GET operations on this redis instance"
-        redis::HGET     "all HGET operations"
+        redis::GET "all GET operations on this redis instance"
+        redis::HGET "all HGET operations"
     This is intentionally coarse — we care about command patterns,
     not individual keys. GraphNormalizer handles any key-level
     cardinality if a probe emits keys as names.
@@ -54,13 +52,13 @@ import logging
 import time
 from typing import Any, Optional
 
-from stacktracer.context.vars import get_span_id, get_trace_id
-from stacktracer.core.event_schema import (
+from origintracer.context.vars import get_span_id, get_trace_id
+from origintracer.core.event_schema import (
     NormalizedEvent,
     ProbeTypes,
 )
-from stacktracer.sdk.base_probe import BaseProbe
-from stacktracer.sdk.emitter import emit
+from origintracer.sdk.base_probe import BaseProbe
+from origintracer.sdk.emitter import emit
 
 logger = logging.getLogger("stacktracer.probes.redis")
 
@@ -82,10 +80,6 @@ def _get_redis():
             "redis not installed. pip install redis"
         )
 
-
-# ====================================================================== #
-# TracedRedis
-# ====================================================================== #
 
 redis = _get_redis()
 
@@ -145,11 +139,6 @@ class TracedRedis(redis.Redis):
             transaction=transaction, shard_hint=shard_hint
         )
         return TracedPipeline(raw_pipe)
-
-
-# ====================================================================== #
-# TracedPipeline
-# ====================================================================== #
 
 
 class TracedPipeline:
@@ -216,18 +205,13 @@ class TracedPipeline:
         return False
 
 
-# ====================================================================== #
-# Connection pool helper
-# ====================================================================== #
-
-
 def make_traced_pool(**kwargs) -> Any:
     """
     Create a ConnectionPool for use with TracedRedis.
 
     Usage:
         pool = make_traced_pool(host="localhost", port=6379, db=0, max_connections=20)
-        r    = TracedRedis(connection_pool=pool)
+        r = TracedRedis(connection_pool=pool)
     """
     redis_lib = _get_redis()
     return redis_lib.ConnectionPool(**kwargs)
