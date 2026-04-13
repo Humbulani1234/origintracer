@@ -1,11 +1,9 @@
 """
 Integration tests for the FastAPI backend using httpx.AsyncClient
-with ASGITransport — no real server started, no ports bound.
+with ASGITransport.
 
 Tests cover the full HTTP layer: auth, routing, request/response shapes,
 snapshot deserialization, and the startup snapshot reload path.
-
-Skipped if fastapi or httpx are not installed.
 """
 
 from __future__ import annotations
@@ -14,6 +12,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
+from origintracer.core.graph_serializer import (
+    MsgpackSerializer,
+)
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.temporal import TemporalStore
 from origintracer.storage.base import InMemoryRepository
 
 pytest.importorskip("fastapi")
@@ -168,10 +171,6 @@ class TestGraphQueries:
     async def load_snapshot(self, client):
         """Load a real snapshot before each test in this class."""
         pytest.importorskip("msgpack")
-        from origintracer.core.graph_serializer import (
-            MsgpackSerializer,
-        )
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for _ in range(5):
@@ -206,10 +205,10 @@ class TestGraphQueries:
         # First node should be django::view (called 5 times vs postgres once)
         assert data[0]["node"] == "django::view"
 
-    # async def test_causal_returns_matches_list(self, client):
-    #     r = await client.get("/api/v1/causal", headers=AUTH)
-    #     assert r.status_code == 200
-    #     assert "matches" in r.json()
+    async def test_causal_returns_matches_list(self, client):
+        r = await client.get("/api/v1/causal", headers=AUTH)
+        assert r.status_code == 200
+        assert "data" in r.json()
 
     async def test_get_graph_before_snapshot_returns_404(
         self, client
@@ -233,10 +232,6 @@ class TestStatus:
 
     async def test_status_with_snapshot(self, client):
         pytest.importorskip("msgpack")
-        from origintracer.core.graph_serializer import (
-            MsgpackSerializer,
-        )
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         g.upsert_node("svc::fn", "fn", "svc")
@@ -292,11 +287,6 @@ AUTH = {"Authorization": "Bearer test-key-0000"}
 
 def _make_snapshot_bytes(node_count: int = 2) -> bytes:
     """Build minimal msgpack snapshot bytes."""
-    from origintracer.core.graph_serializer import (
-        MsgpackSerializer,
-    )
-    from origintracer.core.runtime_graph import RuntimeGraph
-    from origintracer.core.temporal import TemporalStore
 
     g = RuntimeGraph()
     g.upsert_node("django::view", "fn", "django")
@@ -567,8 +557,6 @@ async def _post_diff_snapshot(client, bytes_: dict) -> None:
 
 def _make_diff_bytes(node_count: int = 2) -> bytes:
     """Build minimal msgpack snapshot bytes."""
-    from origintracer.core.runtime_graph import RuntimeGraph
-    from origintracer.core.temporal import TemporalStore
 
     g = RuntimeGraph()
     g.upsert_node("django::view", "fn", "django")

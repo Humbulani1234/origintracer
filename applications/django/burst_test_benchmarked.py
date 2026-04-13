@@ -1,5 +1,5 @@
 """
-Complete benchmark suite for StackTracer.
+Complete benchmark suite for OriginTracer.
 Requires the /__tracer__/stats/ view to be active in Django.
 """
 
@@ -13,19 +13,16 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BASE_URL = "http://127.0.0.1:8000"  # adjust
 DEFAULT_WAVES = 6
 DEFAULT_BURST_SIZE = 100
 DEFAULT_WORKERS = 15
 DEFAULT_QUIET_S = 5.0
 
-# Data Retrieval
-
 
 def _get_live_engine_stats(base_url: str) -> dict:
     """
     Fetches actual metrics from the running Django process via HTTP.
-    This replaces the 'ghost import' that caused 0-stats previously.
     """
     try:
         url = f"{base_url.rstrip('/')}/__tracer__/stats/"
@@ -39,7 +36,9 @@ def _get_live_engine_stats(base_url: str) -> dict:
 def _print_engine_health(
     label: str, stats: dict, prev_dropped: int = 0
 ) -> int:
-    """Prints engine health with your original formatting."""
+    """
+    Prints engine health with your original formatting.
+    """
     if not stats or "error" in stats:
         print(
             f"    [{label}] engine stats unavailable (check Django route)"
@@ -62,7 +61,7 @@ def _print_engine_health(
 
     if dropped_delta > 0:
         print(
-            f"    [{label}] total dropped={dropped_total} — drain is lagging"
+            f"    [{label}] total dropped={dropped_total} - drain is lagging"
         )
 
     # Patterns Summary
@@ -82,9 +81,6 @@ def _print_engine_health(
             )
 
     return dropped_total
-
-
-# HTTP burst logic
 
 
 def build_pool(base: str) -> list:
@@ -157,9 +153,6 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
     }
 
 
-# -------------------- Main ----------------------------------------
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_BASE_URL)
@@ -177,7 +170,7 @@ def main():
     )
     args = parser.parse_args()
 
-    print("\n🚀 StackTracer Burst Test Suite v2.0")
+    print("\n OriginTracer Burst Test Suite")
     print(
         f"   {args.waves} waves · {args.burst} req/burst · {args.workers} workers"
     )

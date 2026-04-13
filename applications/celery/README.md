@@ -8,7 +8,7 @@ allowing `\stitch` in the REPL to join both sides into one timeline.
 
 
 
----
+
 
 ## Directory layout
 
@@ -40,29 +40,19 @@ applications/celery/
 
 ```bash
 pip install stacktracer gunicorn uvicorn django celery redis
-pip install -e /path/to/stack-tracer
+
 ```
 
----
 
-## One init() per process — the critical rule
 
-| Process | Where init() is called |
-|---------|----------------------|
-| Gunicorn worker | `worker/apps.py` — `AppConfig.ready()` |
-| Celery ForkPoolWorker | `celery_probe._on_worker_fork` — after fork via `worker_process_init` signal |
-| `config/celery.py` | **never** — causes duplicate engine bug |
-| `worker/__init__.py` | **never** |
 
-**Duplicate init() symptom:** `Local query server failed to start: [Errno 98] Address already in use`.
-Two engines in the same process — REPL connects to engine 1 (empty), events land in engine 2.
 
 ---
 
 ## config/celery.py
 
 ```python
-# config/celery.py
+
 import os
 from celery import Celery
 
@@ -70,18 +60,18 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 app = Celery("config")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
-# NO stacktracer.init() here
+
 ```
 
 ```python
-# config/__init__.py
+
 from .celery import app as celery_app
 __all__ = ["celery_app"]
 ```
 
 ---
 
-## worker/apps.py — init() for gunicorn only
+## worker/apps.py 
 
 ```python
 from django.apps import AppConfig
@@ -109,7 +99,6 @@ probes:
   - redis
 ```
 
----
 
 
 
@@ -120,12 +109,9 @@ probes:
 The view emits a `celery.task.dispatch` event with `service="celery"` so the
 node name is `celery::task_name`, not `django::task_name`. The edge then reads:
 
-```
-django::/tasks/report/1/  ──dispatched──►  celery::myapp.tasks.process_report
-```
 
 ```python
-# worker/views.py
+
 from stacktracer.context.vars import get_trace_id
 from stacktracer.sdk.emitter import emit
 from stacktracer.core.event_schema import NormalizedEvent
@@ -137,7 +123,7 @@ def _dispatch(task_fn, *args, **kwargs):
         emit(NormalizedEvent.now(
             probe="celery.task.dispatch",
             trace_id=trace_id,
-            service="celery",          # ← not "django"
+            service="celery",          
             name=task_fn.name,
         ))
 ```
@@ -177,15 +163,7 @@ does not always find the yaml from within the Celery process.
 
 ## REPL
 
-Two sockets are created — one per process group:
 
-```bash
-ls /tmp/stacktracer-*.sock
-# /tmp/stacktracer-24861.sock   ← gunicorn worker
-# /tmp/stacktracer-25103.sock   ← celery ForkPoolWorker
-```
-
-Open two REPL sessions or use `\stitch`:
 
 ```bash
 python -m stacktracer.scripts.repl
@@ -204,7 +182,6 @@ SHOW edges        ← MainProcess ──spawned──► ForkPoolWorker ──ra
 \stitch <trace_id>
 ```
 
-**`\stitch` takes a trace_id, not a node name.** Get a real trace_id first:
 
 ```
 SHOW events LIMIT 5

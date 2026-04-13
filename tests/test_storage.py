@@ -1,23 +1,3 @@
-"""
-tests/test_storage.py
-
-Tests for all three storage backends via the BaseRepository interface.
-
-Only InMemoryRepository is tested directly — it requires no external
-dependencies (no Postgres, no ClickHouse) and is the backend used in
-development and CI.
-
-PostgreSQL and ClickHouse tests are marked with pytest.mark.integration
-and skipped unless the environment variable STACKTRACER_TEST_DB_DSN
-or STACKTRACER_TEST_CH_HOST are set respectively.
-
-Tests focus on:
-    - insert_event / query_events (events table)
-    - insert_snapshot / get_latest_snapshot (snapshots table)
-    - insert_deployment_marker (markers table)
-    - BaseRepository interface completeness
-"""
-
 from __future__ import annotations
 
 import os
@@ -31,8 +11,6 @@ from origintracer.storage.base import (
 )
 
 from .conftest import evt
-
-# ── Shared contract tests — run against any backend ───────────────────────
 
 
 def run_event_contract(repo: BaseRepository):
@@ -73,17 +51,10 @@ def run_marker_contract(repo: BaseRepository):
     # No query API for markers — just verify it doesn't raise
 
 
-# ====================================================================== #
-# InMemoryRepository — full test coverage
-# ====================================================================== #
-
-
 class TestInMemoryRepository:
 
     def setup_method(self):
         self.repo = InMemoryRepository()
-
-    # ── Events ────────────────────────────────────────────────────────────
 
     def test_event_contract(self):
         run_event_contract(self.repo)
@@ -140,8 +111,6 @@ class TestInMemoryRepository:
         except Exception:
             pytest.fail("insert_event raised on bad input")
 
-    # ── Snapshots ─────────────────────────────────────────────────────────
-
     def test_snapshot_contract(self):
         run_snapshot_contract(self.repo)
 
@@ -177,8 +146,6 @@ class TestInMemoryRepository:
             == b"other-data"
         )
 
-    # ── Markers ───────────────────────────────────────────────────────────
-
     def test_marker_contract(self):
         run_marker_contract(self.repo)
 
@@ -190,9 +157,7 @@ class TestInMemoryRepository:
         assert len(self.repo._markers["acme"]) == 2
 
 
-# ====================================================================== #
-# BaseRepository interface completeness check
-# ====================================================================== #
+#
 
 
 class TestBaseRepositoryInterface:
@@ -219,9 +184,7 @@ class TestBaseRepositoryInterface:
             ), f"InMemoryRepository is missing abstract method: {method_name}"
 
 
-# ====================================================================== #
-# PostgreSQL — integration tests (skipped without DSN)
-# ====================================================================== #
+#
 
 
 @pytest.mark.integration

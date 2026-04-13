@@ -1,24 +1,8 @@
-"""
-tests/test_query.py
-
-Tests for the DSL query layer:
-    Parser   — tokenises and validates query strings
-    Executor — runs parsed queries against a live RuntimeGraph
-
-These are the tests most likely to reveal regressions when the query
-language is extended. Parser tests are pure unit tests (no graph needed).
-Executor tests are integration tests (need a populated engine).
-"""
-
 from __future__ import annotations
 
 import pytest
 
 from .conftest import evt
-
-# ====================================================================== #
-# Parser
-# ====================================================================== #
 
 
 class TestQueryParser:
@@ -102,9 +86,7 @@ class TestQueryParser:
             parse("   ")
 
 
-# ====================================================================== #
-# Executor — requires a live engine with data
-# ====================================================================== #
+#
 
 
 class TestQueryExecutor:
@@ -113,8 +95,6 @@ class TestQueryExecutor:
         from origintracer.query.parser import execute, parse
 
         return execute(parse(query_str), engine)
-
-    # ── SHOW LATENCY ──────────────────────────────────────────────────────
 
     def test_show_latency_returns_matching_nodes(
         self, engine, trace_id
@@ -218,8 +198,6 @@ class TestQueryExecutor:
         assert row["avg_duration_ms"] is not None
         assert row["avg_duration_ms"] > 0
 
-    # ── SHOW NODES ────────────────────────────────────────────────────────
-
     def test_show_nodes_returns_all_fields(
         self, engine, trace_id
     ):
@@ -259,8 +237,6 @@ class TestQueryExecutor:
             r["service"] == "django" for r in result["data"]
         )
 
-    # ── SHOW EDGES ────────────────────────────────────────────────────────
-
     def test_show_edges_returns_source_target_type(
         self, engine, trace_id
     ):
@@ -288,8 +264,6 @@ class TestQueryExecutor:
             assert "target" in e
             assert "type" in e
 
-    # ── SHOW STATUS ───────────────────────────────────────────────────────
-
     def test_show_status_returns_graph_counts(
         self, engine, trace_id
     ):
@@ -307,21 +281,15 @@ class TestQueryExecutor:
         assert "pid" in data
         assert "uptime_s" in data
 
-    # ── SHOW ACTIVE ───────────────────────────────────────────────────────
-
     def test_show_active_returns_list(self, engine):
         result = self._run("SHOW active", engine)
         assert "data" in result
         assert isinstance(result["data"], list)
 
-    # ── SHOW PROBES ───────────────────────────────────────────────────────
-
     def test_show_probes_returns_list(self, engine):
         result = self._run("SHOW probes", engine)
         assert "data" in result
         assert isinstance(result["data"], list)
-
-    # ── SHOW RULES ────────────────────────────────────────────────────────
 
     def test_show_rules_includes_new_rules(self, engine):
         result = self._run("SHOW rules", engine)
@@ -330,8 +298,6 @@ class TestQueryExecutor:
         assert "db_query_hotspot" in names
         assert "n_plus_one_queries" in names
         assert "worker_imbalance" in names
-
-    # ── SHOW SEMANTIC ─────────────────────────────────────────────────────
 
     def test_show_semantic_lists_labels_with_descriptions(
         self, engine
@@ -344,8 +310,6 @@ class TestQueryExecutor:
         for item in result["data"]:
             assert "label" in item
             assert "description" in item
-
-    # ── Semantic resolution via service= and system= ──────────────────────
 
     def test_show_graph_scoped_by_system(self, engine, trace_id):
         """WHERE system = "export" scopes graph to export nodes only."""
@@ -399,8 +363,6 @@ class TestQueryExecutor:
             r["service"] == "django" for r in result["data"]
         )
 
-    # ── HOTSPOT ───────────────────────────────────────────────────────────
-
     def test_hotspot_returns_bounded_list(
         self, engine, trace_id
     ):
@@ -452,8 +414,6 @@ class TestQueryExecutor:
         result = self._run("HOTSPOT TOP 5", engine)
         assert "data" in result
 
-    # ── CAUSAL ────────────────────────────────────────────────────────────
-
     def test_causal_returns_data_key(self, engine):
         result = self._run("CAUSAL", engine)
         assert "data" in result
@@ -461,8 +421,6 @@ class TestQueryExecutor:
     def test_causal_tag_filter_accepted(self, engine):
         result = self._run('CAUSAL WHERE tags = "n+1"', engine)
         assert "data" in result  # may be empty — must not crash
-
-    # ── BLAME ─────────────────────────────────────────────────────────────
 
     def test_blame_known_system_returns_data(
         self, engine, trace_id
@@ -484,8 +442,6 @@ class TestQueryExecutor:
             'BLAME WHERE system = "completely_unknown"', engine
         )
         assert "error" in result
-
-    # ── TRACE ─────────────────────────────────────────────────────────────
 
     def test_trace_returns_critical_path(self, engine, trace_id):
         engine.process(
@@ -519,8 +475,6 @@ class TestQueryExecutor:
     def test_trace_unknown_returns_error_or_empty(self, engine):
         result = self._run("TRACE nonexistent-trace-000", engine)
         assert "error" in result or result.get("stages", 0) == 0
-
-    # ── DIFF ──────────────────────────────────────────────────────────────
 
     def test_diff_returns_dict(self, engine, trace_id):
         engine.process(

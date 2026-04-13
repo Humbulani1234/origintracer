@@ -26,7 +26,9 @@ def evt(
     duration_ns: int | None = None,
     **meta,
 ) -> NormalizedEvent:
-    """One-liner event factory used throughout tests."""
+    """
+    One-liner event factory used throughout tests.
+    """
     return NormalizedEvent.now(
         probe=probe,
         trace_id=trace_id,
@@ -124,7 +126,9 @@ def engine(tracker) -> Engine:
 
 @pytest.fixture
 def graph(engine):
-    """Convenience shortcut to engine.graph."""
+    """
+    Convenience shortcut to engine.graph.
+    """
     return engine.graph
 
 
@@ -136,7 +140,7 @@ def repo():
 @pytest.fixture(autouse=True)
 def cleanup_emitter():
     """
-    This runs automatically after EVERY test.
+    This runs automatically after every test.
     It ensures no background threads are left running.
     """
     yield  # Run the test
@@ -157,5 +161,5 @@ def require_rule(request):
         rule_name = marker.args[0]
         if rule_name not in PatternRegistry.rule_names():
             pytest.skip(
-                f"Rule '{rule_name}' not registered — user rule not loaded"
+                f"Rule '{rule_name}' not registered - user rule not loaded"
             )

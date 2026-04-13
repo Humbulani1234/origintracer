@@ -36,11 +36,7 @@ applications/django/
 pip install stacktracer gunicorn uvicorn django redis
 ```
 
-StackTracer installed as editable from the repo root:
-
-```bash
-pip install -e /path/to/stack-tracer
-```
+S
 
 ---
 
@@ -60,7 +56,7 @@ MIDDLEWARE = [
 
 ---
 
-## apps.py — one init() per process
+## apps.py
 
 ```python
 # worker/apps.py
@@ -220,14 +216,6 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
   --workers 1
 ```
 
-For multiple workers (graph shows separate `UvicornWorker-{pid}` nodes):
-
-```bash
-  --workers 3
-```
-
-With 3 workers but low request rate the OS routes to the same worker. Use
-`--delay 0` in the load test scripts to saturate all workers.
 
 ---
 

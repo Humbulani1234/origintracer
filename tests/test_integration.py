@@ -25,26 +25,21 @@ Each test class represents one realistic scenario:
 
 from __future__ import annotations
 
-import time
 import uuid
 
 import pytest
 
 from origintracer.__init__ import ResolvedConfig
-from origintracer.core.active_requests import (
-    ActiveRequestTracker,
-)
 from origintracer.core.engine import Engine
 from origintracer.core.event_schema import NormalizedEvent
+from origintracer.core.graph_serializer import (
+    MsgpackSerializer,
+)
+from origintracer.core.runtime_graph import RuntimeGraph
 from origintracer.sdk.emitter import (
-    bind_engine,
     emit,
     enable_sync_mode,
 )
-
-from .conftest import evt
-
-# ----------------- Full stack HTTP request trace -----------------
 
 
 class TestNginxDjangoPostgresTrace:
@@ -209,11 +204,6 @@ class TestNginxDjangoPostgresTrace:
         assert "/api/orders/" in summary
 
 
-# ====================================================================== #
-# Deployment correlation
-# ====================================================================== #
-
-
 class TestDeploymentCorrelation:
     """
     new_sync_call_after_deployment rule fires when edges appear after a
@@ -230,11 +220,6 @@ class TestDeploymentCorrelation:
         engine.snapshot()  # temporal store captures the marker
         found = engine.temporal.label_diff("v3.0.0")
         assert found is not None
-
-
-# ====================================================================== #
-# High-cardinality normalization through to graph
-# ====================================================================== #
 
 
 class TestHighCardinalityNormalization:
@@ -278,11 +263,6 @@ class TestHighCardinalityNormalization:
         assert "/0/" not in django_nodes[0]
 
 
-# ====================================================================== #
-# Graph snapshot round-trip
-# ====================================================================== #
-
-
 class TestSnapshotRoundTrip:
     """
     The agent serialises its RuntimeGraph to msgpack and ships it to
@@ -293,10 +273,6 @@ class TestSnapshotRoundTrip:
 
     def test_msgpack_round_trip_preserves_topology(self):
         pytest.importorskip("msgpack")
-        from origintracer.core.graph_serializer import (
-            MsgpackSerializer,
-        )
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         # Build source graph
         g = RuntimeGraph()
@@ -324,10 +300,6 @@ class TestSnapshotRoundTrip:
 
     def test_msgpack_round_trip_preserves_call_counts(self):
         pytest.importorskip("msgpack")
-        from origintracer.core.graph_serializer import (
-            MsgpackSerializer,
-        )
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for _ in range(7):
@@ -350,10 +322,6 @@ class TestSnapshotRoundTrip:
             3. Backend mounts the graph on an Engine and serves a DSL query
         """
         pytest.importorskip("msgpack")
-        from origintracer.core.graph_serializer import (
-            MsgpackSerializer,
-        )
-        from origintracer.core.runtime_graph import RuntimeGraph
         from origintracer.query.parser import execute, parse
 
         # Agent side
@@ -382,25 +350,20 @@ class TestSnapshotRoundTrip:
         )  # called 3 times vs postgres 1
 
 
-# ====================================================================== #
-# N+1 query detection — end to end
-# ====================================================================== #
-
-
 class TestNPlusOneEndToEnd:
     """
     The scenario confirmed live in the REPL:
-        GET /n1/ → NPlusOneView
+        GET /n1/ >> NPlusOneView
             SELECT author  (×1)
             SELECT book WHERE author_id=%s  (×10)
-        CAUSAL → n_plus_one fires at ≥ 85% confidence
+        CAUSAL >> n_plus_one fires at ≥ 85% confidence
 
     This test owns the full path:
-        emit() → engine.process() → RuntimeGraph
-              → causal registry → n_plus_one rule
-              → DSL CAUSAL query → result
+        emit() >> engine.process() → RuntimeGraph
+               >> causal registry → n_plus_one rule
+               >> DSL CAUSAL query → result
 
-    If N_PLUS_ONE breaks at any layer, this is the test that catches it.
+    If N_PLUS_ONE breaks at any layer, this is the test catches it.
     """
 
     def setup_method(self):
@@ -414,17 +377,17 @@ class TestNPlusOneEndToEnd:
     ):
         tid = str(uuid.uuid4())
 
-        # 1. Create the View event first
+        # Create the View event first
         view_enter = NormalizedEvent.now(
             "django.view.enter", tid, "django", "NPlusOneView"
         )
 
-        # 2. Tell the engine this is the ROOT of the trace
+        # Tell the engine this is the root of the trace
         engine.process(view_enter)
 
-        # 3. For the queries, we want them to all point to 'view_enter'
+        # For the queries, we want them to all point to 'view_enter'
         # If your Engine/Tracker doesn't handle this automatically,
-        # you MUST pass the parent_event to the graph
+        # you must pass the parent_event to the graph
         for _ in range(n_authors):
             author_q = NormalizedEvent.now(
                 "django.db.query",
@@ -445,12 +408,12 @@ class TestNPlusOneEndToEnd:
                 "SELECT ... book ...",
                 duration_ns=2_500_000,
             )
-            # Point back to the view_enter, NOT the author query
+            # Point back to the view_enter, not the author query
             engine.graph.add_from_event(
                 book_q, parent_event=view_enter
             )
 
-        # 4. Finalize the view
+        # Finalize the view
         view_exit = NormalizedEvent.now(
             "django.view.exit",
             tid,
@@ -579,15 +542,10 @@ class TestNPlusOneEndToEnd:
         ), "n_plus_one_queries fired after prefetch fix — ratio should be 1:1, below threshold"
 
 
-# ====================================================================== #
-# Gunicorn worker topology — end to end
-# ====================================================================== #
-
-
 class TestGunicornTopologyEndToEnd:
     """
     Verify the full gunicorn topology chain is built through emit():
-        gunicorn::master ──spawned──► gunicorn::UvicornWorker ──handled──► uvicorn::/n1/
+        gunicorn::master -- spawned --> gunicorn::UvicornWorker -- handled --> uvicorn::/n1/
 
     _add_structural_edges is unit-tested in test_core_graph.py.
     This test verifies the wiring: that the engine calls _add_structural_edges
@@ -633,7 +591,7 @@ class TestGunicornTopologyEndToEnd:
             and e.target == "gunicorn::UvicornWorker"
         ]
         assert spawned, (
-            "No 'spawned' edge from gunicorn::master → gunicorn::UvicornWorker. "
+            "No 'spawned' edge from gunicorn::master >> gunicorn::UvicornWorker. "
             "Check engine.process() calls graph.add_from_event() which calls "
             "_add_structural_edges for gunicorn.worker.fork events."
         )
@@ -722,11 +680,6 @@ class TestGunicornTopologyEndToEnd:
         matches = engine.evaluate()
         rule_names = [m.rule_name for m in matches]
         assert "worker_imbalance" in rule_names
-
-
-# ====================================================================== #
-# Config merge pipeline
-# ====================================================================== #
 
 
 class TestConfigMergePipeline:

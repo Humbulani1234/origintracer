@@ -1,30 +1,9 @@
-"""
-tests/test_event_schema.py
-
-Dedicated tests for NormalizedEvent and the event_schema module.
-
-Focus areas:
-    1. Construction — direct and via .now() factory
-    2. Field extraction — duration_ns, pid, tid must land on the dataclass
-       field, not be swallowed into metadata (**kwargs)
-    3. Serialisation — to_dict() / from_dict() round-trip preserves every field
-    4. Metadata isolation — only genuinely unknown kwargs go into metadata
-    5. Timestamps — wall_time and timestamp are captured at construction time
-    6. Span identity — span_id generated, parent_span_id propagated correctly
-"""
-
 from __future__ import annotations
 
 import time
 import uuid
 
-import pytest
-
 from origintracer.core.event_schema import NormalizedEvent
-
-# ====================================================================== #
-# Direct construction
-# ====================================================================== #
 
 
 class TestNormalizedEventConstruction:
@@ -89,11 +68,6 @@ class TestNormalizedEventConstruction:
             probe="p", service="s", name="n", trace_id="t"
         )
         assert e.parent_span_id is None
-
-
-# ====================================================================== #
-# .now() factory — field extraction from kwargs
-# ====================================================================== #
 
 
 class TestNormalizedEventNow:
@@ -211,11 +185,6 @@ class TestNormalizedEventNow:
         assert len(e.span_id) == 16
 
 
-# ====================================================================== #
-# Serialisation — to_dict() / from_dict()
-# ====================================================================== #
-
-
 class TestNormalizedEventSerialisation:
 
     def _make(self, **kwargs) -> NormalizedEvent:
@@ -321,11 +290,6 @@ class TestNormalizedEventSerialisation:
         assert "duration_ns" not in restored.metadata
 
 
-# ====================================================================== #
-# repr and string formatting
-# ====================================================================== #
-
-
 class TestNormalizedEventRepr:
 
     def test_repr_contains_probe(self):
@@ -352,11 +316,6 @@ class TestNormalizedEventRepr:
         )
         # Must not raise even with all optional fields at defaults
         _ = repr(e)
-
-
-# ====================================================================== #
-# Edge cases
-# ====================================================================== #
 
 
 class TestNormalizedEventEdgeCases:

@@ -1,7 +1,5 @@
 """
-
-
-Integration tests for Engine — the component that wires together
+Integration tests for Engine - the component that wires together
 RuntimeGraph, TemporalStore, PatternRegistry, SemanticLayer, and
 ActiveRequestTracker.
 
@@ -14,9 +12,12 @@ Engine.process() is called directly.
 
 from __future__ import annotations
 
-import time
+import threading
 
-import pytest
+from origintracer.core.engine import Engine
+from origintracer.core.graph_compactor import (
+    GraphCompactor,
+)
 
 from .conftest import evt
 
@@ -126,7 +127,7 @@ class TestEngineGraphBuilding:
     ):
         """
         After the NormalizedEvent.now() fix, duration_ns must be on the
-        dataclass field — not in event.metadata. The engine reads
+        dataclass field - not in event.metadata. The engine reads
         event.duration_ns; if it's in metadata the node avg stays None.
         """
         e = evt(
@@ -338,13 +339,6 @@ class TestEngineCompactorIntegration:
         After it fires at least once, compactor._compact_runs must be >= 1
         and the graph must be within the cap.
         """
-        import threading
-
-        from origintracer.core.engine import Engine
-        from origintracer.core.graph_compactor import (
-            GraphCompactor,
-        )
-
         engine = Engine(
             snapshot_interval_s=0.05
         )  # 50ms — fires quickly in test
@@ -390,8 +384,6 @@ class TestEngineCompactorIntegration:
         Verifies the fix for the unbounded dict growth bug:
         at 100 req/s without eviction the dict accumulates 360k entries/hour.
         """
-        from origintracer.core.engine import Engine
-
         engine = Engine(snapshot_interval_s=9999)
         engine._trace_ttl_s = 0.05  # 50ms TTL so the test does not need to sleep long
 

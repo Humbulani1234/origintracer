@@ -1,26 +1,9 @@
-"""
-tests/test_core_tracker.py
-
-Tests for:
-    ActiveRequestTracker  — in-flight request tracking and latency comparison
-    SemanticLayer         — human label → graph node resolution
-"""
-
 from __future__ import annotations
 
 import time
 
-import pytest
-
 from origintracer.core.active_requests import (
     ActiveRequestTracker,
-    RequestSpan,
-)
-from origintracer.core.runtime_graph import RuntimeGraph
-from origintracer.core.semantic import (
-    SemanticAlias,
-    SemanticLayer,
-    load_from_dict,
 )
 
 
@@ -160,99 +143,3 @@ class TestActiveRequestTracker:
             th.join()
 
         assert not errors
-
-
-# ====================================================================== #
-# SemanticLayer
-# ====================================================================== #
-
-
-class TestSemanticLayer:
-
-    def setup_method(self):
-        self.layer = SemanticLayer()
-        self.layer.register(
-            SemanticAlias(
-                label="export",
-                description="Export pipeline",
-                node_patterns=[
-                    "django::handle_export",
-                    r"django::flags_client\..*",
-                ],
-                services=["exporter"],
-            )
-        )
-        self.layer.register(
-            SemanticAlias(
-                label="db",
-                description="Database layer",
-                services=["postgres", "redis"],
-                node_patterns=[],
-            )
-        )
-
-    def _make_graph(self):
-        g = RuntimeGraph()
-        g.upsert_node("django::handle_export", "fn", "django")
-        g.upsert_node(
-            "django::flags_client.call", "fn", "django"
-        )
-        g.upsert_node("exporter::publish", "fn", "exporter")
-        g.upsert_node(
-            "postgres::SELECT orders", "db", "postgres"
-        )
-        g.upsert_node("django::unrelated_view", "fn", "django")
-        return g
-
-    def test_resolve_by_exact_node_pattern(self):
-        g = self._make_graph()
-        nodes = self.layer.resolve_nodes("export", g)
-        assert "django::handle_export" in nodes
-
-    def test_resolve_by_regex_node_pattern(self):
-        g = self._make_graph()
-        nodes = self.layer.resolve_nodes("export", g)
-        assert "django::flags_client.call" in nodes
-
-    def test_resolve_by_service(self):
-        g = self._make_graph()
-        nodes = self.layer.resolve_nodes("export", g)
-        assert "exporter::publish" in nodes
-
-    def test_resolve_db_by_service(self):
-        g = self._make_graph()
-        nodes = self.layer.resolve_nodes("db", g)
-        assert "postgres::SELECT orders" in nodes
-
-    def test_unrelated_node_excluded(self):
-        g = self._make_graph()
-        nodes = self.layer.resolve_nodes("export", g)
-        assert "django::unrelated_view" not in nodes
-
-    def test_unknown_label_returns_empty_set(self):
-        g = self._make_graph()
-        assert (
-            self.layer.resolve_nodes("nonexistent", g) == set()
-        )
-
-    def test_case_insensitive_label_lookup(self):
-        g = self._make_graph()
-        nodes_lower = self.layer.resolve_nodes("export", g)
-        nodes_upper = self.layer.resolve_nodes("EXPORT", g)
-        assert nodes_lower == nodes_upper
-
-    def test_load_from_dict(self):
-        data = [
-            {
-                "label": "auth",
-                "description": "Auth service",
-                "node_patterns": ["django::authenticate"],
-                "services": ["auth"],
-                "tags": ["security"],
-            }
-        ]
-        layer = load_from_dict(data)
-        g = RuntimeGraph()
-        g.upsert_node("django::authenticate", "fn", "django")
-        nodes = layer.resolve_nodes("auth", g)
-        assert "django::authenticate" in nodes

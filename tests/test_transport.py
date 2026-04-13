@@ -1,31 +1,17 @@
-"""
-tests/test_transport.py
-
-Tests for the transport layer:
-    EventBuffer / emit()   — SDK interface between probes and engine
-    Uploader               — batching, repository interface, snapshot serialisation
-
-Uploader HTTP tests use httpx.MockTransport so no real server is needed.
-"""
-
 from __future__ import annotations
 
 import threading
-import time
 
+import httpx
 import pytest
 
-from origintracer.core.event_schema import NormalizedEvent
+from origintracer.core.runtime_graph import RuntimeGraph
 from origintracer.sdk.uploader import (
     Uploader,
     _UploaderEventBuffer,
 )
 
 from .conftest import evt
-
-# ====================================================================== #
-# EventBuffer
-# ====================================================================== #
 
 
 class TestEventBuffer:
@@ -85,11 +71,6 @@ class TestEventBuffer:
 
         assert not errors
         assert sum(pushed) == 2000
-
-
-# ====================================================================== #
-# emit() and bind_engine
-# ====================================================================== #
 
 
 class TestEmitter:
@@ -173,11 +154,6 @@ class TestEmitter:
         emit(evt())
 
 
-# ====================================================================== #
-# Uploader — insert_event interface
-# ====================================================================== #
-
-
 class TestUploaderRepositoryInterface:
     """
     Uploader implements BaseRepository.insert_event() so Engine.process()
@@ -234,9 +210,7 @@ class TestUploaderRepositoryInterface:
         assert u._running is False
 
 
-# ====================================================================== #
-# Uploader — HTTP flush (mocked)
-# ====================================================================== #
+#
 
 
 class TestUploaderHTTPFlush:
@@ -282,10 +256,6 @@ class TestUploaderHTTPFlush:
     def test_flush_snapshot_posts_to_correct_endpoint(
         self, monkeypatch
     ):
-        import httpx
-
-        from origintracer.core.runtime_graph import RuntimeGraph
-        from origintracer.sdk.uploader import Uploader
 
         requests_made = []
 
@@ -333,9 +303,6 @@ class TestUploaderHTTPFlush:
     def test_flush_events_skips_when_buffer_empty(
         self, monkeypatch
     ):
-        import httpx
-
-        from origintracer.sdk.uploader import Uploader
 
         calls = []
         monkeypatch.setattr(
@@ -352,9 +319,6 @@ class TestUploaderHTTPFlush:
     def test_failed_upload_increments_failed_counter(
         self, monkeypatch
     ):
-        import httpx
-
-        from origintracer.sdk.uploader import Uploader
 
         def mock_post(*a, **k):
             return httpx.Response(

@@ -1,22 +1,18 @@
-"""
-
-
-Tests for the four graph-layer components:
-    RuntimeGraph     — topology store and query engine
-    TemporalStore    — diff capture and deployment correlation
-    GraphNormalizer  — high-cardinality name collapsing
-    GraphCompactor   — memory-bounded eviction
-
-Tests here are a mix of unit (component in isolation) and integration
-(two components working together, e.g. Normalizer feeding Compactor).
-
-"""
-
 from __future__ import annotations
 
 import time
 
-import pytest
+from origintracer.core.event_schema import (
+    NormalizedEvent,
+)
+from origintracer.core.graph_compactor import (
+    GraphCompactor,
+)
+from origintracer.core.graph_normalizer import (
+    GraphNormalizer,
+)
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.temporal import TemporalStore
 
 from .conftest import evt
 
@@ -24,7 +20,6 @@ from .conftest import evt
 class TestRuntimeGraph:
 
     def setup_method(self):
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         self.g = RuntimeGraph()
 
@@ -144,9 +139,6 @@ class TestRuntimeGraph:
         duration_ns ended up in metadata, add_from_event must still
         accumulate it via the metadata fallback path.
         """
-        from origintracer.core.event_schema import (
-            NormalizedEvent,
-        )
 
         # Build event manually — bypass .now() to simulate old behaviour
         e = NormalizedEvent(
@@ -184,12 +176,8 @@ class TestRuntimeGraph:
     ):
         """
         A gunicorn.worker.fork event must create a spawned edge from
-        master → worker automatically via _add_structural_edges.
+        master >> worker automatically via _add_structural_edges.
         """
-        from origintracer.core.event_schema import (
-            NormalizedEvent,
-        )
-
         master_evt = NormalizedEvent.now(
             probe="gunicorn.master.start",
             trace_id="t-guni",
@@ -272,8 +260,6 @@ class TestRuntimeGraph:
 class TestTemporalStore:
 
     def setup_method(self):
-        from origintracer.core.runtime_graph import RuntimeGraph
-        from origintracer.core.temporal import TemporalStore
 
         self.store = TemporalStore()
         self.g = RuntimeGraph()
@@ -366,9 +352,6 @@ class TestTemporalStore:
 class TestGraphNormalizer:
 
     def setup_method(self):
-        from origintracer.core.graph_normalizer import (
-            GraphNormalizer,
-        )
 
         self.n = GraphNormalizer(enable_builtins=True)
 
@@ -457,7 +440,6 @@ class TestGraphCompactor:
     def _make_graph_with_nodes(
         self, count: int, cold: bool = False
     ):
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         for i in range(count):
@@ -469,10 +451,6 @@ class TestGraphCompactor:
         return g
 
     def test_ttl_eviction_removes_cold_nodes(self):
-        from origintracer.core.graph_compactor import (
-            GraphCompactor,
-        )
-
         g = self._make_graph_with_nodes(10, cold=True)
         c = GraphCompactor(node_ttl_s=3600.0, min_call_count=999)
         stats = c.compact(g)
@@ -484,10 +462,6 @@ class TestGraphCompactor:
 
     def test_ttl_eviction_spares_hot_nodes(self):
         """Nodes with call_count >= min_call_count must survive TTL eviction."""
-        from origintracer.core.graph_compactor import (
-            GraphCompactor,
-        )
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         # Hot node — called many times, but not seen recently
@@ -508,9 +482,6 @@ class TestGraphCompactor:
         assert "svc::cold" not in g._nodes
 
     def test_cap_eviction_when_over_limit(self):
-        from origintracer.core.graph_compactor import (
-            GraphCompactor,
-        )
 
         g = self._make_graph_with_nodes(100)
 
@@ -531,10 +502,6 @@ class TestGraphCompactor:
         )  # Use "evicted_nodes" instead of "cap_evicted"
 
     def test_compact_runs_counter_increments(self):
-        from origintracer.core.graph_compactor import (
-            GraphCompactor,
-        )
-        from origintracer.core.runtime_graph import RuntimeGraph
 
         g = RuntimeGraph()
         c = GraphCompactor()

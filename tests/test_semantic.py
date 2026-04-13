@@ -1,25 +1,3 @@
-"""
-tests/test_semantic.py
-
-Dedicated tests for SemanticLayer, SemanticAlias, load_from_dict,
-load_from_yaml, and merge_yaml_configs.
-
-This file supersedes the scattered SemanticLayer tests in
-test_core_tracker.py and test_full_stack.py. Those remain for
-backward compatibility but this file owns the canonical coverage.
-
-Focus areas:
-    1. SemanticAlias  — matches_node (exact, regex), matches_service
-    2. SemanticLayer  — register, resolve_nodes, resolve_services,
-                        describe, all_labels, __contains__, __iter__
-    3. Resolution     — service match, pattern match, combined, exclusion
-    4. Case handling  — labels are case-insensitive
-    5. YAML loading   — load_from_dict, load_from_yaml, merge_yaml_configs
-    6. Override       — later registration wins over earlier for same label
-    7. Integration    — all nine labels from the default stacktracer.yaml
-                        resolve correctly against a realistic graph
-"""
-
 from __future__ import annotations
 
 import os
@@ -35,8 +13,6 @@ from origintracer.core.semantic import (
     load_from_yaml,
     merge_yaml_configs,
 )
-
-# ── Helpers ────────────────────────────────────────────────────────────────
 
 
 def _graph(*node_specs) -> RuntimeGraph:
@@ -137,9 +113,7 @@ def _layer_with_defaults() -> SemanticLayer:
     )
 
 
-# ====================================================================== #
-# SemanticAlias
-# ====================================================================== #
+#
 
 
 class TestSemanticAlias:
@@ -214,11 +188,6 @@ class TestSemanticAlias:
         assert result is False
 
 
-# ====================================================================== #
-# SemanticLayer — registration and retrieval
-# ====================================================================== #
-
-
 class TestSemanticLayerRegistry:
 
     def setup_method(self):
@@ -290,11 +259,6 @@ class TestSemanticLayerRegistry:
 
     def test_resolve_services_unknown_returns_empty(self):
         assert self.layer.resolve_services("nonexistent") == []
-
-
-# ====================================================================== #
-# SemanticLayer — resolve_nodes
-# ====================================================================== #
 
 
 class TestSemanticLayerResolveNodes:
@@ -395,11 +359,6 @@ class TestSemanticLayerResolveNodes:
         assert result == set()
 
 
-# ====================================================================== #
-# load_from_dict
-# ====================================================================== #
-
-
 class TestLoadFromDict:
 
     def test_basic_load(self):
@@ -467,11 +426,6 @@ class TestLoadFromDict:
     def test_empty_list_produces_empty_layer(self):
         layer = load_from_dict([])
         assert layer.all_labels() == []
-
-
-# ====================================================================== #
-# load_from_yaml
-# ====================================================================== #
 
 
 class TestLoadFromYaml:
@@ -570,9 +524,7 @@ semantic:
             os.unlink(path)
 
 
-# ====================================================================== #
-# merge_yaml_configs
-# ====================================================================== #
+#
 
 
 class TestMergeYamlConfigs:
@@ -672,9 +624,7 @@ semantic:
             os.unlink(path2)
 
 
-# ====================================================================== #
-# Default YAML labels — integration against realistic graph
-# ====================================================================== #
+#
 
 
 class TestDefaultYamlLabels:
