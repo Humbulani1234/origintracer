@@ -288,16 +288,21 @@ class Engine:
             self._snapshot_thread.join(timeout=5)
 
     def _snapshot_loop(self) -> None:
+        i = 0
         while self._running:
             time.sleep(self._snapshot_interval)
+            i += 1
             try:
-                self.snapshot(label="origintracer-snapshot")
+                self.snapshot(label=f"origintracer-snapshot-{i}")
                 self._evict_stale_traces()
                 # Run graph compaction
                 self.compactor.compact(self.graph)
             except Exception as exc:
                 logger.warning(
-                    "Snapshot/compact failed: %s", exc
+                    "Snapshot/compact failed at iteration %d: %s",
+                    i,
+                    exc,
+                    exc_info=True,
                 )
 
     def _evict_stale_traces(self) -> None:

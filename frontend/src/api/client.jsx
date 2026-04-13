@@ -28,7 +28,7 @@ export const api = {
   events: (limit = 30) => request(`/api/v1/events?limit=${limit}`),
   trace: (id) => request(`/api/v1/traces/${id}`),
   status: () => request("/api/v1/status"),
-  diff: (label = "origintracer-snapshot") => request(`/api/v1/graph/diff?since=${label}`),
+  diff: (label = "origintracer-snapshot-0") => request(`/api/v1/graph/diff?since=${label}`),
   graph: () => request("/api/v1/graph"),
   causal: (since = "deployment", tags = null) => {
     const params = new URLSearchParams({ since });

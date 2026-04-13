@@ -107,9 +107,12 @@ class PatternRegistry:
         tracker: Optional[ActiveRequestTracker] = None,
         tags: Optional[List[str]] = None,
     ) -> List[CausalMatch]:
-        """Run all registered rules, optionally filtered by tag."""
+        """
+        Run all registered rules, optionally filtered by tag.
+        """
+        if not cls._rules:
+            logger.warning("No rules registered")
         results: List[CausalMatch] = []
-
         for rule in cls._rules.values():
             if tags and not set(tags) & set(rule.tags):
                 continue

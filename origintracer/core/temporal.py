@@ -22,8 +22,6 @@ class GraphDiff:
     Stored, not the full graphs.
     """
 
-    _lock = RLock()
-
     timestamp: float
     label: Optional[str]  # e.g. "deployment:abc123"
 

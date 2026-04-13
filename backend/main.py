@@ -561,7 +561,7 @@ async def get_graph_route(
 
 @app.get("/api/v1/causal")
 async def causal(
-    since: str = "origintracer-snapshot",
+    since: Optional[str] = None,
     tags: Optional[str] = None,
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
@@ -572,38 +572,38 @@ async def causal(
     """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
-    temporal_raw = repository.label_diff(customer_id, since)
     tag_list = (
         [t.strip() for t in tags.split(",")] if tags else None
     )
-
-    from origintracer.core.causal import (
-        PatternRegistry,
-    )
-    from origintracer.core.temporal import (
-        GraphDiff,
-        TemporalStore,
-    )
+    from origintracer.core.causal import PatternRegistry
+    from origintracer.core.temporal import TemporalStore
 
     temporal = TemporalStore()
-    if temporal_raw:
-        diff = GraphDiff(
-            added_node_ids=set(
-                temporal_raw.get("added_nodes", [])
-            ),
-            removed_node_ids=set(
-                temporal_raw.get("removed_nodes", [])
-            ),
-            added_edge_keys=set(
-                temporal_raw.get("added_edges", [])
-            ),
-            removed_edge_keys=set(
-                temporal_raw.get("removed_edges", [])
-            ),
-            timestamp=temporal_raw.get("timestamp", time.time()),
-            label=temporal_raw.get("label"),
-        )
-        temporal._diffs.append(diff)
+    if since:
+        temporal_raw = repository.label_diff(customer_id, since)
+        if temporal_raw:
+            from origintracer.core.temporal import GraphDiff
+
+            if temporal_raw:
+                diff = GraphDiff(
+                    added_node_ids=set(
+                        temporal_raw.get("added_nodes", [])
+                    ),
+                    removed_node_ids=set(
+                        temporal_raw.get("removed_nodes", [])
+                    ),
+                    added_edge_keys=set(
+                        temporal_raw.get("added_edges", [])
+                    ),
+                    removed_edge_keys=set(
+                        temporal_raw.get("removed_edges", [])
+                    ),
+                    timestamp=temporal_raw.get(
+                        "timestamp", time.time()
+                    ),
+                    label=temporal_raw.get("label"),
+                )
+                temporal._diffs.append(diff)
 
     # rules registered once at startup in lifespan
     registry = PatternRegistry

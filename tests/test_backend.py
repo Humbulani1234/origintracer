@@ -566,7 +566,7 @@ def _make_diff_bytes(node_count: int = 2) -> bytes:
     g.upsert_edge("django::view", "postgres::SELECT", "calls")
     return (
         TemporalStore()
-        .capture(g.snapshot(), label="origintracer-snapshot")
+        .capture(g.snapshot(), label="deployment")
         .to_dict()
     )
 
@@ -580,7 +580,7 @@ class TestDiff:
 
     async def test_diff_with_since_param(self, client):
         r = await client.get(
-            "/api/v1/graph/diff?since=origintracer-snapshot",
+            "/api/v1/graph/diff?since=deployment",
             headers=AUTH,
         )
         assert r.status_code == 200
@@ -592,14 +592,14 @@ class TestDiff:
 
         m.get_repository()._diffs.clear()
         r = await client.get(
-            "/api/v1/graph/diff?since=origintracer-snapshot",
+            "/api/v1/graph/diff?since=deployment",
             headers=AUTH,
         )
         assert r.status_code == 404
 
     async def test_diff_requires_auth(self, client):
         r = await client.get(
-            "/api/v1/graph/diff?since=origintracer-snapshot"
+            "/api/v1/graph/diff?since=deployment"
         )
         assert r.status_code == 401
 
