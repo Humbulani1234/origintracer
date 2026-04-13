@@ -26,7 +26,7 @@ user application and engine.
 ## Installation
 
 ```bash
-git clone
+git clone git@github.com:Humbulani1234/origintracer.git
 cd origintracer
 pip install -e .
 ```
@@ -39,7 +39,7 @@ pip install -e .
 
 ```python
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware", # MUST be first
+    "origintracer.probes.django_probe.TracerMiddleware", # MUST be first
     "django.middleware.security.SecurityMiddleware",
     ...
 ]
@@ -327,7 +327,7 @@ ProbeTypes.register_many({
 | `worker_imbalance` | One worker handling > 80% of requests while others sit idle |
 
 Drop a `*_rules.py` file in `<your_app>/origintracer/rules/` to add your own.
-Expose a `register(registry)` function — it receives the live registry.
+Expose a `register(registry)` function - it receives the live registry.
 
 ---
 
@@ -335,6 +335,20 @@ Expose a `register(registry)` function — it receives the live registry.
 
 A minimal terminal-aesthetic dashboard that mirrors the REPL. Polls the HTTP
 bridge. Views: nodes, edges, trace timeline, event log.
+
+Ensure the `FastAPI` backend is running.
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port 8001
+```
+
+Send heavy requests to OriginTracer - i.e. using a django application.
+
+```bash
+python /path/to/applications/django/burst_test_benchmarked.py
+```
+
+Run the `React` application.
 
 ```bash
 cd frontend
@@ -376,7 +390,7 @@ pre-commit install
  
 ---
 
-## OTel Bridge Mode - new (optional) and still requires testting
+## OTel Bridge Mode - still in development
 
 OriginTracer can run in OpenTelemetry bridge mode instead of native probe mode.
 In this mode OTel is the event source - OriginTracer's own probes are disabled

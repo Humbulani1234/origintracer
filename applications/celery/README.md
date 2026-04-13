@@ -191,10 +191,19 @@ celery -A config worker --loglevel=info --concurrency=1
 
 ## REPL
 
+Send heavy requests to OriginTracer.
+
+```bash
+python /path/to/applications/celery/burst_test.py
+```
+
+Start the REPL in its own terminal
 
 ```bash
 python -m origintracer.repl.repl
 ```
+
+Query it
 
 ```
 # On gunicorn worker socket:

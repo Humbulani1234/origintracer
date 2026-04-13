@@ -143,9 +143,19 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 
 ## REPL
 
+Send heavy requests to OriginTracer.
+
+```bash
+python /path/to/applications/django/burst_test_benchmarked.py
+```
+
+Start the REPL in its own terminal
+
 ```bash
 python -m origintracer.repl.repl
 ```
+
+Query it
 
 ```
 SHOW nodes
