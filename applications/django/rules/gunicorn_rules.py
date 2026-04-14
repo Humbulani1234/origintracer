@@ -78,6 +78,55 @@ def _worker_imbalance(
     }
 
 
+def cascade_failure(
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker=None,
+) -> Tuple[bool, Dict]:
+    removed_nodes = set()
+    removed_edges = set()
+    for diff in temporal._diffs:
+        removed_nodes |= diff.removed_node_ids
+        removed_edges |= diff.removed_edge_keys
+
+    if not removed_nodes and not removed_edges:
+        return False, {}
+
+    # check if any remaining graph nodes lost an upstream
+    affected = []
+    for node in graph.all_nodes():
+        for edge in graph.callers(node.id):
+            src = edge.source
+            if any(src in r or r in src for r in removed_nodes):
+                affected.append(
+                    {
+                        "downstream": node.id,
+                        "lost_upstream": src,
+                    }
+                )
+
+    if not affected:
+        return False, {}
+
+    return True, {
+        "removed_nodes": list(removed_nodes),
+        "removed_edges": list(removed_edges),
+        "affected_downstream": affected,
+    }
+
+
+CASCADE_FAILURE = CausalRule(
+    name="cascade_failure",
+    description=(
+        "A node was removed from the graph and its downstream dependents "
+        "are still active. The removed node is likely a crashed worker or "
+        "service — downstream nodes are now at risk of chain failure."
+    ),
+    predicate=cascade_failure,
+    confidence=0.82,
+    tags=["availability", "cascade", "gunicorn"],
+)
+
 WORKER_IMBALANCE = CausalRule(
     name="worker_imbalance",
     description=(
@@ -93,3 +142,4 @@ WORKER_IMBALANCE = CausalRule(
 
 def register(registry: PatternRegistry) -> None:
     registry.register(WORKER_IMBALANCE)
+    registry.register(CASCADE_FAILURE)

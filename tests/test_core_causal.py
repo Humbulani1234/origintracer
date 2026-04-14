@@ -1,22 +1,3 @@
-"""
-tests/test_core_causal.py
-
-Tests for every built-in causal rule.
-
-Each rule has two test cases:
-    1. FIRES    — build a graph/store that matches the rule's condition
-    2. NO FIRE  — verify the rule stays silent on a clean graph
-
-This is the most important correctness test in the suite. A rule that
-fires on clean data creates alert fatigue. A rule that never fires even
-when the condition is met is useless.
-
-Also tests:
-    - PatternRegistry.evaluate() tag filtering
-    - Registry builds correctly with and without tracker
-    - User rules register correctly via the register(registry) convention
-"""
-
 from __future__ import annotations
 
 import time
@@ -25,13 +6,16 @@ import uuid
 import pytest
 
 from applications.django.rules.gunicorn_rules import (
+    CASCADE_FAILURE,
     WORKER_IMBALANCE,
 )
 from applications.django.rules.nginx_rules import (
     RETRY_AMPLIFICATION,
 )
 from applications.django.rules.uvicorn_rules import (
+    EXTERNAL_DEPENDENCY_TIMEOUT,
     REQUEST_DURATION_ANOMALY,
+    TRAFFIC_SPIKE,
 )
 from origintracer.core.active_requests import (
     ActiveRequestTracker,
@@ -41,14 +25,16 @@ from origintracer.core.causal import (
     PatternRegistry,
 )
 from origintracer.core.runtime_graph import RuntimeGraph
-from origintracer.core.temporal import TemporalStore
+from origintracer.core.temporal import GraphDiff, TemporalStore
 from origintracer.rules.asyncio_rules import (
     LOOP_STARVATION,
     NEW_SYNC_CALL,
 )
 from origintracer.rules.django_rules import (
     DB_HOTSPOT,
+    DUPLICATE_TRANSACTION,
     N_PLUS_ONE,
+    POST_DEPLOYMENT_REGRESSION,
 )
 
 
@@ -981,3 +967,436 @@ class TestRequestDurationAnomaly2:
             ep["ratio"] for ep in evidence["anomalous_endpoints"]
         ]
         assert ratios == sorted(ratios, reverse=True)
+
+
+def _build_cascade_graph(upstream_calls=100, downstream_calls=0):
+    g = RuntimeGraph()
+    # upstream service — gunicorn worker
+    for _ in range(upstream_calls):
+        g.upsert_node(
+            "gunicorn::UvicornWorker",
+            node_type="gunicorn",
+            service="gunicorn",
+            metadata={"probe": "gunicorn.worker.init"},
+        )
+    # downstream — uvicorn handler that depends on upstream
+    for _ in range(downstream_calls):
+        g.upsert_node(
+            "uvicorn::/api/orders/",
+            node_type="uvicorn",
+            service="uvicorn",
+            metadata={"probe": "uvicorn.request.complete"},
+        )
+    if upstream_calls and downstream_calls:
+        g.upsert_edge(
+            "gunicorn::UvicornWorker",
+            "uvicorn::/api/orders/",
+            "handles",
+        )
+    return g
+
+
+def _temporal_with_removed(
+    removed_nodes=None, removed_edges=None
+):
+    t = TemporalStore()
+    t._diffs.append(
+        GraphDiff(
+            timestamp=time.time(),
+            label="deployment",
+            added_node_ids=set(),
+            removed_node_ids=set(removed_nodes or []),
+            added_edge_keys=set(),
+            removed_edge_keys=set(removed_edges or []),
+        )
+    )
+    return t
+
+
+class TestCascadeFailure:
+    def teardown_method(self):
+        from origintracer.core.causal import PatternRegistry
+
+        PatternRegistry._reset()
+
+    def test_fires_when_upstream_removed_and_downstream_exists(
+        self,
+    ):
+        g = _build_cascade_graph(
+            upstream_calls=100, downstream_calls=50
+        )
+        t = _temporal_with_removed(
+            removed_nodes=["gunicorn::UvicornWorker-4341"],
+            removed_edges=[
+                "gunicorn::UvicornWorker-4341→uvicorn::/api/orders/:handles"
+            ],
+        )
+        matched, evidence = CASCADE_FAILURE.predicate(g, t, None)
+        assert matched
+        assert evidence["removed_nodes"]
+
+    def test_silent_when_nothing_removed(self):
+        g = _build_cascade_graph(
+            upstream_calls=100, downstream_calls=50
+        )
+        t = _temporal_with_removed()
+        matched, _ = CASCADE_FAILURE.predicate(g, t, None)
+        assert not matched
+
+    def test_silent_when_removed_node_has_no_dependents(self):
+        g = _build_cascade_graph(
+            upstream_calls=100, downstream_calls=0
+        )
+        t = _temporal_with_removed(
+            removed_nodes=["gunicorn::UvicornWorker-4341"]
+        )
+        matched, _ = CASCADE_FAILURE.predicate(g, t, None)
+        assert not matched
+
+    def test_evidence_contains_affected_downstream(self):
+        g = _build_cascade_graph(
+            upstream_calls=100, downstream_calls=50
+        )
+        t = _temporal_with_removed(
+            removed_nodes=["gunicorn::UvicornWorker-4341"],
+            removed_edges=[
+                "gunicorn::UvicornWorker-4341→uvicorn::/api/orders/:handles"
+            ],
+        )
+        matched, evidence = CASCADE_FAILURE.predicate(g, t, None)
+        assert matched
+        assert len(evidence["removed_edges"]) > 0
+
+    def test_confidence_is_high(self):
+        assert CASCADE_FAILURE.confidence >= 0.80
+
+
+def _build_regression_graph(avg_duration_ns=500_000_000):
+    g = RuntimeGraph()
+    # simulate a view that got slower after deployment
+    for _ in range(100):
+        g.upsert_node(
+            "django::/api/products/",
+            node_type="django",
+            service="django",
+            metadata={
+                "probe": "django.view.enter",
+                "avg_duration_ns": avg_duration_ns,
+            },
+        )
+    g.upsert_node(
+        "django::SELECT product WHERE id=%s",
+        node_type="django",
+        service="django",
+        metadata={"probe": "django.db.query"},
+    )
+    g.upsert_edge(
+        "django::/api/products/",
+        "django::SELECT product WHERE id=%s",
+        "calls",
+    )
+    return g
+
+
+def _temporal_with_new_edges(added_edges=None):
+    t = TemporalStore()
+    t._diffs.append(
+        GraphDiff(
+            timestamp=time.time(),
+            label="deployment",
+            added_node_ids=set(),
+            removed_node_ids=set(),
+            added_edge_keys=set(added_edges or []),
+            removed_edge_keys=set(),
+        )
+    )
+    return t
+
+
+class TestPostDeploymentRegression:
+    def teardown_method(self):
+        from origintracer.core.causal import PatternRegistry
+
+        PatternRegistry._reset()
+
+    def test_fires_when_new_edge_and_high_latency(self):
+        # avg > 200ms and new edge appeared after deployment
+        g = _build_regression_graph(avg_duration_ns=500_000_000)
+        t = _temporal_with_new_edges(
+            added_edges=[
+                "django::/api/products/→django::SELECT product WHERE id=%s:calls"
+            ]
+        )
+        matched, evidence = POST_DEPLOYMENT_REGRESSION.predicate(
+            g, t, None
+        )
+        assert matched
+        assert evidence["regressed_nodes"]
+
+    def test_silent_when_latency_normal(self):
+        g = _build_regression_graph(
+            avg_duration_ns=50_000_000
+        )  # 50ms — fine
+        t = _temporal_with_new_edges(
+            added_edges=[
+                "django::/api/products/→django::SELECT product WHERE id=%s:calls"
+            ]
+        )
+        matched, _ = POST_DEPLOYMENT_REGRESSION.predicate(
+            g, t, None
+        )
+        assert not matched
+
+    def test_silent_when_no_new_edges(self):
+        g = _build_regression_graph(avg_duration_ns=500_000_000)
+        t = _temporal_with_new_edges()
+        matched, _ = POST_DEPLOYMENT_REGRESSION.predicate(
+            g, t, None
+        )
+        assert not matched
+
+    def test_evidence_contains_node_and_duration(self):
+        g = _build_regression_graph(avg_duration_ns=500_000_000)
+        t = _temporal_with_new_edges(
+            added_edges=[
+                "django::/api/products/→django::SELECT product WHERE id=%s:calls"
+            ]
+        )
+        matched, evidence = POST_DEPLOYMENT_REGRESSION.predicate(
+            g, t, None
+        )
+        assert matched
+        node = evidence["regressed_nodes"][0]
+        assert "avg_ms" in node
+        assert node["avg_ms"] > 200
+
+    def test_confidence_is_high(self):
+        assert POST_DEPLOYMENT_REGRESSION.confidence >= 0.80
+
+
+TIMEOUT_NS = 2_000_000_000  # 2 seconds
+
+
+def _build_external_graph(
+    avg_duration_ns=3_000_000_000, call_count=50
+):
+    g = RuntimeGraph()
+    g.upsert_node(
+        "asyncio::fetch_external",
+        node_type="asyncio",
+        service="asyncio",
+        metadata={"probe": "asyncio.task.create"},
+    )
+    for _ in range(call_count):
+        g.upsert_node(
+            "uvicorn::external-payments-api",
+            node_type="uvicorn",
+            service="uvicorn",
+            metadata={
+                "probe": "uvicorn.request.complete",
+                "external": True,
+                "avg_duration_ns": avg_duration_ns,
+            },
+        )
+    g.upsert_edge(
+        "asyncio::fetch_external",
+        "uvicorn::external-payments-api",
+        "calls",
+    )
+    return g
+
+
+class TestExternalDependencyTimeout:
+    def teardown_method(self):
+        from origintracer.core.causal import PatternRegistry
+
+        PatternRegistry._reset()
+
+    def test_fires_when_external_call_slow(self):
+        g = _build_external_graph(avg_duration_ns=3_000_000_000)
+        matched, evidence = (
+            EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
+                g, TemporalStore(), None
+            )
+        )
+        assert matched
+        assert evidence["slow_dependencies"]
+
+    def test_silent_when_external_call_fast(self):
+        g = _build_external_graph(
+            avg_duration_ns=100_000_000
+        )  # 100ms
+        matched, _ = EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
+            g, TemporalStore(), None
+        )
+        assert not matched
+
+    def test_silent_when_not_external(self):
+        g = RuntimeGraph()
+        for _ in range(50):
+            g.upsert_node(
+                "django::internal-view",
+                node_type="django",
+                service="django",
+                metadata={"probe": "django.view.enter"},
+            )
+        matched, _ = EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
+            g, TemporalStore(), None
+        )
+        assert not matched
+
+    def test_evidence_contains_dependency_name(self):
+        g = _build_external_graph(avg_duration_ns=3_000_000_000)
+        matched, evidence = (
+            EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
+                g, TemporalStore(), None
+            )
+        )
+        assert matched
+        dep = evidence["slow_dependencies"][0]
+        assert "node" in dep
+        assert "avg_ms" in dep
+        assert dep["avg_ms"] > 2000
+
+    def test_confidence(self):
+        assert EXTERNAL_DEPENDENCY_TIMEOUT.confidence >= 0.75
+
+
+def _build_spike_graph(call_count=1000):
+    g = RuntimeGraph()
+    for _ in range(call_count):
+        g.upsert_node(
+            "uvicorn::/api/",
+            node_type="uvicorn",
+            service="uvicorn",
+            metadata={"probe": "uvicorn.request.complete"},
+        )
+    return g
+
+
+def _temporal_with_added_nodes(count=50):
+    t = TemporalStore()
+    t._diffs.append(
+        GraphDiff(
+            timestamp=time.time(),
+            label="traffic",
+            added_node_ids={
+                f"uvicorn::worker-{i}" for i in range(count)
+            },
+            removed_node_ids=set(),
+            added_edge_keys=set(),
+            removed_edge_keys=set(),
+        )
+    )
+    return t
+
+
+class TestTrafficSpike:
+    def teardown_method(self):
+        from origintracer.core.causal import PatternRegistry
+
+        PatternRegistry._reset()
+
+    def test_fires_on_large_node_growth(self):
+        g = _build_spike_graph(call_count=1000)
+        t = _temporal_with_added_nodes(count=50)
+        matched, evidence = TRAFFIC_SPIKE.predicate(g, t, None)
+        assert matched
+        assert evidence["added_node_count"] >= 50
+
+    def test_silent_on_normal_growth(self):
+        g = _build_spike_graph(call_count=100)
+        t = _temporal_with_added_nodes(count=2)
+        matched, _ = TRAFFIC_SPIKE.predicate(g, t, None)
+        assert not matched
+
+    def test_evidence_contains_growth_rate(self):
+        g = _build_spike_graph(call_count=1000)
+        t = _temporal_with_added_nodes(count=50)
+        matched, evidence = TRAFFIC_SPIKE.predicate(g, t, None)
+        assert matched
+        assert "growth_rate" in evidence
+        assert evidence["growth_rate"] > 0
+
+    def test_confidence(self):
+        assert TRAFFIC_SPIKE.confidence >= 0.70
+
+
+def _build_duplicate_graph(query_count=20, view_count=10):
+    g = RuntimeGraph()
+    for _ in range(view_count):
+        g.upsert_node(
+            "django::PaymentView",
+            node_type="django",
+            service="django",
+            metadata={"probe": "django.view.enter"},
+        )
+    # same query fires twice per view — duplicate
+    for _ in range(query_count):
+        g.upsert_node(
+            "django::INSERT INTO payments VALUES (%s)",
+            node_type="django",
+            service="django",
+            metadata={
+                "probe": "django.db.query",
+                "db_alias": "default",
+            },
+        )
+    g.upsert_edge(
+        "django::PaymentView",
+        "django::INSERT INTO payments VALUES (%s)",
+        "calls",
+    )
+    return g
+
+
+class TestDuplicateTransaction:
+    def teardown_method(self):
+        from origintracer.core.causal import PatternRegistry
+
+        PatternRegistry._reset()
+
+    def test_fires_when_write_ratio_exceeds_threshold(self):
+        # 20 inserts for 10 view calls = ratio 2x — duplicate
+        g = _build_duplicate_graph(query_count=20, view_count=10)
+        matched, evidence = DUPLICATE_TRANSACTION.predicate(
+            g, TemporalStore(), None
+        )
+        assert matched
+        assert evidence["duplicate_writes"]
+
+    def test_silent_when_ratio_normal(self):
+        # 10 inserts for 10 view calls = 1:1 — expected
+        g = _build_duplicate_graph(query_count=10, view_count=10)
+        matched, _ = DUPLICATE_TRANSACTION.predicate(
+            g, TemporalStore(), None
+        )
+        assert not matched
+
+    def test_silent_when_read_not_write(self):
+        g = RuntimeGraph()
+        for _ in range(20):
+            g.upsert_node(
+                "django::SELECT * FROM payments",
+                node_type="django",
+                service="django",
+                metadata={"probe": "django.db.query"},
+            )
+        matched, _ = DUPLICATE_TRANSACTION.predicate(
+            g, TemporalStore(), None
+        )
+        assert not matched
+
+    def test_evidence_contains_query_and_ratio(self):
+        g = _build_duplicate_graph(query_count=20, view_count=10)
+        matched, evidence = DUPLICATE_TRANSACTION.predicate(
+            g, TemporalStore(), None
+        )
+        assert matched
+        dup = evidence["duplicate_writes"][0]
+        assert "query" in dup
+        assert "ratio" in dup
+        assert dup["ratio"] >= 2.0
+
+    def test_confidence(self):
+        assert DUPLICATE_TRANSACTION.confidence >= 0.80

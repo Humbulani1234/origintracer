@@ -74,13 +74,13 @@ def celery_retry_amplification(
     The probe emits a separate celery.task.retry event for each retry,
     which lands as its own graph node keyed by task name + probe type.
     We compare:
-        retry_call_count  — sum of call_count on all celery.task.retry nodes
-        start_call_count  — sum of call_count on all celery.task.start nodes
+        retry_call_count - sum of call_count on all celery.task.retry nodes
+        start_call_count - sum of call_count on all celery.task.start nodes
 
     This is reliable because call_count is always incremented by
-    RuntimeGraph.add_from_event() — no metadata reading needed.
+    RuntimeGraph.add_from_event() - no metadata reading needed.
     """
-    # Inline constants — same reason as celery_probe.py (no package context
+    # Inline constants - same reason as celery_probe.py (no package context
     # when loaded via spec_from_file_location)
     RETRY_STATE = "RETRY"
     SUCCESS_STATE = "SUCCESS"  # noqa: F841

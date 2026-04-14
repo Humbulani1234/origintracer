@@ -123,6 +123,92 @@ REQUEST_DURATION_ANOMALY = CausalRule(
     tags=["latency", "anomaly", "live"],
 )
 
+GROWTH_THRESHOLD = 10  # added nodes in one diff window
+
+
+def _traffic_spike(
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker=None,
+) -> Tuple[bool, Dict]:
+    total_added = set()
+    for diff in temporal._diffs:
+        total_added |= diff.added_node_ids
+
+    if len(total_added) < GROWTH_THRESHOLD:
+        return False, {}
+
+    total_nodes = len(list(graph.all_nodes()))
+    growth_rate = (
+        round(len(total_added) / total_nodes * 100, 1)
+        if total_nodes
+        else 0
+    )
+
+    return True, {
+        "added_node_count": len(total_added),
+        "total_nodes": total_nodes,
+        "growth_rate": growth_rate,
+        "hint": "Consider horizontal scaling or rate limiting.",
+    }
+
+
+TRAFFIC_SPIKE = CausalRule(
+    name="traffic_spike",
+    description=(
+        "A large number of new nodes appeared in the graph within the "
+        "observed window — indicating a sudden traffic increase. "
+        "Review autoscaling configuration and rate limiting."
+    ),
+    predicate=_traffic_spike,
+    confidence=0.72,
+    tags=["traffic", "scaling", "uvicorn", "gunicorn"],
+)
+
+TIMEOUT_THRESHOLD_NS = 2_000_000_000  # 2 seconds
+
+
+def _external_dependency_timeout(
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker=None,
+) -> Tuple[bool, Dict]:
+    slow = []
+    for node in graph.all_nodes():
+        meta = node.metadata or {}
+        if not meta.get("external"):
+            continue
+        avg_ns = node.metadata.get("avg_duration_ns", 0)
+        if avg_ns < TIMEOUT_THRESHOLD_NS:
+            continue
+        slow.append(
+            {
+                "node": node.id,
+                "avg_ms": round(avg_ns / 1e6, 2),
+                "hint": "Add a circuit breaker or reduce timeout threshold.",
+            }
+        )
+
+    if not slow:
+        return False, {}
+
+    return True, {"slow_dependencies": slow}
+
+
+EXTERNAL_DEPENDENCY_TIMEOUT = CausalRule(
+    name="external_dependency_timeout",
+    description=(
+        "An external service dependency is averaging above 2 seconds. "
+        "This will exhaust your thread pool or async task queue. "
+        "Add a circuit breaker and aggressive timeout."
+    ),
+    predicate=_external_dependency_timeout,
+    confidence=0.78,
+    tags=["latency", "external", "asyncio", "timeout"],
+)
+
 
 def register(registry: PatternRegistry) -> None:
     registry.register(REQUEST_DURATION_ANOMALY)
+    registry.register(TRAFFIC_SPIKE)
+    registry.register(EXTERNAL_DEPENDENCY_TIMEOUT)

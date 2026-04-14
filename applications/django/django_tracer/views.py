@@ -1,19 +1,20 @@
 """
-django_tracer/views.py
-
-Four views that exercise different probe paths.
-
-GET /              sync view — baseline, hits no database
-GET /async/        async view — exercises asyncio probes
-GET /slow/         async view with a simulated blocking call
-                   triggers the loop_starvation causal rule
-GET /db/           async view that queries the database
-                   triggers db.query probes
+GET /  - sync view — baseline, hits no database
+GET /async/  - async view — exercises asyncio probes
+GET /slow/  - async view with a simulated blocking call
+              triggers the loop_starvation causal rule
+GET /db/  - async view that queries the database
+            triggers db.query probes
+GET /cascade/  - calls down internal service
+GET /regression/  - calls
+GET /external/  - calls
+GET /payment/  - calls
 """
 
 import asyncio
 import time
 
+import requests
 from django.http import JsonResponse
 from django.views import View
 
@@ -21,7 +22,8 @@ from django.views import View
 class IndexView(View):
     """
     Synchronous baseline view.
-    Demonstrates: request.entry → django.middleware → django.view → request.exit
+    Demonstrates: request.entry >> django.middleware >> django.view
+    >> request.exit
     No async, no database. Fastest possible path through Django.
     """
 
@@ -158,11 +160,11 @@ class NPlusOneView(View):
     The bug: fetch all authors, then for each author fire a separate
     query to get their books. 10 authors = 11 queries (1 + 10).
 
-    The fix (commented out below): use select_related() or
-    prefetch_related() to fetch everything in 1-2 queries.
+    The fix: use select_related() or prefetch_related() to fetch everything
+    in 1-2 queries.
 
-    StackTracer will show N+1 django.db.query events all sharing
-    the same trace_id — the signature of this problem in the graph.
+    OriginTracer will show N+1 django.db.query events all sharing
+    the same trace_id - the signature of this problem in the graph.
 
     # run once in django shell: python manage.py shell to seed some data
     from django_tracer.models import Author, Book
@@ -172,15 +174,15 @@ class NPlusOneView(View):
         for j in range(5):
             Book.objects.create(title=f"Book {i}-{j}", author=a)
 
-    request.entry        django::/n1/
-    django.view.enter    django::NPlusOneView
-    django.db.query      SELECT * FROM author              ← query 1
-    django.db.query      SELECT * FROM book WHERE author=1 ← query 2
-    django.db.query      SELECT * FROM book WHERE author=2 ← query 3
-    django.db.query      SELECT * FROM book WHERE author=3 ← query 4
-    ...                  (10 more identical queries)
-    django.view.exit     django::NPlusOneView
-    request.exit         django::/n1/
+    request.entry >> django::/n1/
+    django.view.enter >> django::NPlusOneView
+    django.db.query >> SELECT * FROM author < query 1
+    django.db.query >> SELECT * FROM book WHERE author=1 < query 2
+    django.db.query >> SELECT * FROM book WHERE author=2 < query 3
+    django.db.query >> SELECT * FROM book WHERE author=3 < query 4
+    ...                (10 more identical queries)
+    django.view.exit >> django::NPlusOneView
+    request.exit >> django::/n1/
     """
 
     def get(self, request):
@@ -212,4 +214,112 @@ class NPlusOneView(View):
 
         return JsonResponse(
             {"authors": results, "query_count": len(authors) + 1}
+        )
+
+
+class CascadeView(View):
+    """
+    Calls an internal service that may be down.
+    When the upstream worker dies, cascade_failure fires.
+    Kill one gunicorn worker while hitting this endpoint.
+
+    GET /cascade/
+    """
+
+    def get(self, request):
+        try:
+            # calls itself on a different port simulating internal service
+            resp = requests.get(
+                "http://127.0.0.1:8001/", timeout=1
+            )
+            return JsonResponse(
+                {"upstream": "ok", "status": resp.status_code}
+            )
+        except requests.exceptions.ConnectionError:
+            return JsonResponse({"upstream": "down"}, status=503)
+
+
+class RegressionView(View):
+    """
+    A view that got a new ORM call added in a recent deployment.
+    Run MARK DEPLOYMENT before adding the extra query to establish
+    baseline, then hit this endpoint — post_deployment_regression fires.
+
+    GET /regression/
+    """
+
+    async def get(self, request):
+        from asgiref.sync import sync_to_async
+        from django.contrib.auth import get_user_model
+
+        from django_tracer.models import Author
+
+        User = get_user_model()
+
+        @sync_to_async
+        def queries():
+            count = User.objects.count()
+            # this line was added in new deployment — new edge in graph
+            authors = list(Author.objects.all()[:5])
+            return count, authors
+
+        count, authors = await queries()
+        return JsonResponse(
+            {
+                "users": count,
+                "authors": len(authors),
+                "note": "Run MARK DEPLOYMENT before this view to detect regression",
+            }
+        )
+
+
+class ExternalView(View):
+    """
+    Calls an external service with a deliberate slow response.
+    Use httpx to hit a slow endpoint — external_dependency_timeout fires
+    when avg response > 2s.
+
+    GET /external/
+    pip install httpx first.
+    """
+
+    async def get(self, request):
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                # httpbin's delay endpoint simulates a slow external service
+                resp = await client.get(
+                    "https://httpbin.org/delay/3"
+                )
+                return JsonResponse(
+                    {
+                        "external": "ok",
+                        "status": resp.status_code,
+                    }
+                )
+        except httpx.TimeoutException:
+            return JsonResponse(
+                {"external": "timeout"}, status=504
+            )
+
+
+class PaymentView(View):
+    """
+    Demonstrates duplicate write — payment saved twice per request.
+    duplicate_transaction fires when INSERT ratio > 1.5x per view call.
+
+    GET /payment/
+    Requires: Payment model with amount field.
+    """
+
+    def get(self, request):
+        from django_tracer.models import Payment
+
+        # bug — create() already saves, .save() fires a second INSERT
+        payment = Payment(amount=100)
+        payment.save()  # INSERT 1
+        payment.save()  # INSERT 2 — duplicate, same object
+        return JsonResponse(
+            {"payment_id": payment.id, "note": "double save bug"}
         )

@@ -88,7 +88,11 @@ def build_pool(base: str) -> list:
         [(f"{base}/", "GET")] * 25
         + [(f"{base}/db/", "GET")] * 20
         + [(f"{base}/async/", "GET")] * 30
+        + [(f"{base}/regression/", "GET")] * 5
         + [(f"{base}/n1/", "GET")] * 20
+        + [(f"{base}/external/", "GET")] * 5
+        + [(f"{base}/payment/", "GET")] * 5
+        + [(f"{base}/cascade/", "GET")] * 5
         + [(f"{base}/slow/", "GET")] * 5
     )
 

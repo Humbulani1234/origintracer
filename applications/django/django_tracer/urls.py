@@ -1,13 +1,25 @@
-"""django_tracer/urls.py"""
-
 from django.urls import path
 
-from . import views
+from django_tracer.views import (
+    AsyncView,
+    CascadeView,
+    DbView,
+    ExternalView,
+    IndexView,
+    NPlusOneView,
+    PaymentView,
+    RegressionView,
+    SlowView,
+)
 
 urlpatterns = [
-    path("", views.IndexView.as_view(), name="index"),
-    path("async/", views.AsyncView.as_view(), name="async"),
-    path("slow/", views.SlowView.as_view(), name="slow"),
-    path("db/", views.DbView.as_view(), name="db"),
-    path("n1/", views.NPlusOneView.as_view(), name="n1"),
+    path("", IndexView.as_view()),
+    path("async/", AsyncView.as_view()),
+    path("slow/", SlowView.as_view()),
+    path("db/", DbView.as_view()),
+    path("n1/", NPlusOneView.as_view()),
+    path("cascade/", CascadeView.as_view()),
+    path("regression/", RegressionView.as_view()),
+    path("external/", ExternalView.as_view()),
+    path("payment/", PaymentView.as_view()),
 ]
