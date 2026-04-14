@@ -9,6 +9,7 @@ from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 
 from origintracer.core.event_schema import NormalizedEvent
+from origintracer.core.temporal import GraphDiff
 
 logger = logging.getLogger("origintracer.storage")
 
@@ -816,13 +817,16 @@ class InMemoryRepository(BaseRepository):
     ) -> None:
         self._diffs[customer_id].append(diff)
 
-    def label_diff(
-        self, customer_id: str, label: str
+    def get_label_diff(
+        self, customer_id: str, label: Optional[str]
     ) -> Optional[Dict]:
         for d in reversed(self._diffs[customer_id]):
             if d.get("label") == label:
                 return d
         return None
+
+    def get_diffs(self, customer_id: str) -> List[GraphDiff]:
+        return list(self._diffs.get(customer_id, []))
 
     def close(self) -> None:
         pass

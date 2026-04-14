@@ -561,14 +561,12 @@ async def get_graph_route(
 
 @app.get("/api/v1/causal")
 async def causal(
-    since: Optional[str] = None,
     tags: Optional[str] = None,
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
     """
     Run all causal rules against the latest snapshot.
-
     """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
@@ -576,34 +574,27 @@ async def causal(
         [t.strip() for t in tags.split(",")] if tags else None
     )
     from origintracer.core.causal import PatternRegistry
-    from origintracer.core.temporal import TemporalStore
+    from origintracer.core.temporal import (
+        GraphDiff,
+        TemporalStore,
+    )
 
     temporal = TemporalStore()
-    if since:
-        temporal_raw = repository.label_diff(customer_id, since)
-        if temporal_raw:
-            from origintracer.core.temporal import GraphDiff
+    raw_diffs = repository.get_diffs(customer_id)
 
-            if temporal_raw:
-                diff = GraphDiff(
-                    added_node_ids=set(
-                        temporal_raw.get("added_nodes", [])
-                    ),
-                    removed_node_ids=set(
-                        temporal_raw.get("removed_nodes", [])
-                    ),
-                    added_edge_keys=set(
-                        temporal_raw.get("added_edges", [])
-                    ),
-                    removed_edge_keys=set(
-                        temporal_raw.get("removed_edges", [])
-                    ),
-                    timestamp=temporal_raw.get(
-                        "timestamp", time.time()
-                    ),
-                    label=temporal_raw.get("label"),
-                )
-                temporal._diffs.append(diff)
+    for d in raw_diffs:
+        temporal._diffs.append(
+            GraphDiff(
+                added_node_ids=set(d.get("added_nodes", [])),
+                removed_node_ids=set(d.get("removed_nodes", [])),
+                added_edge_keys=set(d.get("added_edges", [])),
+                removed_edge_keys=set(
+                    d.get("removed_edges", [])
+                ),
+                timestamp=d.get("timestamp", time.time()),
+                label=d.get("label"),
+            )
+        )
 
     # rules registered once at startup in lifespan
     registry = PatternRegistry
@@ -659,12 +650,11 @@ async def diff(
     For now, this endpoint returns what is available in the snapshot.
     """
     customer_id = _authenticate(authorization)
-    results = repository.label_diff(customer_id, since)
+    results = repository.get_label_diff(customer_id, since)
     if results is None:
         raise HTTPException(
             status_code=404, detail="No graph diffs available"
         )
-    print(">>>RESULTS", results)
     return {"data": results}
 
 
