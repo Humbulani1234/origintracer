@@ -88,7 +88,7 @@ def export_data(self, export_id: int, **kwargs):
 @shared_task(
     name="myapp.tasks.risky_job",
     bind=True,
-    max_retries=3,
+    max_retries=5,
     default_retry_delay=2,
 )
 def risky_job(self, should_fail: bool = True, **kwargs):

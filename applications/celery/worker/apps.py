@@ -1,7 +1,8 @@
-# django_tracer/apps.py
 from pathlib import Path
 
 from django.apps import AppConfig
+
+import origintracer
 
 
 class DjangoTracerConfig(AppConfig):
@@ -9,7 +10,6 @@ class DjangoTracerConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
 
     def ready(self):
-        print(">>> AppConfig.ready() fired", flush=True)
         import os
 
         _is_runserver_reloader = (
@@ -20,9 +20,8 @@ class DjangoTracerConfig(AppConfig):
         )
         if not _is_runserver_reloader:
             return
-        import stacktracer
 
         BASE_DIR = Path(__file__).resolve().parent.parent
-        stacktracer.init(
-            config=str(BASE_DIR / "stacktracer.yaml")
+        origintracer.init(
+            config=str(BASE_DIR / "origintracer.yaml")
         )

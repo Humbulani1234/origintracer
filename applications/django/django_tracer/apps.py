@@ -9,14 +9,14 @@ class WorkerConfig(AppConfig):
     name = "django_tracer"
 
     def ready(self):
-        # 1. Guard: Only run in the worker process, skip the reloader parent
+        # Only run in the worker process, skip the reloader parent
         if os.environ.get("RUN_MAIN") == "false":
             return
 
-        # 2. Bootstrap the native StackTracer engine
+        # Bootstrap the native StackTracer engine
         self._bootstrap_native()
 
-        # 3. Optionally layer on OpenTelemetry instrumentation
+        # Optionally layer on OpenTelemetry instrumentation
         if getattr(settings, "STACKTRACER_OTEL_MODE", False):
             self._init_otel()
 
@@ -33,7 +33,9 @@ class WorkerConfig(AppConfig):
         origintracer.mark_deployment("deployment")
 
     def _init_otel(self):
-        """Full OTEL instrumentation suite."""
+        """
+        Full OTEL instrumentation suite.
+        """
         from opentelemetry import trace
         from opentelemetry.instrumentation.django import (
             DjangoInstrumentor,
@@ -48,6 +50,7 @@ class WorkerConfig(AppConfig):
         from opentelemetry.sdk.trace.export import (
             BatchSpanProcessor,
         )
+
         from origintracer.bridge.otel_bridge import (
             OriginTracerSpanExporter,
         )

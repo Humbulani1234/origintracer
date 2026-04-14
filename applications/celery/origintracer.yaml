@@ -12,12 +12,25 @@
 # No YAML entry needed for those files.
 
 probes:
+  - gunicorn
+  - uvicorn
+  - asyncio
+  - django
   - celery
   - redis
 
+rules:
+  - new_sync_call_after_deployment
+  - asyncio_event_loop_starvation
+  - n_plus_one_queries
+  - db_query_hotspot
+  - celery_retry_amplification
+  - sync_db_in_celery
+  - celery_task_duration_spike
+
 semantic:
   - label: web
-    description: HTTP entry layer — gunicorn and uvicorn
+    description: HTTP entry layer - gunicorn and uvicorn
     services:
       - gunicorn
       - uvicorn

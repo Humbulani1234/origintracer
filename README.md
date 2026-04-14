@@ -188,18 +188,19 @@ Rules receive the live graph and can emit evidence with confidence scores.
 
 OriginTracer is engineered for real production workloads, not just local debugging.
 
-### Stress Test Highlights (4-core machine, single nginx + gunicorn worker, full eBPF + userspace tracing active)
+### Stress Test Highlights: 4-core machine
 
 - **4,000 requests** processed with **zero errors** and **zero dropped events** (`ok=4000  err=0  dropped=0`) - 20× the volume of earlier tests.
 - **48,000 events** captured, decoded, correlated, and drained (~12k events per wave × 4 waves).  
-  Buffer depth stayed at `buf_depth=0` and `in_flight=0` after every wave — no backpressure observed.
+  Buffer depth stayed at `buf_depth=0` and `in_flight=0` after every wave - no backpressure observed.
 - **Latency impact remained low and stable**:
   - 50 req burst:  mean ≈ 23 ms, p95 = 39 ms, p99 = 44 ms
-  - 1000 req burst: mean ≈ 21 ms → 20 ms, p95 ≈ 33 --> 31 ms, p99 ≈ 44 --> 35 ms
+  - 1000 req burst: mean ≈ 21 ms → 20 ms, p95 ≈ 33 --> 31 ms,
+    p99 ≈ 44--> 35 ms
   - One isolated p99 spike to 70 ms recovered quickly to ~37 ms.
 - **Sustained throughput**: **393 requests/second** through a single worker with no special tuning.
 
-### Key Takeaways
+### Takeaways
 
 - eBPF/kprobe overhead is effectively unmeasurable at this traffic level.
 - The Python-side event pipeline (decoding, correlation, graph updates) introduces no meaningful backpressure.

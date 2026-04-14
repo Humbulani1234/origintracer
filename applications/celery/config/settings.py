@@ -23,9 +23,8 @@ INSTALLED_APPS = [
     "worker",
 ]
 
-# ── StackTracer middleware must be first ───────────────────────────────────
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware",
+    "origintracer.probes.django_probe.TracerMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
 

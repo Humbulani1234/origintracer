@@ -1,6 +1,4 @@
 """
-myapp/views.py
-
 Four Django views, each dispatching Celery tasks to exercise a specific
 causal rule.  Every view:
 
@@ -18,11 +16,11 @@ This gives full structural topology in the REPL graph:
                     → celery::ForkPoolWorker            (fork edge, from probe)
 
 URLs:
-    GET /tasks/report/<id>/      → ReportView      (baseline)
-    POST /tasks/bulk-notify/     → BulkNotifyView  (fan-out amplification)
-    GET /tasks/export/<id>/      → ExportView      (sync DB call)
-    GET /tasks/failing/          → FailingJobView  (retry amplification)
-    GET /tasks/status/           → StatusView      (REPL: how many tasks queued)
+    GET /tasks/report/<id>/  >> ReportView (baseline)
+    POST /tasks/bulk-notify/ >> BulkNotifyView (fan-out amplification)
+    GET /tasks/export/<id>/  >> ExportView (sync DB call)
+    GET /tasks/failing/  >> FailingJobView (retry amplification)
+    GET /tasks/status/  >> StatusView (REPL: how many tasks queued)
 """
 
 import json
@@ -30,10 +28,10 @@ import json
 from django.http import JsonResponse
 from django.views import View
 from probes.redis_probe import TracedRedis
-from stacktracer.context.vars import get_trace_id
-from stacktracer.core.event_schema import NormalizedEvent
-from stacktracer.probes.celery_probe import dispatch
-from stacktracer.sdk.emitter import emit
+
+from origintracer.context.vars import get_trace_id
+from origintracer.core.event_schema import NormalizedEvent
+from origintracer.sdk.emitter import emit
 
 from .tasks import (
     export_data,
@@ -261,7 +259,7 @@ class RedisCacheView(View):
 
         # dispatch() emits celery.task.dispatch then calls .delay()
         # creates the django::ReportView → celery::generate_report edge
-        dispatch(generate_report, trace_id, report_id=report_id)
+        _dispatch(generate_report, trace_id, report_id=report_id)
 
         return JsonResponse(
             {

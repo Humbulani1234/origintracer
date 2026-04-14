@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from typing import Optional
+
+from origintracer.core.active_requests import (
+    ActiveRequestTracker,
+)
 from origintracer.core.causal import CausalRule, PatternRegistry
+from origintracer.core.runtime_graph import RuntimeGraph
+from origintracer.core.temporal import TemporalStore
 
 
-def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
+def sync_db_in_celery(
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
+) -> tuple[bool, dict]:
     """
     Fires when a celery node has a direct edge to a postgres/sqlite node
     where avg_duration_ns > 50ms.
@@ -16,7 +27,6 @@ def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
     for node in graph.all_nodes():
         if node.service != "celery":
             continue
-
         for edge in graph.neighbors(node.id):
             target = graph.get_node(edge.target)
             if target is None:
@@ -53,7 +63,11 @@ def _sync_db_in_celery(graph, temporal) -> tuple[bool, dict]:
     }
 
 
-def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
+def celery_retry_amplification(
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
+) -> tuple[bool, dict]:
     """
     Fires when celery retry events are more than 30% of task start events.
 
@@ -68,29 +82,30 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
     """
     # Inline constants — same reason as celery_probe.py (no package context
     # when loaded via spec_from_file_location)
-    TASK_START = "celery.task.start"
-    TASK_RETRY = "celery.task.retry"
+    RETRY_STATE = "RETRY"
+    SUCCESS_STATE = "SUCCESS"  # noqa: F841
 
-    start_counts: dict[str, int] = {}  # task_name → call_count
-    retry_counts: dict[str, int] = (
-        {}
-    )  # task_name → retry call_count
+    start_counts = {}
+    retry_counts = {}
 
     for node in graph.all_nodes():
         if node.service != "celery":
             continue
-
         probe = node.metadata.get("probe", "")
+        state = node.metadata.get("state", "")
 
-        if probe == TASK_START or node.name.endswith(".start"):
-            # node.id is "celery::myworker.tasks.failing_task"
-            task_name = node.name
-            start_counts[task_name] = start_counts.get(
+        # only task end nodes have meaningful call counts
+        if probe != "celery.task.end":
+            continue
+
+        task_name = node.id
+        if state == RETRY_STATE:
+            retry_counts[task_name] = retry_counts.get(
                 task_name, 0
             ) + (node.call_count or 0)
-        elif probe == TASK_RETRY or node.name.endswith(".retry"):
-            task_name = node.name
-            retry_counts[task_name] = retry_counts.get(
+        else:
+            # SUCCESS, FAILURE etc all count as starts
+            start_counts[task_name] = start_counts.get(
                 task_name, 0
             ) + (node.call_count or 0)
 
@@ -102,7 +117,6 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
 
     overall_retry_rate = total_retries / total_starts
     fired = overall_retry_rate > 0.30
-
     # Build per-task breakdown for tasks that are retrying heavily
     retrying_tasks = []
     for task_name, starts in start_counts.items():
@@ -135,7 +149,11 @@ def _retry_amplification(graph, temporal) -> tuple[bool, dict]:
     }
 
 
-def _task_duration_spike(graph, temporal) -> tuple[bool, dict]:
+def celery_task_duration_spike(
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
+) -> tuple[bool, dict]:
     """
     Fires when any celery node has avg_duration_ns more than 5× the
     median across all celery nodes with at least 5 calls.
@@ -149,10 +167,10 @@ def _task_duration_spike(graph, temporal) -> tuple[bool, dict]:
         n
         for n in graph.all_nodes()
         if n.service == "celery"
+        and n.metadata.get("probe") == "celery.task.end"
         and (n.call_count or 0) >= 5
         and n.avg_duration_ns
     ]
-
     if len(celery_nodes) < 2:
         return False, {}
 
@@ -170,7 +188,7 @@ def _task_duration_spike(graph, temporal) -> tuple[bool, dict]:
             "ratio": round(n.avg_duration_ns / median, 1),
         }
         for n in celery_nodes
-        if n.avg_duration_ns > median * 5
+        if n.avg_duration_ns > median * 2
     ]
 
     return bool(spikes), {
@@ -184,14 +202,14 @@ def _task_duration_spike(graph, temporal) -> tuple[bool, dict]:
 
 
 SYNC_DB_IN_CELERY = CausalRule(
-    name="celery_sync_db_call",
+    name="sync_db_in_celery",
     description=(
         "A Celery task is making synchronous database calls. "
         "In a prefork worker, this blocks the worker process thread "
         "for the full query duration, reducing pool throughput."
     ),
     tags=["celery", "blocking", "database"],
-    predicate=_sync_db_in_celery,
+    predicate=sync_db_in_celery,
     confidence=0.85,
 )
 
@@ -203,7 +221,7 @@ CELERY_RETRY_AMPLIFICATION = CausalRule(
         "into many retried tasks consuming the worker pool."
     ),
     tags=["celery", "retry"],
-    predicate=_retry_amplification,
+    predicate=celery_retry_amplification,
     confidence=0.80,
 )
 
@@ -215,7 +233,7 @@ CELERY_TASK_DURATION_SPIKE = CausalRule(
         "slow operation introduced in a recent deployment."
     ),
     tags=["celery", "latency"],
-    predicate=_task_duration_spike,
+    predicate=celery_task_duration_spike,
     confidence=0.75,
 )
 
