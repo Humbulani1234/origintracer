@@ -227,3 +227,14 @@ Copy a `trace_id` value from the output, then pass it to `\stitch`.
 
 ---
 
+## Load testing
+
+```bash
+# steady concurrent load
+python load_test.py --requests 200 --workers 20 --delay 0
+
+# burst waves - watch graph between waves
+python burst_test.py --waves 6 --burst 100 --workers 15 --quiet 5
+```
+---
+

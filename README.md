@@ -2,14 +2,14 @@
 
 **Live causal graph for complex async services.**
 
-OriginTracer instruments your full production stack - **nginx --> gunicorn/uvicorn --> Django/FastAPI --> asyncio --> Celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with powerful REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
+OriginTracer instruments your full production stack - **nginx --> gunicorn/uvicorn --> Django/FastAPI --> asyncio --> Celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
 
 It combines:
 - Deep, source-grounded "traced book" chapters that teach framework and kernel internals via real pivot points.
 - Ready-to-run **rule libraries** that turn that knowledge into automatic detectors.
 - A clean, open-source engine that stays non-blocking and production-safe.
 
-The result: actionable insight into opaque async behavior, cross-process flows, and hidden latency sources that traditional tracing often misses.
+The result: actionable insight into async behavior, cross-process flows, and hidden latency sources that traditional tracing often misses.
 
 Website for more details - [origintracer.app](https://origintracer.app)
 
@@ -17,7 +17,7 @@ Website for more details - [origintracer.app](https://origintracer.app)
 
 Most observability tools show you *what* happened (spans, metrics, logs). OriginTracer shows *why* - the causal relationships across layers, including kernel-level events.
 
-- **Causal graph** with intelligent deduplication and compaction (stable even under high load)
+- **Causal graph** with deduplication and compaction (stable even under high load)
 - **Automatic causal rules** (N+1 queries, asyncio loop starvation, worker imbalance, retry amplification, etc.)
 - **Cross-process stitching** — merge timelines across gunicorn workers, Celery, and nginx
 - **Native deep probes** (including eBPF/kprobes for nginx) *or* OpenTelemetry bridge mode
@@ -45,11 +45,15 @@ You can already start building probes for Node.js services (Express, Fastify, Ne
 
 If you want to help accelerate this, the open engine and clear event protocol make experimentation straightforward. Community contributions for the first Node.js probes are highly encouraged — we’ll provide early guidance and feedback.
 
-## Quick Start - Django
+## Installation
 
 ```bash
-pip install origintracer
+git clone git@github.com:Humbulani1234/origintracer.git
+cd origintracer 
+pip install -e .
 ```
+
+## Quick Start - Django application
 
 **1. Add middleware** (must be first in `settings.py`):
 
@@ -71,7 +75,7 @@ class MyAppConfig(AppConfig):
 
     def ready(self):
         import origintracer
-        origintracer.init(debug=True)  # set debug=False in production
+        origintracer.init(debug=True)
 ```
 
 **3. Create `origintracer.yaml`** in your project root:
@@ -80,8 +84,9 @@ class MyAppConfig(AppConfig):
 probes:
   - django
   - asyncio
-  - gunicorn
-  # - nginx          # deeper version available on origintracer.app
+  - gunicorn # available on origintracer.app
+  - uvicorn # available on origintracer.app
+  - nginx  # available on origintracer.app
 ```
 
 **4. Run your app** and explore:
@@ -94,7 +99,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 Open the REPL:
 
 ```bash
-python -m origintracer.repl
+python -m origintracer.repl.repl
 ```
 
 Try:
@@ -103,7 +108,7 @@ Try:
 - `CAUSAL`
 - `\stitch <trace_id>` (merges across processes)
 
-## Quick Start – Celery
+## Quick Start – Celery application
 
 Celery workers automatically receive their own engine instance. Just add `celery` to your `probes` list in `origintracer.yaml`. The Celery probe handles `worker_process_init` for you.
 
@@ -116,7 +121,7 @@ Celery workers automatically receive their own engine instance. Just add `celery
 
 ## Probe Overview
 
-**Built-in (free)**:
+**Built-in**:
 - **django** — Full request lifecycle, URL resolution, view dispatch (sync + async)
 - **asyncio** — Loop ticks, `_run_once`, selector events — makes event loop starvation visible
 
@@ -186,7 +191,7 @@ Rules receive the live graph and can emit evidence with confidence scores.
 
 ## Benchmarks
 
-OriginTracer is engineered for real production workloads, not just local debugging.
+OriginTracer is engineered for early production workloads, not just local debugging.
 
 ### Stress Test Highlights: 4-core machine
 

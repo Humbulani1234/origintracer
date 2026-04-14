@@ -1,15 +1,13 @@
-# stacktracer.yaml
-# StackTracer configuration for the Django + Celery demo application.
+# OriginTracer configuration for the Django + Celery demo application.
 #
-# Built-in probes (from stacktracer.probes.*):
-#   django   — TracerMiddleware + View.dispatch + ORM execute_wrapper
-#   gunicorn — on_starting / post_fork / worker_exit hooks
-#   uvicorn  — request.receive / response.send events
-#   celery   — task_prerun / task_postrun / worker_process_init signals
+# Built-in probes (from origintracer.probes.*):
+#   django - TracerMiddleware + View.dispatch + ORM execute_wrapper
+#   gunicorn - on_starting/post_fork/worker_exit hooks
+#   uvicorn - request.receive/response.send events
+#   celery - task_prerun/task_postrun worker_process_init signals
 #
 # Custom rules are auto-discovered from:
-#   stacktracer/rules/*_rules.py
-# No YAML entry needed for those files.
+#   origintracer/rules/*_rules.py
 
 probes:
   - gunicorn

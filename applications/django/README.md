@@ -16,12 +16,12 @@ applications/django/
 │   └── urls.py
 ├── worker/ << Django app
 │   ├── __init__.py
-│   ├── apps.py << AppConfig.ready() — single init() point
+│   ├── apps.py << AppConfig.ready() - single init() point
 │   ├── views.py
 │   ├── models.py
 │   └── urls.py
 │   
-├── stacktracer.yaml << user config — overrides defaults.yaml
+├── origintracer.yaml << user config - overrides defaults.yaml
 ├── gunicorn.conf.py
 └── manage.py
 ```

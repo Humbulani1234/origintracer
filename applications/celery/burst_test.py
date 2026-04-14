@@ -1,18 +1,16 @@
 """
-celery_burst.py
-
 Burst traffic against the Celery tasks app.
 Each wave fires concurrent requests then goes quiet so you can
-observe the graph in the REPL between bursts — including how
+observe the graph in the REPL between bursts - including how
 celery tasks land after the HTTP request has already returned.
 
 URLs hit (all under /tasks/):
-    /tasks/report/<id>/       full django → redis → celery path
-    /tasks/cache/<id>/        redis cache hit/miss then celery
-    /tasks/bulk-notify/       fans out many celery tasks at once
-    /tasks/export/<id>/       heavier task
-    /tasks/failing/           error path (rare)
-    /tasks/status/            lightweight poll
+    /tasks/report/<id>/ full django >> redis >> celery path
+    /tasks/cache/<id>/ redis cache hit/miss then celery
+    /tasks/bulk-notify/ fans out many celery tasks at once
+    /tasks/export/<id>/ heavier task
+    /tasks/failing/ error path (rare)
+    /tasks/status/ lightweight poll
 
 Usage:
     python celery_burst.py
