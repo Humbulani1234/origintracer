@@ -134,6 +134,7 @@ _valid_api_keys: Dict[str, str] = {}
 
 
 def _load_api_keys() -> None:
+    # Implement proper loading of APIs for production
     global _valid_api_keys
     raw = os.getenv("ORIGINTRACER_API_KEYS", "")
     for pair in raw.split(","):
@@ -227,6 +228,9 @@ def _load_snapshots_on_startup() -> None:
                 == "application/x-protobuf"
                 else MsgpackSerializer()
             )
+            # TODO: also implement functionality for other stored data like
+            # diffs, markers, etc. Currently we using InMemory storage for
+            # others
             graph = serializer.deserialize(row["data"])
             with _graphs_lock:
                 _graphs[customer_id] = graph
@@ -246,7 +250,9 @@ def _load_snapshots_on_startup() -> None:
 
 
 def _authenticate(authorization: Optional[str]) -> str:
-    """Validate Bearer token, return customer_id."""
+    """
+    Validate Bearer token, return customer_id.
+    """
     if not authorization or not authorization.startswith(
         "Bearer "
     ):
