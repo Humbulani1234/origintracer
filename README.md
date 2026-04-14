@@ -26,36 +26,28 @@ Most observability tools show you *what* happened (spans, metrics, logs). Origin
 
 Benchmarks on a 4-core setup show ~22 ms mean overhead per request at 175+ req/s bursts, with zero dropped events thanks to background processing and deduplication.
 
-## Multi-Language Potential
+## Multi-Language & Polyglot Potential
 
-OriginTracer's core engine is **language-agnostic**. It only understands a clean, normalized event protocol (`NormalizedEvent`). 
+OriginTracer’s core engine is **completely language-agnostic**. It only understands a clean, normalized event protocol (`NormalizedEvent`). The graph, deduplication, causal rules, REPL, and UI have no idea whether events came from Python, Node.js, or another language.
 
-This means:
-- The engine, causal graph, deduplication, temporal snapshots, REPL, causal rules, and React UI work independently of the source language.
-- Any language can feed events into the engine as long as they follow the protocol.
+This design makes OriginTracer uniquely positioned as a **unified causal observability backend for the whole web**.
 
-**Node.js support is coming soon**, but you can start working on it now.
+**Node.js support is actively planned.**
 
 ### For Node.js Developers
 
-If you're working with Node.js (Express, Fastify, NestJS, etc.), you can already start building **custom probes** that emit events to the OriginTracer engine. 
+You can already start building probes for Node.js services (Express, Fastify, NestJS, etc.). A Node.js probe can:
 
-Because the engine only cares about the normalized protocol, a well-written Node.js probe can:
-- Capture request lifecycle, middleware execution, async operations, database calls, or event loop behavior
-- Participate in the same causal graph as Python probes
-- Trigger the same powerful causal rules (N+1 style patterns, hotspot detection, retry amplification, etc.)
-- Use cross-language stitching once multiple services are instrumented
+- Hook into request/response lifecycle, middleware, async operations, or event loop behavior
+- Emit events that seamlessly join the same causal graph as your Python services
+- Trigger the same powerful rules (N+1-style patterns, hotspots, retry amplification, blocking calls, etc.)
+- Enable cross-language stitching between Node.js and Python microservices
 
-**Example flow for Node.js**:
-1. Write a lightweight probe (e.g., using Async Hooks, diagnostics_channel, or library-specific hooks)
-2. Emit events matching the `NormalizedEvent` schema (or via a thin bridge)
-3. Drop your probe into the shared engine — the causal graph, REPL, and rules work immediately
+**Official Node.js probes** (covering Express/Fastify middleware, async context tracking, event loop delays, etc.) are in the roadmap and will ship soon.
 
-This makes OriginTracer a powerful **polyglot observability backend** for teams running mixed Python + Node.js services.
+If you want to help accelerate this, the open engine and clear event protocol make experimentation straightforward. Community contributions for the first Node.js probes are highly encouraged — we’ll provide early guidance and feedback.
 
-**We're actively working on official Node.js probes** (Express/Fastify middleware, async context, event loop delays, etc.). In the meantime, the open engine and clear event protocol make it easy for the community to experiment and contribute.
-
-Want to build the first Node.js probe? Open an issue or PR - we'd love to collaborate and give early feedback.
+This is the moment OriginTracer evolves from a deep Python tool into a true polyglot causal observability platform.
 
 ## Quick Start – Django
 
