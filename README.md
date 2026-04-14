@@ -1,8 +1,8 @@
 # OriginTracer
 
-**Live causal graph for complex async Python services.**
+**Live causal graph for complex async services.**
 
-OriginTracer instruments your full production stack - **nginx -> gunicorn/uvicorn -> Django/FastAPI -> asyncio -> Celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with powerful REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
+OriginTracer instruments your full production stack - **nginx --> gunicorn/uvicorn --> Django/FastAPI --> asyncio --> Celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with powerful REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
 
 It combines:
 - Deep, source-grounded "traced book" chapters that teach framework and kernel internals via real pivot points.
@@ -25,6 +25,37 @@ Most observability tools show you *what* happened (spans, metrics, logs). Origin
 - **Extensible by design** - anyone can add custom probes and rules
 
 Benchmarks on a 4-core setup show ~22 ms mean overhead per request at 175+ req/s bursts, with zero dropped events thanks to background processing and deduplication.
+
+## Multi-Language Potential
+
+OriginTracer's core engine is **language-agnostic**. It only understands a clean, normalized event protocol (`NormalizedEvent`). 
+
+This means:
+- The engine, causal graph, deduplication, temporal snapshots, REPL, causal rules, and React UI work independently of the source language.
+- Any language can feed events into the engine as long as they follow the protocol.
+
+**Node.js support is coming soon**, but you can start working on it now.
+
+### For Node.js Developers
+
+If you're working with Node.js (Express, Fastify, NestJS, etc.), you can already start building **custom probes** that emit events to the OriginTracer engine. 
+
+Because the engine only cares about the normalized protocol, a well-written Node.js probe can:
+- Capture request lifecycle, middleware execution, async operations, database calls, or event loop behavior
+- Participate in the same causal graph as Python probes
+- Trigger the same powerful causal rules (N+1 style patterns, hotspot detection, retry amplification, etc.)
+- Use cross-language stitching once multiple services are instrumented
+
+**Example flow for Node.js**:
+1. Write a lightweight probe (e.g., using Async Hooks, diagnostics_channel, or library-specific hooks)
+2. Emit events matching the `NormalizedEvent` schema (or via a thin bridge)
+3. Drop your probe into the shared engine — the causal graph, REPL, and rules work immediately
+
+This makes OriginTracer a powerful **polyglot observability backend** for teams running mixed Python + Node.js services.
+
+**We're actively working on official Node.js probes** (Express/Fastify middleware, async context, event loop delays, etc.). In the meantime, the open engine and clear event protocol make it easy for the community to experiment and contribute.
+
+Want to build the first Node.js probe? Open an issue or PR - we'd love to collaborate and give early feedback.
 
 ## Quick Start – Django
 
@@ -162,7 +193,7 @@ Rules receive the live graph and can emit evidence with confidence scores.
 
 - **REPL + React UI** — Terminal-style live dashboard (nodes, edges, timelines, event log)
 - **Cross-process stitching** via Unix sockets for multi-worker and Celery visibility
-- **OpenTelemetry bridge mode** — Use existing OTel instrumentation while still getting OriginTracer’s causal rules and graph
+- **OpenTelemetry bridge mode** — Use existing OTel instrumentation while still getting OriginTracer’s causal rules and graph. **[still experimental]**
 - **Windows support** via WSL2 (required for Unix sockets and full kprobe features)
 
 ## Performance & Production Notes
