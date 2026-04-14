@@ -26,11 +26,11 @@ Most observability tools show you *what* happened (spans, metrics, logs). Origin
 
 Benchmarks on a 4-core setup show ~22 ms mean overhead per request at 175+ req/s bursts, with zero dropped events thanks to background processing and deduplication.
 
-## Multi-Language & Polyglot Potential
+## Multi-Language Support Potential
 
 OriginTracer’s core engine is **completely language-agnostic**. It only understands a clean, normalized event protocol (`NormalizedEvent`). The graph, deduplication, causal rules, REPL, and UI have no idea whether events came from Python, Node.js, or another language.
 
-This design makes OriginTracer uniquely positioned as a **unified causal observability backend for the whole web**.
+This design makes OriginTracer uniquely positioned as a **unified causal observability backend**.
 
 **Node.js support is actively planned.**
 
@@ -47,9 +47,7 @@ You can already start building probes for Node.js services (Express, Fastify, Ne
 
 If you want to help accelerate this, the open engine and clear event protocol make experimentation straightforward. Community contributions for the first Node.js probes are highly encouraged — we’ll provide early guidance and feedback.
 
-This is the moment OriginTracer evolves from a deep Python tool into a true polyglot causal observability platform.
-
-## Quick Start – Django
+## Quick Start - Django
 
 ```bash
 pip install origintracer
@@ -59,7 +57,7 @@ pip install origintracer
 
 ```python
 MIDDLEWARE = [
-    "origintracer.probes.django_probe.TracerMiddleware",  # required for trace_id propagation
+    "origintracer.probes.django_probe.TracerMiddleware", # required for trace_id propagation
     "django.middleware.security.SecurityMiddleware",
     # ...
 ]
