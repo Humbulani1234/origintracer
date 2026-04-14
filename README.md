@@ -11,7 +11,7 @@ It combines:
 
 The result: actionable insight into opaque async behavior, cross-process flows, and hidden latency sources that traditional tracing often misses.
 
-[origintracer.app](https://origintracer.app)
+Website for more details - [origintracer.app](https://origintracer.app)
 
 ## Why OriginTracer
 
@@ -23,8 +23,6 @@ Most observability tools show you *what* happened (spans, metrics, logs). Origin
 - **Native deep probes** (including eBPF/kprobes for nginx) *or* OpenTelemetry bridge mode
 - **Zero blocking** of the request/response cycle via async draining and fire-and-forget buffers
 - **Extensible by design** - anyone can add custom probes and rules
-
-Benchmarks on a 4-core setup show ~22 ms mean overhead per request at 175+ req/s bursts, with zero dropped events thanks to background processing and deduplication.
 
 ## Multi-Language Support Potential
 
@@ -122,7 +120,7 @@ Celery workers automatically receive their own engine instance. Just add `celery
 - **django** — Full request lifecycle, URL resolution, view dispatch (sync + async)
 - **asyncio** — Loop ticks, `_run_once`, selector events — makes event loop starvation visible
 
-**Advanced (available on origintracer.app)**:
+**Advanced** - available on [origintracer.app](https://origintracer.app):
 - **nginx** — Dual mode: eBPF/kprobes (accept4, epoll_wait, send/recv) + JSON log tail fallback. Includes master/worker topology discovery and request enrichment.
 - **gunicorn** — Worker spawn, init, heartbeat, and request handling
 - **uvicorn** — ASGI lifecycle with automatic X-Request-ID correlation from nginx
@@ -186,11 +184,21 @@ Rules receive the live graph and can emit evidence with confidence scores.
 - **OpenTelemetry bridge mode** — Use existing OTel instrumentation while still getting OriginTracer’s causal rules and graph. **[still experimental]**
 - **Windows support** via WSL2 (required for Unix sockets and full kprobe features)
 
-## Performance & Production Notes
+## Benchmarks
 
-- Mean overhead ~22 ms per request in high-concurrency tests (async draining keeps the request path unblocked)
-- Deduplication engine prevents graph bloat even after thousands of requests
-- Designed for production: fire-and-forget buffers, background tasks, graceful shutdown
+Tested on a 4-core machine with full eBPF tracing active:
+
+- **4,000 requests** — `ok=4000  err=0  dropped=0`
+- **48,000 events** processed (kernel + userspace) — buffer depth stayed at `0`
+- **393 req/s** sustained through a single nginx → gunicorn worker
+- **Latency** (1000 req bursts):
+  - Mean: 20–23 ms
+  - p95: 31–39 ms
+  - p99: 35–44 ms
+
+The graph remained stable at just 3 nodes / 2 edges even after 48k events. Zero backpressure, zero dropped events.
+
+Production-grade stability with measurable overhead only in the low tens of milliseconds.
 
 ## Development
 
