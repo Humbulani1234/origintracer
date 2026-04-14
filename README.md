@@ -1,6 +1,3 @@
-Here's the **complete raw Markdown** file you can copy and paste directly into your `README.md`:
-
-```markdown
 # OriginTracer
 
 **Live causal graph for complex async Python services.**
@@ -193,8 +190,6 @@ The open core is designed for wide use and community contributions. High-value, 
 
 ---
 
-**Made for engineers who want to move beyond "it's slow" to "here's exactly why — and how to fix it."**
+**Made for engineers who want to move beyond "it's slow" to "here's exactly why - and how to fix it."**
 
-```
 Questions or ideas? Open an issue or reach out via the site.
-```
