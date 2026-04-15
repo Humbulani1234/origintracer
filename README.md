@@ -43,7 +43,7 @@ You can already start building probes for Node.js services (Express, Fastify, Ne
 
 **Official Node.js probes** (covering Express/Fastify middleware, async context tracking, event loop delays, etc.) are in the roadmap and will ship soon.
 
-If you want to help accelerate this, the open engine and clear event protocol make experimentation straightforward. Community contributions for the first Node.js probes are highly encouraged — we’ll provide early guidance and feedback.
+If you want to help accelerate this, the open engine and clear event protocol make experimentation straightforward. Community contributions for the first Node.js probes are highly encouraged - we’ll provide early guidance and feedback.
 
 ## Installation
 
@@ -54,6 +54,8 @@ pip install -e .
 ```
 
 ## Quick Start - Django application
+
+Navigate to the `applications/django` directory for this specific application.
 
 **1. Add middleware** (must be first in `settings.py`):
 
@@ -89,12 +91,14 @@ probes:
   - nginx  # available on origintracer.app
 ```
 
-**4. Run your app** and explore:
+**4. Run your app**:
 
 ```bash
 gunicorn -c gunicorn.conf.py config.asgi:application \
   --worker-class uvicorn.workers.UvicornWorker
 ```
+
+Fire requests to your views and explore with the REPL below.
 
 Open the REPL:
 
@@ -108,9 +112,9 @@ Try:
 - `CAUSAL`
 - `\stitch <trace_id>` (merges across processes)
 
-## Quick Start – Celery application
+## Quick Start - Celery application
 
-Celery workers automatically receive their own engine instance. Just add `celery` to your `probes` list in `origintracer.yaml`. The Celery probe handles `worker_process_init` for you.
+Similar to the `Django` application above. Navigate to the `applications/celery` directory for this specific application, and follow the steps.
 
 ## Core Strengths
 
@@ -122,13 +126,13 @@ Celery workers automatically receive their own engine instance. Just add `celery
 ## Probe Overview
 
 **Built-in**:
-- **django** — Full request lifecycle, URL resolution, view dispatch (sync + async)
-- **asyncio** — Loop ticks, `_run_once`, selector events — makes event loop starvation visible
+- **django** - Full request lifecycle, URL resolution, view dispatch (sync + async)
+- **asyncio** - Loop ticks, `_run_once`, selector events - makes event loop starvation visible
 
 **Advanced** - available on [origintracer.app](https://origintracer.app):
-- **nginx** — Dual mode: eBPF/kprobes (accept4, epoll_wait, send/recv) + JSON log tail fallback. Includes master/worker topology discovery and request enrichment.
-- **gunicorn** — Worker spawn, init, heartbeat, and request handling
-- **uvicorn** — ASGI lifecycle with automatic X-Request-ID correlation from nginx
+- **nginx** - Dual mode: eBPF/kprobes (accept4, epoll_wait, send/recv) + JSON log tail fallback. Includes master/worker topology discovery and request enrichment.
+- **gunicorn** - Worker spawn, init, heartbeat, and request handling
+- **uvicorn** - ASGI lifecycle with automatic X-Request-ID correlation from nginx
 
 Custom probes follow the same `BaseProbe` pattern and are auto-discovered.
 
