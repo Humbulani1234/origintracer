@@ -156,29 +156,6 @@ class ExportView(View):
         )
 
 
-class FailingJobView(View):
-    """
-    GET /tasks/failing/?fail=1    → dispatches a failing task (default)
-    GET /tasks/failing/?fail=0    → dispatches a succeeding task
-
-    The failing task retries 3 times then raises permanently.
-    After ~4 requests with fail=1, celery_retry_amplification fires
-    because retry node call_count > 30% of start node call_count.
-
-    REPL:
-        CAUSAL WHERE tags = "celery"
-        HOTSPOT TOP 10
-    """
-
-    def get(self, request):
-        trace_id = get_trace_id()
-        should_fail = request.GET.get("fail", "1") != "0"
-        _dispatch(risky_job, trace_id, should_fail=should_fail)
-        return JsonResponse(
-            {"queued": "risky_job", "should_fail": should_fail}
-        )
-
-
 class StatusView(View):
     """
     GET /tasks/status/
