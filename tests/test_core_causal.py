@@ -1545,7 +1545,7 @@ class TestSyncDbInCelery:
             "mysql::SELECT * FROM orders",
             "calls",
         )
-        matched, evidence = SYNC_DB_IN_CELERY.predicate(g, t, a)
+        matched, _ = SYNC_DB_IN_CELERY.predicate(g, t, a)
         assert matched
 
     def test_evidence_contains_remediation(self, tracker):
