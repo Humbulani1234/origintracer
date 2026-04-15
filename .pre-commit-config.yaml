@@ -1,15 +1,3 @@
-# .pre-commit-config.yaml
-#
-# Runs automatically on every local `git commit`.
-# Install once: pre-commit install
-#
-# What runs:
-#   black   — formats Python files in place
-#   ruff    — fast linter (catches unused imports, undefined names, etc.)
-#   pytest  — runs the test suite before the commit is accepted
-#
-# If any hook fails the commit is aborted. Fix the issues and commit again.
-
 repos:
   - repo: https://github.com/psf/black
     rev: 24.3.0
@@ -33,7 +21,7 @@ repos:
         pass_filenames: false
         args:
           - tests/
-          - -x               # stop on first failure
-          - -q               # quiet output
-          - --tb=short       # short tracebacks
+          - -x
+          - -q
+          - --tb=short
         always_run: true

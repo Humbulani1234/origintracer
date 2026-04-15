@@ -48,9 +48,8 @@ class RequestSpan:
 class ActiveRequestTracker:
     """
     Tracks in-flight requests in a bounded dict with TTL eviction.
-    It is a 30-second window of active trace_ids that enables one thing the
-    RuntimeGraph cannot do alone: compare current request latency against
-    stored historical averages.
+    It is a 30-second window of active trace_ids that enables comparing
+    current request latency against stored historical averages.
 
     What this tracks:
         {trace_id: RequestSpan}
@@ -209,16 +208,10 @@ class ActiveRequestTracker:
     def recent_completions(
         self,
         pattern: str,
-        window_s: float = 60.0,
     ) -> List[float]:
         """
         Returns recent completion durations (ms) for the given pattern.
         Used by causal rules to compute rolling averages and percentiles.
-
-        Note: we store by pattern not by timestamp so window_s is approximate -
-        it returns the last _COMPLETION_WINDOW completions regardless of time.
-        For a high-throughput endpoint that is fine. For a rarely-hit endpoint,
-        the ring buffer may span much longer than window_s.
         """
         with self._lock:
             return list(self._completions.get(pattern, []))

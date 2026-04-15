@@ -1,7 +1,7 @@
 // Points at the OriginTracer FastAPI backend.
 // Set VITE_API_URL and VITE_API_KEY in a .env file at the project root:
 //
-//  VITE_API_URL=http://localhost:8000
+//  VITE_API_URL=http://localhost:8001
 //  VITE_API_KEY=test-key-123
 
 

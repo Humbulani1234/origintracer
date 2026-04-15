@@ -9,8 +9,6 @@ from ..query.parser import execute, parse
 from ..sdk.base_probe import BaseProbe
 from .active_requests import ActiveRequestTracker
 from .causal import CausalMatch, CausalRule, PatternRegistry
-
-# build_default_registry,
 from .event_schema import NormalizedEvent, ProbeTypes
 from .graph_compactor import GraphCompactor
 from .graph_normalizer import GraphNormalizer
@@ -51,13 +49,13 @@ class Engine:
         )
         self.tracker = (
             ActiveRequestTracker()
-        )  # overwridden in init()
+        )  # overwritten in init()
         self.normalizer = (
             GraphNormalizer()
-        )  # overwridden in init()
+        )  # overwritten in init()
         self.compactor = (
             GraphCompactor()
-        )  # overwridden in init()
+        )  # overwritten in init()
         self.semantic = semantic_layer or SemanticLayer()
         self.causal: Optional[PatternRegistry] = None
         # System active probes - overridden during init()
@@ -67,7 +65,7 @@ class Engine:
         self._snapshot_thread: Optional[threading.Thread] = None
         self._running = False
 
-        # Last event per trace — used to build graph edges between consecutive events.
+        # Last event per trace - used to build graph edges between consecutive events.
         # Stored as (event, last_updated_timestamp) so stale entries can be evicted.
         # A trace_id not updated in _trace_ttl_s seconds is considered complete or
         # abandoned and is removed by _evict_stale_traces() in the snapshot loop.
@@ -77,19 +75,19 @@ class Engine:
         )  # trace_id > (NormalizedEvent, float)
         self._last_event_lock = threading.Lock()
 
-        # In-order event log (bounded ring buffer for replay / timeline)
+        # In-order event log (bounded ring buffer for replay/timeline)
         self._event_log: List[NormalizedEvent] = []
         self._event_log_max = 10_000
         self._event_log_lock = threading.Lock()
 
-        # The Uploader — set after engine construction
+        # The Uploader - set after engine construction
         self.repository: Optional[Any] = None
 
     def process(self, event: NormalizedEvent) -> None:
         """
         Called by the Uploader for every emitted probe event.
         """
-        # Update runtime graph — build edges between consecutive events in same trace
+        # Update runtime graph - build edges between consecutive events in same trace
         with self._last_event_lock:
             entry = self._last_event_per_trace.get(
                 event.trace_id
@@ -97,7 +95,7 @@ class Engine:
             parent = entry[0] if entry else None
             if event.probe == "request.exit":
                 # Close the trace. Also clear parent so request.exit never
-                # draws a generic edge — it closes a span, calls nothing.
+                # draws a generic edge - it closes a span, calls nothing.
                 self._last_event_per_trace.pop(
                     event.trace_id, None
                 )

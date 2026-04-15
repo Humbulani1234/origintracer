@@ -32,7 +32,7 @@ class GraphCompactor:
 
     When to compact:
         Compaction runs on a background thread (called by Engine's snapshot loop)
-        or can be triggered manually. It does NOT run on the hot path.
+        or can be triggered manually.
 
     Usage:
         compactor = GraphCompactor(max_nodes=5000, node_ttl_s=3600)
@@ -197,7 +197,7 @@ class GraphCompactor:
         node_count = len(graph._nodes)
         edge_count = len(graph._edge_index)
 
-        # Empirical estimates from profiling typical StackTracer graphs:
+        # Empirical estimates from profiling typical OriginTracer graphs:
         #   GraphNode dataclass: ~200 bytes base + metadata dict overhead
         #   GraphEdge dataclass: ~160 bytes base + metadata dict overhead
         #   Dict overhead per entry: ~50-80 bytes

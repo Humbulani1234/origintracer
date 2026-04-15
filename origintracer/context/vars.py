@@ -28,7 +28,6 @@ def set_trace(
 ) -> Token:
     """
     Set the current trace context. Returns a Token for reset().
-    Use inside a try/finally to guarantee cleanup:
 
         token = set_trace(trace_id)
         try:

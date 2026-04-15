@@ -73,7 +73,6 @@ class CausalRule:
     tags: List[str] = field(default_factory=list)
 
 
-# Registry
 class PatternRegistry:
     """
     Register causal rules and evaluate them over the live graph.

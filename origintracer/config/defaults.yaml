@@ -10,12 +10,8 @@
 
 # builtin_probes: Python module paths to import at init() time.
 #   Side-effect of import: registers the BaseProbe subclass with ProbeRegistry.
-#   All built-in probes are listed here. User origintracer.yaml should NOT
+#   All built-in probes are listed here. User origintracer.yaml should not
 #   override this unless adding a completely custom module path.
-
-# probes: Names of probes to actually start.
-#   User origintracer.yaml REPLACES this list entirely.
-#   Only probes listed here are started - importing a module does not start it.
  
 builtin_probes:
   - ".probes.gunicorn_probe"
@@ -24,6 +20,10 @@ builtin_probes:
   - ".probes.django_probe"
   # - ".probes.nginx_probe"
 
+
+# probes: Names of probes to actually start.
+#   User origintracer.yaml replaces this list entirely.
+#   Only probes listed here are started - importing a module does not start it.
 probes:
   - django
   - asyncio
@@ -33,14 +33,7 @@ probes:
 
 # ---------------- Rules activation ---------------------------
 
-# builtin_probes: Python module paths to import at init() time.
-#   Side-effect of import: registers the BaseProbe subclass with ProbeRegistry.
-#   All built-in probes are listed here. User origintracer.yaml should NOT
-#   override this unless adding a completely custom module path.
-
-# probes: Names of probes to actually start.
-#   User origintracer.yaml REPLACES this list entirely.
-#   Only probes listed here are started - importing a module does not start it.
+# builtin_rules: Python module paths to import at init() time.
  
 builtin_rules:
   - ".rules.asyncio_rules"
@@ -58,27 +51,15 @@ buffer_size: 10000
  
 # ----- Snapshot and flush intervals -------------------------
 
-snapshot_interval: 15.0   # seconds between temporal graph snapshots
-flush_interval: 10        # seconds between uploader batch flushes
+snapshot_interval: 15.0 # seconds between temporal graph snapshots
+flush_interval: 10 # seconds between uploader batch flushes
 endpoint: http://localhost:8001
+
 # ------- Sampling ------------------------------------------
 
 snapshot_interval: 15.0 # seconds between temporal graph snapshots
 flush_interval: 10 # seconds between uploader batch flushes
 buffer_size: 10000 # EventBuffer max size before drop
-
-# ------------ Field redaction -------------------------------
-
-# Metadata keys whose values are replaced with "***REDACTED***" before
-# any event is stored or uploaded.
-redact_fields:
-  - password
-  - token
-  - secret
-  - authorization
-  - api_key
-  - access_token
-  - refresh_token
 
 # ----- Semantic aliases ----------------------------------------
 
@@ -86,7 +67,7 @@ redact_fields:
 #   SHOW latency WHERE system = "api"
 #   BLAME WHERE system = "db"
 
-# Users add their own labels in stacktracer.yaml semantic section.
+# Users add their own labels in origintracer.yaml semantic section.
 # Labels with the same name as a default are overridden by user config.
 semantic:
   - label: api
@@ -163,8 +144,8 @@ semantic:
 
 # -------------- Normalization rules -----------------------------------
 
-# Applied AFTER built-in patterns (UUID, numeric ID, memory address, SQL).
-# Built-in patterns always run — these add to them.
+# Applied after built-in patterns (UUID, numeric ID, memory address, SQL).
+# Built-in patterns always run - these add to them.
 # Format: service (or "*" for all), pattern (regex), replacement.
 
 normalize:

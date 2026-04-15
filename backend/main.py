@@ -14,18 +14,17 @@ Surfaces:
     GET  /health - liveness probe
 
 Architecture:
-    OriginTracer owns the authoritative graph and builds it locally.
-    FastAPI receives serialised graph snapshots every 60s,
-    deserialises them, and serves all queries from the deserialised graph.
-    FastAPI never rebuilds a graph from raw events - that is the
-    OriginTracer's job.
+    OriginTracer owns the graph and builds it locally. FastAPI receives
+    serialised graph snapshots for every configured interval, deserialises them,
+    and serves all queries from the deserialised graph. FastAPI does not
+    rebuild a graph from raw events - that is the OriginTracer's job.
 
     On startup, the latest snapshot is loaded from the storage backend
     so queries work immediately after a FastAPI restart without waiting
-    60s for the next agent snapshot.
+    the configured interval period for the next snapshot.
 
 Run with:
-    uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    uvicorn backend.main:app --host 0.0.0.0 --port 8001
 
 Environment variables:
     ORIGINTRACER_API_KEYS - comma-separated key:customer pairs
@@ -118,23 +117,22 @@ app.add_middleware(
 )
 
 
-# One deserialised RuntimeGraph per customer.
-# This is the cache in front of st_snapshots in the database.
+# One deserialised RuntimeGraph per user.
 # Populated on startup (from DB) and updated on every POST /graph/snapshot.
 _graphs: Dict[str, Any] = {}
 _graphs_lock = threading.Lock()
 
-# Storage repository — set in _init_repository() at startup.
+# Storage repository - set in _init_repository() at startup.
 # Implements insert_event(), insert_snapshot(), get_latest_snapshot(),
 # query_events(), insert_marker().
 _repository: Optional[Any] = None
 
-# API key:customer_id mapping.
+# API key:customer_id mapping - for development
 _valid_api_keys: Dict[str, str] = {}
 
 
 def _load_api_keys() -> None:
-    # Implement proper loading of APIs for production
+    # Implement proper loading of APIs for real workflow
     global _valid_api_keys
     raw = os.getenv("ORIGINTRACER_API_KEYS", "")
     for pair in raw.split(","):
@@ -198,15 +196,14 @@ def _init_repository() -> None:
 
     _repository = InMemoryRepository()
     logger.info(
-        "Storage: InMemory (dev mode — data lost on restart)"
+        "Storage: InMemory (dev mode - with data lost on restart)"
     )
 
 
 def _load_snapshots_on_startup() -> None:
     """
     On FastAPI restart, reload the latest graph snapshot from storage
-    for each known customer. Without this the first 60 seconds after
-    restart return 404 from require_graph() for every query.
+    for each known customer.
     """
     if _repository is None:
         return
@@ -270,21 +267,25 @@ def _authenticate(authorization: Optional[str]) -> str:
 
 
 def get_graph(customer_id: str) -> Optional[Any]:
-    """Return the latest deserialised graph for this customer, or None."""
+    """
+    Return the latest deserialised graph for this customer, or None.
+    """
     with _graphs_lock:
         return _graphs.get(customer_id)
 
 
 def require_graph(customer_id: str) -> Any:
-    """Return graph or raise 404 — used by every query endpoint."""
+    """
+    Return graph or raise 404 - used by every query endpoint.
+    """
     graph = get_graph(customer_id)
     if graph is None:
         raise HTTPException(
             status_code=404,
             detail=(
                 "No graph snapshot received yet for this account. "
-                "Ensure the OriginTracer agent is running — "
-                "it ships a snapshot every 60 seconds after startup."
+                "Ensure the OriginTracer agent is running - "
+                "it ships a snapshot every interval seconds after startup."
             ),
         )
     return graph
@@ -310,7 +311,7 @@ def discover_sockets() -> list[str]:
             os.kill(int(pid), 0)
             live.append(path)
         except (ProcessLookupError, ValueError):
-            # Process is dead — remove the stale socket
+            # Process is dead - remove the stale socket
             try:
                 os.unlink(path)
             except OSError:
@@ -321,7 +322,7 @@ def discover_sockets() -> list[str]:
 @app.get("/api/v1/workers")
 def get_workers(authorization: Optional[str] = Header(None)):
     _authenticate(authorization)
-    sockets = discover_sockets()  # reuse your existing function
+    sockets = discover_sockets()
     workers = []
     for path in sockets:
         pid = path.replace(_SOCKET_PREFIX, "").replace(
@@ -343,9 +344,10 @@ async def receive_snapshot(
 ) -> Dict:
     """
     Receive a serialised RuntimeGraph from the OriginTracer agent.
-    The agent calls this every 60 seconds via the uploader._flush_snapshot().
-    Deserialises the graph into memory and persists the raw bytes to storage
-    so FastAPI restarts can reload without waiting for the next agent snapshot.
+    The agent calls this every interval seconds via the
+    uploader._flush_snapshot(). Deserialises the graph into memory and
+    persists the raw bytes to storage so FastAPI restarts can reload without
+    waiting for the next snapshot.
     """
     customer_id = _authenticate(authorization)
     body = await request.body()
@@ -371,10 +373,10 @@ async def receive_snapshot(
         )
         graph = serializer.deserialize(body)
 
-        # 1. Store in memory — immediate query serving
+        # Store in memory - immediate query serving
         with _graphs_lock:
             _graphs[customer_id] = graph
-        # 2. Persist to storage — survives FastAPI restarts
+        # Persist to storage - survives FastAPI restarts
         repository.insert_snapshot(
             customer_id=customer_id,
             data=body,
@@ -438,10 +440,10 @@ async def ingest_events(
     repository: Any = Depends(get_repository),
 ) -> Dict:
     """
-    Receive raw probe events from the agent uploader for persistence.
+    Receive raw probe events from the process uploader for persistence.
     Accepts msgpack (application/msgpack) or JSON (application/json).
     Stores to repository for historical trace queries.
-    Does NOT rebuild the graph — that arrives via POST /api/v1/graph/snapshot.
+    Does NOT rebuild the graph - that arrives via POST /api/v1/graph/snapshot.
     """
     customer_id = _authenticate(authorization)
     body = await request.body()
@@ -650,10 +652,9 @@ async def diff(
 ) -> Dict:
     """
     Graph diff since a named marker or timestamp.
-    NOTE: TemporalStore diffs live in the agent process.
-    The backend can only serve diffs if the agent embeds temporal
-    metadata in the graph snapshot (future: include diffs in snapshot payload).
-    For now, this endpoint returns what is available in the snapshot.
+    NOTE: TemporalStore diffs live in the OriginTracer process.
+    The backend can only serve diffs if the Uploader embeds temporal
+    metadata in the graph snapshot (TODO: include diffs in snapshot payload).
     """
     customer_id = _authenticate(authorization)
     results = repository.get_label_diff(customer_id, since)
@@ -771,9 +772,7 @@ async def status(
     Return snapshot metadata and system state for this customer.
     """
     customer_id = _authenticate(authorization)
-    graph = get_graph(
-        customer_id
-    )  # None is OK here — status always responds
+    graph = get_graph(customer_id)
 
     snapshot_info: Dict[str, Any] = {"available": False}
     if graph is not None:
@@ -785,15 +784,6 @@ async def status(
         }
 
     storage_info = type(_repository).__name__ or "none"
-    print(
-        ">>>>> MY STATUS",
-        {
-            "customer_id": customer_id,
-            "snapshot": snapshot_info,
-            "storage": storage_info,
-            "timestamp": time.time(),
-        },
-    )
     return {
         "customer_id": customer_id,
         "snapshot": snapshot_info,
@@ -804,7 +794,9 @@ async def status(
 
 @app.get("/health")
 async def health() -> Dict:
-    """Liveness probe — always returns 200 if the process is running."""
+    """
+    Liveness probe - always returns 200 if the process is running.
+    """
     return {"status": "healthy", "timestamp": time.time()}
 
 
@@ -813,7 +805,10 @@ async def get_nodes(
     service: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ) -> Dict:
-    """Return all nodes from the latest graph snapshot, optionally filtered by service."""
+    """
+    Return all nodes from the latest graph snapshot, optionally filtered
+    by service.
+    """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
 
@@ -844,7 +839,9 @@ async def get_nodes(
 async def get_edges(
     authorization: Optional[str] = Header(None),
 ) -> Dict:
-    """Return all edges from the latest graph snapshot."""
+    """
+    Return all edges from the latest graph snapshot.
+    """
     customer_id = _authenticate(authorization)
     graph = require_graph(customer_id)
 

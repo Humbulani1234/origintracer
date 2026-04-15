@@ -1,15 +1,13 @@
 """
-celery_load.py
-
 Steady concurrent load against the Celery tasks app.
 
 URLs hit (all under /tasks/):
-    /tasks/report/<id>/       ReportView      — dispatches celery task
-    /tasks/cache/<id>/        RedisCacheView  — redis GET/SET then task
-    /tasks/bulk-notify/       BulkNotifyView  — dispatches many tasks
-    /tasks/export/<id>/       ExportView      — heavy export task
-    /tasks/failing/           FailingJobView  — intentionally fails (tests error path)
-    /tasks/status/            StatusView      — lightweight poll
+    /tasks/report/<id>/ >> ReportView - dispatches celery task
+    /tasks/cache/<id>/ >> RedisCacheView - redis GET/SET then task
+    /tasks/bulk-notify/ >> BulkNotifyView - dispatches many tasks
+    /tasks/export/<id>/ >> ExportView - heavy export task
+    /tasks/failing/ >> FailingJobView - intentionally fails (tests error path)
+    /tasks/status/ >> StatusView - lightweight poll
 
 Usage:
     python celery_load.py
@@ -35,8 +33,8 @@ def build_queue(base: str, total: int) -> list:
     report_ids = list(range(1, 11))
     export_ids = list(range(1, 6))
 
-    # Weight: report and cache most frequent — they exercise the full
-    # django → redis → celery path. failing kept rare but present so
+    # Weight: report and cache most frequent - they exercise the full
+    # django >> redis >> celery path. failing kept rare but present so
     # the error path appears in the graph.
     pool = []
     for rid in report_ids:
@@ -77,7 +75,7 @@ def build_queue(base: str, total: int) -> list:
             (f"{base}/tasks/failing/", "GET", None),
         ]
         * 2
-    )  # rare — just enough to see error nodes in the graph
+    )  # rare - just enough to see error nodes in the graph
 
     queue = []
     while len(queue) < total:

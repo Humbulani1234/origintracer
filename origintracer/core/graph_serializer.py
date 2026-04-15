@@ -157,30 +157,30 @@ class GraphSerializer(ABC):
         # Or use protobuf
         from stacktracer.core.graph_serializer import ProtobufSerializer
         serializer = ProtobufSerializer()
-        data = serializer.serialize(graph)          # bytes
-        graph2 = serializer.deserialize(data)       # RuntimeGraph
+        data = serializer.serialize(graph) # bytes
+        graph2 = serializer.deserialize(data) # RuntimeGraph
 
-    When to serialize:
-        1. Periodic checkpoint (every 5 min) — survive process restart
-        2. Before deployment — snapshot pre-deployment state for DIFF comparison
-        3. Remote backend upload — send graph to hosted StackTracer for team visibility
-        4. Debug export — share exact graph state with a colleague
-
-    Loaded graphs are fully functional RuntimeGraph instances —
+    Loaded graphs are fully functional RuntimeGraph instances -
     all methods (neighbors, callers, causal rules, DSL queries) work identically
     on a deserialized graph as on a live one.
     """
 
     @abstractmethod
     def serialize(self, graph: Any) -> bytes:
-        """Serialize a RuntimeGraph to bytes."""
+        """
+        Serialize a RuntimeGraph to bytes.
+        """
 
     @abstractmethod
     def deserialize(self, data: bytes) -> Any:
-        """Deserialize bytes to a RuntimeGraph."""
+        """
+        Deserialize bytes to a RuntimeGraph.
+        """
 
     def save(self, graph: Any, path: str) -> int:
-        """Serialize and write to file. Returns bytes written."""
+        """
+        Serialize and write to file. Returns bytes written.
+        """
         payload = self.serialize(graph)
         with open(path, "wb") as f:
             f.write(payload)
@@ -190,7 +190,9 @@ class GraphSerializer(ABC):
         return len(payload)
 
     def load(self, path: str) -> Any:
-        """Read from file and deserialize."""
+        """
+        Read from file and deserialize.
+        """
         with open(path, "rb") as f:
             data = f.read()
         graph = self.deserialize(data)

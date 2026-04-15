@@ -1,12 +1,3 @@
-# .github/workflows/ci.yml
-#
-# Runs on every push and pull request to main.
-# Matrix: Python 3.11 and 3.12 (the two versions StackTracer supports).
-#
-# Jobs:
-#   lint   — black check + ruff (no auto-fix, just fail if not clean)
-#   test   — pytest on both Python versions
-
 name: CI
 
 on:

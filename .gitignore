@@ -17,7 +17,7 @@ venv/
 .venv/
 saim/
 
-# Distribution / packaging
+# Distribution/packaging
 dist/
 build/
 *.egg-info/
@@ -39,7 +39,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# StackTracer specific
+# OriginTracer specific
 *.db
 *.sqlite3
 

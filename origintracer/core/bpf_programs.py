@@ -91,9 +91,9 @@ BRIDGE_BPF_HEADER = r"""
 //   struct trace_entry_t *ctx = trace_context.lookup(&tid);
 
 struct trace_entry_t {
-    char trace_id[36];   // UUID: "550e8400-e29b-41d4-a716-446655440000"
-    u64  start_ns;       // bpf_ktime_get_ns() at trace start
-    char service[32];    // "django", "celery", etc.
+    char trace_id[36]; // UUID: "550e00-e29b-41d4-a716-440000"
+    u64  start_ns; // bpf_ktime_get_ns() at trace start
+    char service[32]; // "django", "celery", etc.
     u32  pid;
     u32  tid;
 };
@@ -105,7 +105,7 @@ BPF_HASH(trace_context, u32, struct trace_entry_t, 65536);
 // The Python dispatcher demultiplexes by event_type string.
 //
 // event_type naming convention: "<probe>.<event>"
-//   nginx.accept    nginx.epoll    nginx.data_out    nginx.data_in
+//   nginx.accept nginx.epoll nginx.data_out nginx.data_in
 //
 // value1/value2 interpretation depends on event_type - document in probe.
 
@@ -116,15 +116,15 @@ struct kernel_event_t {
     char trace_id[36];
     char service[32];
     char event_type[32];
-    s64  value1;          // primary numeric payload (fd, n_events, bytes, ...)
-    s64  value2;          // secondary payload (e.g. fd for sendmsg)
+    s64  value1; // primary numeric payload (fd, n_events, bytes, ...)
+    s64  value2; // secondary payload (e.g. fd for sendmsg)
     u64  duration_ns;
-    u32  saddr;           // source IP (network byte order) — 0 if unused
-    u32  daddr;           // dest IP (network byte order) — 0 if unused
+    u32  saddr; // source IP (network byte order) - 0 if unused
+    u32  daddr; // dest IP (network byte order) - 0 if unused
     u16  sport;
     u16  dport;
     u16  _pad;
-    u32  client_ip;       // populated by accept probes - 0 otherwise
+    u32  client_ip; // populated by accept probes - 0 otherwise
     u16  client_port;
 };
 

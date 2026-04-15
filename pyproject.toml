@@ -3,10 +3,10 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name            = "origintracer"
-version         = "0.1.0"
-description     = "Python runtime observability — probe-based, no instrumentation required"
-readme          = "README.md"
+name = "origintracer"
+version = "0.1.0"
+description = "Python runtime observability — probe-based, no instrumentation required"
+readme = "README.md"
 requires-python = ">=3.11"
 
 dependencies = [
@@ -37,7 +37,7 @@ where = ["."]
 include = ["origintracer*"]
 
 [tool.setuptools.package-data]
-origintracer = ["config/*.yaml"]   # ship defaults.yaml inside the package
+origintracer = ["config/*.yaml"]
 
 # black config
 [tool.black]
@@ -61,14 +61,14 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "F",    # pyflakes (unused imports, undefined names)
-    "I",    # isort
-    "W",    # pycodestyle warnings
+    "E",
+    "F",
+    "I",
+    "W",
 ]
 ignore = [
-    "E501", # line too long — black handles this
-    "F401", # unused import — too noisy during active development
+    "E501",
+    "F401",
 ]
 
 # pytest config

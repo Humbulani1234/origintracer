@@ -47,11 +47,6 @@ _BUILTIN_COMPILED: List[Tuple[re.Pattern, str]] = [
 ]
 
 
-# ====================================================================== #
-# Per-service normalization rules
-# ====================================================================== #
-
-
 @dataclass
 class NormalizationRule:
     """
@@ -116,7 +111,7 @@ class GraphNormalizer:
 
     The graph then has one node for the endpoint pattern, with call_count
     accumulating across all individual user requests. This is almost always
-    what you want for causal reasoning — you care that "the user profile
+    what you want for causal reasoning - we care that "the user profile
     endpoint is slow", not that user 1234 specifically was slow.
 
     Usage:

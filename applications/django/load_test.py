@@ -1,14 +1,12 @@
 """
-django_load.py
-
 Steady concurrent load against the django_tracer app.
 
 URLs hit:
-    /           IndexView
-    /async/     AsyncView
-    /slow/      SlowView
-    /db/        DbView
-    /n1/        NPlusOneView
+    / IndexView
+    /async/ - AsyncView
+    /slow/ - SlowView
+    /db/ - DbView
+    /n1/ - NPlusOneView
 
 Usage:
     python django_load.py
@@ -31,13 +29,13 @@ DEFAULT_DELAY = 0.05
 
 
 def build_queue(base: str, total: int) -> list:
-    # Weight the URLs — slow and n+1 less frequent so they don't time out everything
+    # Weight the URLs - slow and n+1 less frequent so they don't time out everything
     weighted = [
-        (f"{base}/", "GET", None, 30),  # index — most traffic
+        (f"{base}/", "GET", None, 30),  # index - most traffic
         (f"{base}/async/", "GET", None, 25),  # async view
         (f"{base}/db/", "GET", None, 25),  # db view
         (f"{base}/n1/", "GET", None, 15),  # n+1 view
-        (f"{base}/slow/", "GET", None, 5),  # slow — keep rare
+        (f"{base}/slow/", "GET", None, 5),  # slow - keep rare
     ]
     pool = []
     for url, method, body, weight in weighted:

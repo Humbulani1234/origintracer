@@ -94,7 +94,7 @@ class KprobeBridge:
     No probe-specific knowledge lives here. The bridge simply:
       - calls build_bpf_program() to get the assembled C source
       - compiles it with BPF()
-      - exposes bridge.bpf so probes can attach tracepoints / open buffers
+      - exposes bridge.bpf so probes can attach tracepoints/open buffers
       - exposes bridge.trace_map so Python middleware can write trace IDs
 
     Startup contract:

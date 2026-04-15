@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-stacktracer/scripts/benchmark_engine.py
-
 Benchmarks Engine.process() throughput at different graph sizes.
 Run from the repo root:
-    python -m stacktracer.scripts.benchmark_engine
+    python -m origintracer.scripts.benchmark_engine
 
 What it measures:
-    - Events per second at 50 / 200 / 500 / 1000 simulated graph nodes
+    - Events per second at 50/200/500/1000 simulated graph nodes
     - Time per event broken down by phase
     - Buffer drain throughput
     - _find_node cost at each graph size
@@ -17,20 +15,20 @@ from __future__ import annotations
 
 import logging
 import statistics
-import sys
 import time
 import uuid
-from typing import List
+
+import origintracer
 
 logging.disable(
     logging.CRITICAL
-)  # silence all StackTracer logs during benchmark
+)  # silence all OriginTracer logs during benchmark
 
 
 def make_event(
     probe: str, service: str, name: str, trace_id: str = None
 ):
-    from stacktracer.core.event_schema import NormalizedEvent
+    from origintracer.core.event_schema import NormalizedEvent
 
     return NormalizedEvent.now(
         probe=probe,
@@ -41,7 +39,9 @@ def make_event(
 
 
 def warm_up_graph(engine, n_nodes: int) -> None:
-    """Pre-populate the graph with n_nodes so _find_node has realistic work."""
+    """
+    Pre-populate the graph with n_nodes so _find_node has realistic work.
+    """
     for i in range(n_nodes):
         make_event(
             probe="django.view.exit",
@@ -56,13 +56,13 @@ def warm_up_graph(engine, n_nodes: int) -> None:
 
 
 def benchmark_process(n_events: int = 10_000, n_nodes: int = 50):
-    """Benchmark Engine.process() with a pre-warmed graph."""
-    import stacktracer
-
-    stacktracer.init(debug=False)
-    engine = stacktracer.get_engine()
+    """
+    Benchmark Engine.process() with a pre-warmed graph.
+    """
+    origintracer.init(debug=False)
+    engine = origintracer.get_engine()
     if engine is None:
-        print("Engine not started — check stacktracer.init()")
+        print("Engine not started - check stacktracer.init()")
         return
 
     warm_up_graph(engine, n_nodes)
@@ -77,7 +77,7 @@ def benchmark_process(n_events: int = 10_000, n_nodes: int = 50):
         for i in range(n_events)
     ]
 
-    # warm up JIT / caches
+    # warm up JIT/caches
     for evt in events[:100]:
         engine.process(evt)
 
@@ -108,16 +108,16 @@ def benchmark_process(n_events: int = 10_000, n_nodes: int = 50):
         f"p99={p99:>6.1f}µs"
     )
 
-    stacktracer.shutdown()
+    origintracer.shutdown()
     return eps
 
 
 def benchmark_find_node(n_nodes: int = 50):
-    """Benchmark _find_node() isolation — the O(n) scan."""
-    import stacktracer
-
-    stacktracer.init(debug=False)
-    engine = stacktracer.get_engine()
+    """
+    Benchmark _find_node() isolation.
+    """
+    origintracer.init(debug=False)
+    engine = origintracer.get_engine()
     warm_up_graph(engine, n_nodes)
 
     # add a known node to find
@@ -145,13 +145,14 @@ def benchmark_find_node(n_nodes: int = 50):
         f"throughput={N/elapsed:>10,.0f} calls/s"
     )
 
-    stacktracer.shutdown()
+    origintracer.shutdown()
 
 
 def benchmark_buffer(n_events: int = 100_000):
-    """Benchmark EventBuffer push/drain throughput."""
-    from stacktracer.core.event_schema import NormalizedEvent
-    from stacktracer.sdk.emitter import _DrainEventBuffer
+    """
+    Benchmark EventBuffer push/drain throughput.
+    """
+    from origintracer.sdk.emitter import _DrainEventBuffer
 
     buf = _DrainEventBuffer(max_size=50_000)
 
@@ -188,7 +189,7 @@ def benchmark_buffer(n_events: int = 100_000):
 
 
 def main():
-    print("\n=== StackTracer Engine Benchmark ===\n")
+    print("\n=== OriginTracer Engine Benchmark ===\n")
 
     print("EventBuffer push/drain throughput:")
     benchmark_buffer(100_000)
@@ -211,7 +212,7 @@ def main():
         print(
             f"  graph_nodes={n_nodes:>5}  "
             f"max_rps={rps:>8,.0f}  "
-            f"({'✓ fine' if rps > 500 else '⚠ watch this' if rps > 100 else '✗ needs fix'})"
+            f"({'OK fine' if rps > 500 else 'WARN watch this' if rps > 100 else 'ERR needs fix'})"
         )
 
     print("\nDone.")

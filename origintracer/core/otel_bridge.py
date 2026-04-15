@@ -1,5 +1,5 @@
 """
-NOTE: Must be thoroughly tested.
+NOTE: In development - must be thoroughly tested.
 
 Makes OriginTracer an optional OpenTelemetry SpanExporter.
 

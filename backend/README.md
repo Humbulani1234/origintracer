@@ -30,12 +30,11 @@ RuntimeGraph (live)
 
 ```bash
 pip install fastapi uvicorn httpx msgpack
-pip install -e /path/to/origintracer
 ```
 
 ---
 
-## Quick start — in-memory (dev)
+## Quick start - in-memory (dev)
 
 ```bash
 cd backend
@@ -49,18 +48,18 @@ storage key. Use the same key in `stacktracer.init()` on the agent side.
 
 ---
 
-## Quick start — PostgreSQL
+## Quick start - PostgreSQL
 
 ```bash
 STACKTRACER_API_KEYS=test-key-123:local-dev \
 STACKTRACER_DB_DSN=postgresql://user:password@localhost/stacktracer \
-uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info
+uvicorn main:app --host 0.0.0.0 --port 8001 --log-level info
 ```
 
 Create the database first:
 
 ```sql
-CREATE DATABASE stacktracer;
+CREATE DATABASE origintracer;
 ```
 
 The backend creates tables on startup automatically.
@@ -74,7 +73,7 @@ In the Django app's `apps.py`:
 ```python
 origintracer.init(
     api_key  = "test-key-123",
-    endpoint = "http://localhost:8000",
+    endpoint = "http://localhost:8001",
     debug = True,
 )
 ```
