@@ -128,14 +128,13 @@ def _db_query_hotspot(
 
     if not db_nodes:
         return False, {}
-    total_calls = (
-        sum(n.call_count for n in graph.all_nodes()) or 1
-    )
+    total_db_calls = sum(n.call_count for n in db_nodes) or 1
     hotspots = [
         n
         for n in db_nodes
         if n.call_count > 5
-        and (n.call_count / total_calls > 0.30)
+        # dominant among DB calls
+        and n.call_count / total_db_calls > 0.30
     ]
 
     if not hotspots:
@@ -147,7 +146,7 @@ def _db_query_hotspot(
                 "node": n.id,
                 "call_count": n.call_count,
                 "pct": round(
-                    n.call_count / total_calls * 100, 1
+                    n.call_count / total_db_calls * 100, 1
                 ),
                 "avg_ms": round(
                     (n.avg_duration_ns or 0) / 1e6, 2
