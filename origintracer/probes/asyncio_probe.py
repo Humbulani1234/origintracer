@@ -1,5 +1,110 @@
 """
-Layer 1 — kprobe on sys_epoll_wait (Linux, all Python versions)
+BCC (BPF Compiler Collection) Installation & Setup Guide
+--------------------------------------------------------
+
+BCC is a system-level tool and CANNOT be installed inside a virtualenv with pip.
+It must be installed at the OS level and imported from there.
+
+NOTE: Run all commands as shown - order matters.
+
+
+STEP 1 — Check your kernel version
+----------------------------------
+
+    $ uname -r
+    # Requires 4.9 or higher (5.x / 6.x are fine)
+
+
+STEP 2 — Install kernel headers
+-------------------------------
+
+BCC compiles BPF programs at runtime against your running kernel and needs
+headers for that exact version.
+
+    $ sudo apt update
+    $ sudo apt install linux-headers-$(uname -r)
+
+Verify:
+    $ ls /lib/modules/$(uname -r)/build
+
+
+STEP 3 — Install BCC from apt
+---------------------------------------
+
+    $ sudo apt install -y bpfcc-tools libbpfcc-dev python3-bpfcc
+
+    Packages installed:
+        bpfcc-tools >> command-line BCC tools
+        python3-bpfcc >> Python bindings > from bcc import BPF
+        libbpfcc-dev >> C headers needed to compile BPF programs
+
+
+STEP 4 — Verify the install OUTSIDE your virtualenv
+---------------------------------------------------
+
+    $ deactivate
+    $ python3 -c "from bcc import BPF; print('bcc ok')"
+    # Expected output: bcc ok
+
+
+STEP 5 — Make BCC visible INSIDE your virtualenv
+--------------------------------------------------
+
+BCC's Python bindings live in the system Python, not in your venv.
+A .pth file bridges the gap.
+
+Find where python3-bpfcc installed to:
+    $ python3 -c "import bcc; print(bcc.__file__)"
+    # Typically: /usr/lib/python3/dist-packages/bcc/__init__.py
+
+Activate your venv and add the system packages path:
+    $ source /path/to/your/venv/bin/activate
+    $ echo "/usr/lib/python3/dist-packages" > \
+          $(python -c "import site; print(site.getsitepackages()[0])")/system_bcc.pth
+
+Verify inside the venv:
+    $ python -c "from bcc import BPF; print('bcc visible in venv')"
+    # Expected output: bcc visible in venv
+
+Once this passes, get_bridge() will work and bridge.available will be True.
+
+
+STEP 6 — Verify BPF permissions
+--------------------------------
+
+BPF requires root or CAP_BPF. Test with:
+    $ sudo $(which python) -c "
+        from bcc import BPF
+        b = BPF(text='int kprobe__sys_clone(void *ctx) { return 0; }')
+        print('BPF compile ok')
+    "
+    # Expected output: BPF compile ok
+
+
+STEP 7 — Run gunicorn as root (dev only)
+----------------------------------------
+
+Kprobes require root to attach, so gunicorn must run as root in dev:
+
+    $ sudo /path/to/your/venv/bin/gunicorn \
+          -c gunicorn.conf.py \
+          config.asgi:application \
+          --worker-class uvicorn.workers.UvicornWorker
+
+
+QUICK CHECKLIST
+---------------
+
+    1. uname -r >>  kernel >= 4.9
+    2. apt install linux-headers-$(uname -r) >>  headers present
+    3. apt install python3-bpfcc >>  BCC installed at OS level
+    4. .pth file written into venv >>  BCC visible inside venv
+    5. sudo python -c "from bcc import BPF" >>  compile test passes
+    6. gunicorn run as sudo >>  kprobes can attach
+
+**************************** INSTALLATION COMPLETE ************************
+
+Layer 1 - kprobe on sys_epoll_wait (Linux, all Python versions)
     The event loop calls epoll_wait() as a syscall. kprobe captures:
         - How long the loop blocked waiting for I/O
         - How many fds became ready
@@ -109,13 +214,13 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait) {
 """
 
 # Uncomment ONLY when deploying without the nginx probe:
-# register_bpf(
-#     "asyncio",
-#     BPFProgramPart(
-#         maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
-#         probes=[_ASYNCIO_EPOLL_BPF],
-#     ),
-# )
+register_bpf(
+    "asyncio",
+    BPFProgramPart(
+        maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
+        probes=[_ASYNCIO_EPOLL_BPF],
+    ),
+)
 
 
 class _EpollKprobe:

@@ -65,6 +65,7 @@ Permissions:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -127,6 +128,19 @@ class KprobeBridge:
         """
         return self._map
 
+    @contextlib.contextmanager
+    def log_ebpf_compilation(self):
+        # To view eBPF compilation warnings and erros
+        log = open("/tmp/bpf_warnings.log", "w")
+        old_stderr = os.dup(2)
+        os.dup2(log.fileno(), 2)
+        try:
+            yield
+        finally:
+            os.dup2(old_stderr, 2)
+            os.close(old_stderr)
+            log.close()
+
     def start(self) -> bool:
         """
         Assemble and compile the combined BPF program.
@@ -163,13 +177,19 @@ class KprobeBridge:
 
         program = build_bpf_program()
 
+        print("Compiling eBPF probes...", flush=True)
         try:
-            self._bpf = BPF(text=program)
+            with self.log_ebpf_compilation():
+                self._bpf = BPF(text=program)
             self._map = self._bpf["trace_context"]
             self._available = True
             logger.info("kprobe bridge: compiled successfully")
             return True
         except Exception as exc:
+            print(
+                "eBPF compilation failed - see /tmp/bpf_warnings.log for details",
+                flush=True,
+            )
             logger.warning(
                 "kprobe bridge: BPF compilation failed: %s", exc
             )
