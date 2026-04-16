@@ -146,9 +146,6 @@ class DbView(View):
         )
 
 
-# django_tracer/views.py
-
-
 class NPlusOneView(View):
     """
     Simulates the N+1 query problem.
@@ -189,7 +186,6 @@ class NPlusOneView(View):
         )
         from origintracer.context.vars import get_trace_id
 
-        print(f">>> trace_id in view: {get_trace_id()}")
         authors = list(Author.objects.all())
 
         results = []
@@ -204,7 +200,7 @@ class NPlusOneView(View):
                 }
             )
 
-        # The fix — replace the two lines above with:
+        # The fix - replace the two lines above with:
         # authors = Author.objects.prefetch_related("book_set").all()
         # then the loop does zero extra queries
 

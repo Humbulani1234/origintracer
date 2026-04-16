@@ -604,13 +604,11 @@ async def causal(
                 label=d.get("label"),
             )
         )
-    print(">>> DIFFS", temporal._diffs)
     # rules registered once at startup in lifespan
     registry = PatternRegistry
     # No tracker - backend has no live requests.
     # rules that depends on it won't be executed
     matches = registry.evaluate(graph, temporal, tags=tag_list)
-    print(">>> MATCHES", matches)
     return {
         "match_count": len(matches),
         "data": [m.to_dict() for m in matches],

@@ -144,7 +144,6 @@ def parse(query_str: str) -> ParsedQuery:
 
         metric = tokens[1].lower()
         remaining = tokens[2:]
-        print("REMAING", remaining)
         filters, limit = _parse_where_limit(remaining)
         return ParsedQuery(
             verb="SHOW",
@@ -659,14 +658,12 @@ def _exec_diff(query: ParsedQuery, engine: Any) -> Dict:
 
     if since_label:
         diff = engine.temporal.label_diff(since_label)
-        print(">>>SINCE LABEL", diff)
         if diff:
             since_ts = diff.timestamp
         else:
             try:
                 since_ts = float(since_label)
             except ValueError:
-                print(">>>> WE HERE")
                 return {
                     "error": f"Cannot resolve SINCE '{since_label}' — no marker found"
                 }
@@ -709,7 +706,6 @@ def _exec_causal(query: ParsedQuery, engine: Any) -> Dict:
         ]
 
     matches = engine.evaluate(tags=tags)
-    print(">>>>MATCHES RULES:", matches)
     return {
         "verb": "CAUSAL",
         "match_count": len(matches),
