@@ -83,9 +83,9 @@ class SlowView(View):
     StackTracer's loop_starvation causal rule will fire after a few requests.
 
     In the REPL:
-        CAUSAL WHERE tags = "blocking"    ← fires with 80% confidence
-        BLAME WHERE system = "django"     ← points to this view
-        SHOW latency WHERE system = "django"  ← slow_view node stands out
+        CAUSAL WHERE tags = "blocking" << fires with 80% confidence
+        BLAME WHERE system = "django" << points to this view
+        SHOW latency WHERE system = "django" << slow_view node stands out
     """
 
     async def get(self, request):

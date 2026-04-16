@@ -86,9 +86,6 @@ class TestQueryParser:
             parse("   ")
 
 
-#
-
-
 class TestQueryExecutor:
 
     def _run(self, query_str: str, engine):
@@ -343,7 +340,7 @@ class TestQueryExecutor:
             'SHOW nodes WHERE system = "xyz_unknown_zzz"', engine
         )
         assert "error" in result
-        assert "available" in result
+        assert "available_labels" in result
 
     def test_show_latency_service_falls_through_to_literal_if_no_semantic_match(
         self, engine, trace_id

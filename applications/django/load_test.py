@@ -31,16 +31,17 @@ DEFAULT_DELAY = 0.05
 def build_queue(base: str, total: int) -> list:
     # Weight the URLs - slow and n+1 less frequent so they don't time out everything
     weighted = [
-        (f"{base}/", "GET", None, 30),  # index - most traffic
-        (f"{base}/async/", "GET", None, 25),  # async view
-        (f"{base}/db/", "GET", None, 25),  # db view
-        (f"{base}/n1/", "GET", None, 15),  # n+1 view
-        (f"{base}/slow/", "GET", None, 5),  # slow - keep rare
+        (f"{base}/", "GET", None, 5),  # index - most traffic
+        (f"{base}/async/", "GET", None, 5),  # async view
+        (f"{base}/db/", "GET", None, 5),  # db view
+        (f"{base}/n1/", "GET", None, 5),  # n+1 view
+        # (f"{base}/slow/", "GET", None, 5),  # slow - keep rare
     ]
     pool = []
     for url, method, body, weight in weighted:
         pool.extend([(url, method, body)] * weight)
     queue = []
+    print(">>>POOL URLs", pool)
     while len(queue) < total:
         queue.extend(pool)
     random.shuffle(queue)

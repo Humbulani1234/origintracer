@@ -923,7 +923,7 @@ def main():
         # DSL query - forwarded to the live engine
         t0 = time.perf_counter()
         result = query(sock_path, raw)
-        print(f"DEBUG raw: {result}")  # add this temporarily
+        # print(f"DEBUG raw: {result}")  # add this temporarily
         elapsed = (time.perf_counter() - t0) * 1000
         render(result)
         if result.get("ok"):

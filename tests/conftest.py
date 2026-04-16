@@ -104,6 +104,14 @@ def engine(tracker) -> Engine:
             node_patterns=[],
         )
     )
+    sem.register(
+        SemanticAlias(
+            label="django",
+            description="Django application layer",
+            services=["django"],
+            node_patterns=[],
+        )
+    )
 
     sem.register(
         SemanticAlias(

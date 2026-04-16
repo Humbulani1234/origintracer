@@ -63,8 +63,10 @@ def parse(query_str: str) -> ParsedQuery:
     Raises ValueError on syntax errors.
     """
     original = query_str.strip()
+    # TODO: fix when extending supported operators
+    normalized = original.replace("=", " = ")
     tokens = shlex.split(
-        original
+        normalized
     )  # shlex handles quoted strings correctly
 
     if not tokens:
@@ -142,6 +144,7 @@ def parse(query_str: str) -> ParsedQuery:
 
         metric = tokens[1].lower()
         remaining = tokens[2:]
+        print("REMAING", remaining)
         filters, limit = _parse_where_limit(remaining)
         return ParsedQuery(
             verb="SHOW",
@@ -162,46 +165,67 @@ def _parse_where_limit(
     filters: Dict[str, Any] = {}
     limit = 100
     i = 0
+
     while i < len(tokens):
         tok = tokens[i].upper()
+
         if tok == "WHERE":
             i += 1
-            while i < len(tokens) and tokens[i].upper() not in (
-                "LIMIT",
-                "AND",
+            # Process conditions until we hit LIMIT or end of tokens
+            while (
+                i < len(tokens) and tokens[i].upper() != "LIMIT"
             ):
+                # Skip "AND" tokens between conditions
+                if tokens[i].upper() == "AND":
+                    i += 1
+                    continue
+
                 if i + 2 < len(tokens):
                     key = tokens[i]
                     op = tokens[i + 1]
                     val = tokens[i + 2]
+
                     if op != "=":
                         raise ValueError(
                             f"Unsupported operator: {op}"
                         )
-                    # Type coerce numbers
+
+                    # Type coercion
                     try:
-                        val = int(val)
-                    except ValueError:
-                        try:
+                        if val.isdigit():
+                            val = int(val)
+                        else:
                             val = float(val)
-                        except ValueError:
-                            pass
+                    except ValueError:
+                        # Strip quotes if it's a string literal like '"service"'
+                        val = val.strip("'\"")
+
                     filters[key] = val
                     i += 3
                 else:
-                    i += 1
+                    raise ValueError(
+                        f"Incomplete WHERE clause near '{tokens[i]}'"
+                    )
+
         elif tok == "LIMIT":
             i += 1
             if i < len(tokens):
                 try:
                     limit = int(tokens[i])
+                    i += 1
                 except ValueError:
-                    pass
-                i += 1
-        elif tok == "AND":
-            i += 1
+                    raise ValueError(
+                        f"LIMIT must be an integer, got: {tokens[i]}"
+                    )
+            else:
+                raise ValueError(
+                    "LIMIT keyword found but no value provided"
+                )
+
         else:
+            # Ignore other parts of the query (like 'SHOW', 'GRAPH')
             i += 1
+
     return filters, limit
 
 
@@ -228,6 +252,9 @@ def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
         return {"error": str(exc), "query": query.raw}
 
 
+KNOWN_FILTER_KEYS = {"system", "service", "node"}
+
+
 # SHOW - dispatch by metric
 def _exec_show(
     query: ParsedQuery, engine: Any
@@ -235,9 +262,12 @@ def _exec_show(
 
     metric = query.metric
     filters = query.filters
-
-    node_scope = None
-
+    unknown = set(filters.keys()) - KNOWN_FILTER_KEYS
+    if unknown:
+        return {
+            "error": f"Unknown filter key(s): {', '.join(sorted(unknown))}",
+            "hint": f"Valid filters are: {', '.join(sorted(KNOWN_FILTER_KEYS))}",
+        }
     # Handles system=, service=, node= all through the same semantic layer
     node_scope = None
     candidate = (
@@ -252,11 +282,13 @@ def _exec_show(
         )
         if resolved:
             node_scope = resolved
-        elif "system" in filters:
-            # system= is always a semantic label - hard error if not found
+        else:
+            # If a candidate was provided but couldn't be resolved, it's an error
             return {
-                "error": f"Unknown semantic label '{candidate}'",
-                "available": engine.semantic.all_labels(),
+                "error": f"Could not find any nodes matching '{candidate}'",
+                "hint": "Check your spelling or use 'show graph' without a"
+                "WHERE clause to see everything.",
+                "available_labels": engine.semantic.all_labels(),
             }
 
     handlers = {
@@ -353,7 +385,7 @@ def _show_events(engine: Any, filters: Dict, limit: int) -> Dict:
                 "service": e.service,
                 "name": e.name,
                 "trace_id": e.trace_id,
-                "ts": getattr(e, "timestamp_ns", None),
+                "ts": getattr(e, "timestamp", None),
             }
             for e in events
         ],
@@ -405,11 +437,10 @@ def _show_nodes(
     limit: int,
 ) -> Dict:
     """
-    Full node listing — same fields as the old built-in SHOW NODES.
+    Full node listing - same fields as the old built-in SHOW NODES.
     Supports service filter and node_scope from semantic resolution.
     """
     nodes = list(engine.graph.all_nodes())
-
     if node_scope:
         nodes = [n for n in nodes if n.id in node_scope]
 
