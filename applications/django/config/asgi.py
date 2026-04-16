@@ -1,6 +1,4 @@
 """
-config/asgi.py
-
 ASGI entry point for uvicorn and gunicorn+UvicornWorker.
 This is what uvicorn calls for every request.
 """
@@ -16,3 +14,4 @@ os.environ.setdefault(
 
 django.setup()
 application = get_asgi_application()
+# wrap the django_app into the ASGImidlleware from uvicorn_probe

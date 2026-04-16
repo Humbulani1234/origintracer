@@ -1,6 +1,4 @@
 """
-config/settings.py
-
 Django + Celery settings for the StackTracer celery demo app.
 
 Run with gunicorn:
@@ -41,7 +39,7 @@ DATABASES = {
     }
 }
 
-# ── Celery ─────────────────────────────────────────────────────────────────
+# Celery
 CELERY_BROKER_URL = "redis://localhost:6379/0"
 CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -50,12 +48,12 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_RESULT_EXPIRES = 3600
 
-# ── StackTracer ────────────────────────────────────────────────────────────
-# Config path is passed to stacktracer.init() in config/celery.py and
+# OriginTracer
+# Config path is passed to origintracer.init() in config/celery.py and
 # gunicorn.conf.py. Expose here so both entry points can read it.
-STACKTRACER_CONFIG = os.environ.get(
-    "STACKTRACER_CONFIG",
+ORIGINTRACER_CONFIG = os.environ.get(
+    "ORIGINTRACER_CONFIG",
     os.path.join(
-        os.path.dirname(__file__), "..", "stacktracer.yaml"
+        os.path.dirname(__file__), "..", "origintracer.yaml"
     ),
 )

@@ -1,16 +1,14 @@
 """
-django_burst.py
-
 Burst traffic against the django_tracer app.
-Sends waves with quiet gaps — watch the graph build and stabilise
+Sends waves with quiet gaps - watch the graph build and stabilise
 between bursts in the REPL.
 
 URLs hit:
-    /           IndexView
-    /async/     AsyncView
-    /slow/      SlowView  (kept rare)
-    /db/        DbView
-    /n1/        NPlusOneView
+    / - IndexView
+    /async/ - AsyncView
+    /slow/ - SlowView
+    /db/ - DbView
+    /n1/ - NPlusOneView
 
 Usage:
     python django_burst.py

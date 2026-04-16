@@ -339,7 +339,9 @@ _original_step: dict = {}
 
 
 def _has_pure_python_task() -> bool:
-    """True on Python 3.11 where Task.__step is accessible."""
+    """
+    True on Python 3.11 where Task.__step is accessible.
+    """
     return hasattr(tasks.Task, "_Task__step")
 
 
@@ -354,7 +356,7 @@ def _make_step_wrapper(original_step):
     modifying user code.
 
     Python 3.11 and earlier ship asyncio.Task as a pure-Python class,
-    so Task.__step is directly patchable and this layer activates
+    so Task.__step is directly accessable and this layer activates
     automatically.
 
     Python 3.12 and later ship asyncio.Task as a C extension
@@ -377,8 +379,8 @@ def _make_step_wrapper(original_step):
             Existing code...
 
     This is a development configuration. For production deployments
-    on Python 3.12+, rely on the kprobe layer - it
-    provides event-loop-level timing without CPython internals dependency.
+    rely on the kprobe layer - it provides event-loop-level timing
+    without CPython internals dependency.
     """
 
     def _traced_step(

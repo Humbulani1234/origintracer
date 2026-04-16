@@ -1,6 +1,4 @@
 """
-config/settings.py
-
 Minimal Django settings for StackTracer demonstration.
 """
 
@@ -55,11 +53,3 @@ TEMPLATES = [
 
 STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-# ── OriginTracer ──────────────────────────────────────────────────────
-# Initialise OriginTracer once at settings import time.
-# In production with gunicorn, re-init in gunicorn's post_fork hook
-# so each worker gets its own engine instance.
-
-# import origintracer
-# origintracer.init(config=str(BASE_DIR / "origintracer.yaml"))

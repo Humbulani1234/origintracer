@@ -1,6 +1,3 @@
-"""config/urls.py"""
-
-# In your Django project's urls.py
 from django.http import JsonResponse
 from django.urls import include, path
 
@@ -16,7 +13,7 @@ def tracer_stats_view(request):
     if not engine:
         return JsonResponse({"error": "No engine"}, status=500)
 
-    # Extract real-time metrics from the LIVE engine memory
+    # Extract real-time metrics from the live engine memory
     stats = {
         "buf_depth": (
             len(engine._buffer)

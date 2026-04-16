@@ -1,17 +1,18 @@
 # OriginTracer
 
-**Live causal graph for complex async services.**
+**Live causal graph for async services.**
 
 OriginTracer instruments your full production stack - **nginx --> gunicorn/uvicorn --> Django/FastAPI --> asyncio --> Celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
 
 It combines:
 - Deep, source-grounded "traced book" chapters that teach framework and kernel internals via real pivot points.
 - Ready-to-run **rule libraries** that turn that knowledge into automatic detectors.
-- A clean, open-source engine that stays non-blocking and production-safe.
+ Ready-to-run **probe libraries** that emit events of interest from your application.
+- A clean, open-source engine that stays non-blocking and efficient.
 
 The result: actionable insight into async behavior, cross-process flows, and hidden latency sources that traditional tracing often misses.
 
-Website for more details - [origintracer.app](https://origintracer.app)
+Vist the website for more details and traced chapters - [origintracer.app](https://origintracer.app)
 
 ## Why OriginTracer
 
@@ -20,7 +21,7 @@ Most observability tools show you *what* happened (spans, metrics, logs). Origin
 - **Causal graph** with deduplication and compaction (stable even under high load)
 - **Automatic causal rules** (N+1 queries, asyncio loop starvation, worker imbalance, retry amplification, etc.)
 - **Cross-process stitching** — merge timelines across gunicorn workers, Celery, and nginx
-- **Native deep probes** (including eBPF/kprobes for nginx) *or* OpenTelemetry bridge mode
+- **Native deep probes** (including eBPF/kprobes for nginx and asyncio) *or* OpenTelemetry bridge mode (experimental)
 - **Zero blocking** of the request/response cycle via async draining and fire-and-forget buffers
 - **Extensible by design** - anyone can add custom probes and rules
 
@@ -39,9 +40,9 @@ You can already start building probes for Node.js services (Express, Fastify, Ne
 - Trigger the same powerful rules (N+1-style patterns, hotspots, retry amplification, blocking calls, etc.)
 - Enable cross-language stitching between Node.js and Python microservices
 
-**Official Node.js probes** (covering Express/Fastify middleware, async context tracking, event loop delays, etc.) are in the roadmap and will ship soon.
+**Official Node.js probes** (covering Express/Fastify middleware, async context tracking, event loop delays, etc.) are in the roadmap.
 
-If you want to help accelerate this, the open engine and clear event protocol make experimentation straightforward. Community contributions for the first Node.js probes are highly encouraged - we’ll provide early guidance and feedback.
+If you want to help accelerate this, the open engine and clear event protocol make experimentation straightforward.
 
 ## Installation
 
@@ -96,7 +97,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
   --worker-class uvicorn.workers.UvicornWorker
 ```
 
-Fire requests to your views and explore with the REPL below.
+Send requests to your views using the provided `load` and `burst` scripts and explore the results with the REPL.
 
 Open the REPL:
 
