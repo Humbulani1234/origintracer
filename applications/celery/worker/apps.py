@@ -13,8 +13,7 @@ class DjangoTracerConfig(AppConfig):
         import os
 
         _is_runserver_reloader = (
-            os.environ.get("RUN_MAIN")
-            is None  # not runserver at all — uvicorn, gunicorn, etc.
+            os.environ.get("RUN_MAIN") is None
             or os.environ.get("RUN_MAIN")
             == "true"  # runserver worker process
         )

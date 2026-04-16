@@ -1,16 +1,15 @@
 """
-myapp/tasks.py
+Tasks, each designed to exercise a specific causal rule:
 
-Four tasks, each designed to exercise a specific causal rule:
+    process_report >> baseline, completes cleanly
+    send_notifications >> dispatched N times per request (fan-out amplification)
+    export_data >> makes a synchronous DB call (celery_sync_db_call rule)
+    risky_job >> fails and retries  (celery_retry_amplification rule)
 
-    process_report     → baseline, completes cleanly
-    send_notifications → dispatched N times per request (fan-out amplification)
-    export_data        → makes a synchronous DB call (celery_sync_db_call rule)
-    risky_job          → fails and retries  (celery_retry_amplification rule)
-
-Each task accepts _trace_id as a kwarg.  The celery probe reads it so
+Each task accepts _trace_id as a kwarg. The celery probe reads it so
 the trace is continuous from the Django view through to the task execution.
-The graph edge  django::view → celery::task  is built from this shared trace_id.
+The graph edge  django::view >> celery::task is built from this
+shared trace_id.
 """
 
 import os
@@ -24,9 +23,8 @@ from celery import shared_task
 @shared_task(name="myapp.tasks.process_report", bind=True)
 def process_report(self, report_id: int, **kwargs):
     """
-    Baseline task — completes cleanly in 50-150ms.
-    Exercises: celery.task.start → celery.task.end
-    REPL: SHOW latency WHERE system = "celery"
+    Baseline task - completes cleanly in 50-150ms.
+    Exercises: celery.task.start >> celery.task.end
     """
     time.sleep(random.uniform(0.05, 0.15))
     return {"status": "ok", "report_id": report_id}
@@ -38,12 +36,11 @@ def send_notification(
 ):
     """
     Individual notification task.
-    BulkNotifyView dispatches one of these per user_id — fan-out pattern.
+    BulkNotifyView dispatches one of these per user_id - fan-out pattern.
     When 10+ notifications are dispatched per HTTP request, the
-    django::BulkNotifyView → celery::send_notification edge call_count
+    django::BulkNotifyView >> celery::send_notification edge call_count
     diverges from the view call_count, surfacing celery_task_amplification.
     Exercises: fan-out amplification
-    REPL: BLAME WHERE system = "celery"
     """
     time.sleep(random.uniform(0.01, 0.05))
     return {"status": "sent", "user_id": user_id}
@@ -55,7 +52,7 @@ def export_data(self, export_id: int, **kwargs):
     Slow task making a synchronous SQLite call on the worker thread.
     Blocks the Celery prefork worker thread for 200-400ms per call.
     Exercises: celery_sync_db_call causal rule
-    REPL: CAUSAL WHERE tags = "celery"
+    REPL: CAUSAL
     """
     db_path = os.path.join(
         os.path.dirname(__file__), "..", "demo.db"
@@ -97,7 +94,7 @@ def risky_job(self, should_fail: bool = True, **kwargs):
     After enough failures the celery_retry_amplification rule fires
     because retry node call_count >> start node call_count.
     Exercises: celery_retry_amplification causal rule
-    REPL: CAUSAL WHERE tags = "celery"
+    REPL: CAUSAL
     """
     if should_fail:
         try:

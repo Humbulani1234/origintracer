@@ -20,7 +20,7 @@ class IndexView(View):
     Synchronous baseline view.
     Demonstrates: request.entry >> django.middleware >> django.view
     >> request.exit
-    No async, no database. Fastest possible path through Django.
+    No async, no database, and fastest possible path through Django.
     """
 
     def get(self, request):
@@ -44,13 +44,13 @@ class AsyncView(View):
         async def fetch_a():
             await asyncio.sleep(
                 0.01
-            )  # yields to event loop — healthy await
+            )  # yields to event loop - healthy await
             return "result_a"
 
         async def fetch_b():
             await asyncio.sleep(
                 0.02
-            )  # yields to event loop — healthy await
+            )  # yields to event loop - healthy await
             return "result_b"
 
         result_a, result_b = await asyncio.gather(
@@ -72,11 +72,11 @@ class SlowView(View):
     """
     Async view with a deliberately blocking call.
 
-    time.sleep() does NOT yield to the event loop — it blocks the entire
+    time.sleep() does not yield to the event loop - it blocks the entire
     OS thread. Every other coroutine waits for the full duration.
 
     This is the canonical example of event loop starvation.
-    StackTracer's loop_starvation causal rule will fire after a few requests.
+    OriginTracer's loop_starvation causal rule will fire after a few requests.
 
     In the REPL:
         CAUSAL WHERE tags = "blocking" << fires with 80% confidence
@@ -86,10 +86,7 @@ class SlowView(View):
 
     async def get(self, request):
         # This blocks the event loop for 200ms.
-        # Compare with /async/ which uses await asyncio.sleep() instead.
-        time.sleep(
-            20
-        )  # ← intentional blocking call for demonstration
+        time.sleep(20)
 
         return JsonResponse(
             {
@@ -97,7 +94,7 @@ class SlowView(View):
                 "blocked_ms": 200,
                 "note": (
                     "time.sleep() blocked the event loop. "
-                    "Run CAUSAL in the StackTracer REPL to detect it. "
+                    "Run CAUSAL in the OriginTracer REPL to detect it. "
                     "asyncio.loop.tick avg_duration_ns will be >> 10ms."
                 ),
             }
@@ -109,13 +106,9 @@ class DbView(View):
     Async view that queries the database via Django ORM.
     Demonstrates: db.query.start and db.query.end probes firing.
 
-    Django's async ORM (sync_to_async wrapper) is used here.
-    This is the correct pattern — it runs the ORM query in a thread pool
-    so the event loop is not blocked.
-
-    If you were to call ORM methods directly in an async view without
-    sync_to_async, Django raises SynchronousOnlyOperation.
-    StackTracer would detect the blocking call on the async path.
+    Django's async ORM (sync_to_async wrapper) is used here - it
+    runs the ORM query in a thread pool so the event loop is
+    not blocked.
     """
 
     async def get(self, request):
@@ -125,8 +118,6 @@ class DbView(View):
 
         User = get_user_model()
 
-        # sync_to_async runs the ORM call in a thread pool worker.
-        # The event loop yields here — this is correct async ORM usage.
         @sync_to_async
         def get_user_count():
             return User.objects.count()

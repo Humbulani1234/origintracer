@@ -1,19 +1,19 @@
 """
-Four Django views, each dispatching Celery tasks to exercise a specific
-causal rule.  Every view:
+Django views, each dispatching Celery tasks to exercise a specific
+causal rule. and for each view:
 
     1. Reads the current trace_id from ContextVar (set by TracerMiddleware)
-    2. Emits a celery.task.dispatch event — creates the
-       django::ViewName → celery::task_name edge in the graph
+    2. Emits a celery.task.dispatch event - creates the
+       django::ViewName >> celery::task_name edge in the graph
     3. Passes _trace_id in task kwargs so celery_probe picks it up and
        continues the trace in the worker process
 
 This gives full structural topology in the REPL graph:
     gunicorn::UvicornWorker
-        → uvicorn::/tasks/report/
-            → django::ReportView
-                → celery::myapp.tasks.process_report   (dispatch edge)
-                    → celery::ForkPoolWorker            (fork edge, from probe)
+        >> vicorn::/tasks/report/
+            >> django::ReportView
+                >> celery::myapp.tasks.process_report (dispatch edge)
+                    >> celery::ForkPoolWorker (fork edge, from probe)
 
 URLs:
     GET /tasks/report/<id>/  >> ReportView (baseline)
@@ -50,10 +50,10 @@ def _dispatch(task_func, trace_id: str, **task_kwargs):
     celery::task_name, not django::task_name. This gives the correct
     cross-process edge in the gunicorn graph:
 
-        django::/tasks/report/1/  →  celery::myapp.tasks.process_report
+        django::/tasks/report/1/ >> celery::myapp.tasks.process_report
 
     Passing _trace_id in kwargs lets the celery probe continue the same
-    trace in the worker process — same trace_id, two engines, one story.
+    trace in the worker process - same trace_id, two engines, one story.
     """
     task_name = task_func.name
 
@@ -75,10 +75,10 @@ class ReportView(View):
     GET /tasks/report/<id>/
 
     Dispatches one process_report task.
-    Baseline — completes cleanly, establishes the normal latency floor.
+    Baseline - completes cleanly, establishes the normal latency floor.
 
     REPL after hitting this view several times:
-        SHOW latency WHERE system = "celery"
+        SHOW latency
         HOTSPOT TOP 10
     """
 
@@ -96,16 +96,15 @@ class BulkNotifyView(View):
     Body: {"user_ids": [1, 2, ..., 10]}
 
     Dispatches one send_notification task per user_id.
-    Fan-out pattern: one HTTP request → N tasks.
+    Fan-out pattern: one HTTP request >> N tasks.
 
     When N ≥ 5 the call_count on the dispatch edge
-    django::BulkNotifyView → celery::send_notification
+    django::BulkNotifyView >> celery::send_notification
     diverges significantly from the view call_count, which is what the
     celery_task_amplification rule detects.
 
     REPL after a few requests with 10 users each:
-        BLAME WHERE system = "celery"
-        CAUSAL WHERE tags = "celery"
+        CAUSAL
     """
 
     def post(self, request):
@@ -140,12 +139,12 @@ class ExportView(View):
     The task makes a synchronous SQLite call on the worker thread (200-400ms).
 
     After a few requests, celery_sync_db_call fires because the graph
-    shows a direct edge from celery::export_data → sqlite node with
+    shows a direct edge from celery::export_data >> sqlite node with
     avg_duration_ns > 50ms.
 
     REPL after hitting this several times:
-        CAUSAL WHERE tags = "celery"
-        SHOW latency WHERE system = "worker"
+        CAUSAL
+        SHOW latency
     """
 
     def get(self, request, export_id: int):
@@ -160,8 +159,8 @@ class StatusView(View):
     """
     GET /tasks/status/
 
-    Simple health endpoint — confirms Django is up and shows how many
-    tasks are in the Celery queue.  No task dispatched.
+    Simple health endpoint - confirms Django is up and shows
+    many tasks are in the Celery queue.  No task dispatched.
 
     REPL after hitting other views:
         SHOW graph
@@ -193,7 +192,7 @@ class StatusView(View):
         )
 
 
-# One shared TracedRedis instance — same as you'd do with redis.Redis
+# One shared TracedRedis instance - same as you'd do with redis.Redis
 r = TracedRedis(host="localhost", port=6379, db=0)
 
 
@@ -201,22 +200,22 @@ class RedisCacheView(View):
     """
     GET /tasks/cache/<id>/
 
-    1. Check Redis cache for the report          → redis::GET edge in graph
-    2. Cache hit  → return immediately            (no celery edge)
-    3. Cache miss → dispatch generate_report task → celery::generate_report edge
-                 → store a "pending" marker in Redis → redis::SET edge
+    1. Check Redis cache for the report >> redis::GET edge in graph
+    2. Cache hit >> return immediately (no celery edge)
+    3. Cache miss >> dispatch generate_report task >> celery::generate_report edge
+                 >> store a "pending" marker in Redis >> redis::SET edge
 
     REPL after several requests:
         SHOW graph
         HOTSPOT TOP 10
-        SHOW latency WHERE system = "celery"
+        SHOW latency
     """
 
     def get(self, request, report_id: int):
         trace_id = get_trace_id()
         cache_key = f"report:{report_id}"
 
-        # Redis GET — traced, creates redis::GET node in graph
+        # Redis GET - traced, creates redis::GET node in graph
         cached = r.get(cache_key)
 
         if cached:
@@ -228,14 +227,14 @@ class RedisCacheView(View):
                 }
             )
 
-        # Cache miss — dispatch task, store pending marker
-        # Redis SET — traced, creates redis::SET node in graph
+        # Cache miss - dispatch task, store pending marker
+        # Redis SET - traced, creates redis::SET node in graph
         r.set(
             cache_key, json.dumps({"status": "pending"}), ex=60
         )
 
         # dispatch() emits celery.task.dispatch then calls .delay()
-        # creates the django::ReportView → celery::generate_report edge
+        # creates the django::ReportView >> celery::generate_report edge
         _dispatch(generate_report, trace_id, report_id=report_id)
 
         return JsonResponse(
