@@ -28,6 +28,7 @@ export const api = {
   events: (limit = 30) => request(`/api/v1/events?limit=${limit}`),
   trace: (id) => request(`/api/v1/traces/${id}`),
   status: () => request("/api/v1/status"),
+  // hardcoded label for testing
   diff: (label = "deployment") => request(`/api/v1/graph/diff?since=${label}`),
   graph: () => request("/api/v1/graph"),
   causal: (tags) => request(`/api/v1/causal${tags ? `?tags=${tags}` : ''}`),

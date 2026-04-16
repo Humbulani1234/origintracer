@@ -282,5 +282,3 @@ DUPLICATE_TRANSACTION = CausalRule(
 
 PatternRegistry.register(N_PLUS_ONE)
 PatternRegistry.register(DB_HOTSPOT)
-PatternRegistry.register(POST_DEPLOYMENT_REGRESSION)
-PatternRegistry.register(DUPLICATE_TRANSACTION)

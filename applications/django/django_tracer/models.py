@@ -14,11 +14,3 @@ class Book(models.Model):
 
     class Meta:
         app_label = "django_tracer"
-
-
-class Payment(models.Model):
-    amount = models.IntegerField()
-    created = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        app_label = "django_tracer"

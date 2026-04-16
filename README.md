@@ -30,8 +30,6 @@ OriginTracer’s core engine is **completely language-agnostic**. It only unders
 
 This design makes OriginTracer uniquely positioned as a **unified causal observability backend**.
 
-**Node.js support is actively planned.**
-
 ### For Node.js Developers
 
 You can already start building probes for Node.js services (Express, Fastify, NestJS, etc.). A Node.js probe can:
@@ -199,7 +197,7 @@ OriginTracer is engineered for early production workloads, not just local debugg
 
 ### Stress Test Highlights: 4-core machine
 
-- **4,000 requests** processed with **zero errors** and **zero dropped events** (`ok=4000  err=0  dropped=0`) - 20× the volume of earlier tests.
+- **4,000 requests** processed with **zero errors** and **zero dropped events** (`ok=4000  err=0  dropped=0`)
 - **48,000 events** captured, decoded, correlated, and drained (~12k events per wave × 4 waves).  
   Buffer depth stayed at `buf_depth=0` and `in_flight=0` after every wave - no backpressure observed.
 - **Latency impact remained low and stable**:

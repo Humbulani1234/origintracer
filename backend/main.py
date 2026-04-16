@@ -429,6 +429,7 @@ async def receive_graph_diff(
         customer_id,
         len(body.added_nodes or []),
         len(body.added_edges or []),
+        len([v for v in body.dict().values() if v is not None]),
     )
     return {"ok": True}
 
@@ -603,13 +604,13 @@ async def causal(
                 label=d.get("label"),
             )
         )
-
+    print(">>> DIFFS", temporal._diffs)
     # rules registered once at startup in lifespan
     registry = PatternRegistry
     # No tracker - backend has no live requests.
     # rules that depends on it won't be executed
     matches = registry.evaluate(graph, temporal, tags=tag_list)
-
+    print(">>> MATCHES", matches)
     return {
         "match_count": len(matches),
         "data": [m.to_dict() for m in matches],
@@ -735,7 +736,6 @@ async def get_trace(
             }
         )
         last_ts = ts
-    print(">>>TRACE:", path)
     return {"data": path, "total_ms": round(total_ms, 3)}
 
 

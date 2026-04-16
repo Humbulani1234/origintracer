@@ -9,18 +9,6 @@ from applications.celery.rules.celery_rules import (
     CELERY_TASK_DURATION_SPIKE,
     SYNC_DB_IN_CELERY,
 )
-from applications.django.rules.gunicorn_rules import (
-    CASCADE_FAILURE,
-    WORKER_IMBALANCE,
-)
-from applications.django.rules.nginx_rules import (
-    RETRY_AMPLIFICATION,
-)
-from applications.django.rules.uvicorn_rules import (
-    EXTERNAL_DEPENDENCY_TIMEOUT,
-    REQUEST_DURATION_ANOMALY,
-    TRAFFIC_SPIKE,
-)
 from origintracer.core.active_requests import (
     ActiveRequestTracker,
 )
@@ -36,9 +24,7 @@ from origintracer.rules.asyncio_rules import (
 )
 from origintracer.rules.django_rules import (
     DB_HOTSPOT,
-    DUPLICATE_TRANSACTION,
     N_PLUS_ONE,
-    POST_DEPLOYMENT_REGRESSION,
 )
 
 
@@ -156,10 +142,7 @@ class TestPatternRegistry:
         assert "n_plus_one_queries" in names
         assert "new_sync_call_after_deployment" in names
         assert "asyncio_event_loop_starvation" in names
-        assert "worker_imbalance" in names
-        assert "retry_amplification" in names
         assert "db_query_hotspot" in names
-        assert "request_duration_anomaly" in names
 
     def test_build_default_registry_order_confidence_descending(
         self,
@@ -168,16 +151,13 @@ class TestPatternRegistry:
         Rules must be registered highest-confidence first so the REPL
         shows the most actionable match at the top.
         N_PLUS_ONE(0.90) > NEW_SYNC_CALL(0.85) > LOOP_STARVATION(0.80)
-        > WORKER_IMBALANCE(0.80) > RETRY_AMPLIFICATION(0.75) > DB_HOTSPOT(0.70)
+        > DB_HOTSPOT(0.70)
         """
         r = PatternRegistry
         names = r.rule_names()
         assert names.index("n_plus_one_queries") < names.index(
             "db_query_hotspot"
         )
-        assert names.index(
-            "new_sync_call_after_deployment"
-        ) < names.index("retry_amplification")
 
     def test_build_default_registry_without_tracker_is_safe(
         self, tracker
@@ -192,34 +172,6 @@ class TestPatternRegistry:
             if m.rule_name == "request_duration_anomaly"
         ]
         assert anomalies == []
-
-
-class TestRetryAmplification:
-
-    def teardown_method(self):
-        PatternRegistry._reset()
-
-    def test_fires_when_retry_count_high(self, tracker):
-        g, t, a = fresh(tracker)
-        g.upsert_node("django::view", "fn", "django")
-        g.upsert_node("redis::get", "fn", "redis")
-        g.upsert_edge("django::view", "redis::get", "calls")
-        # Inject retry metadata onto the edge
-        edge_key = list(g._edge_index.keys())[0]
-        g._edge_index[edge_key].metadata["retries"] = 10
-        matched, evidence = RETRY_AMPLIFICATION.predicate(
-            g, t, a
-        )
-        assert matched
-        assert any(e["retries"] >= 10 for e in evidence["edges"])
-
-    def test_silent_when_no_retries(self, tracker):
-        g, t, a = fresh(tracker)
-        g.upsert_node("A", "fn", "svc")
-        g.upsert_node("B", "fn", "svc")
-        g.upsert_edge("A", "B", "calls")
-        matched, _ = RETRY_AMPLIFICATION.predicate(g, t, a)
-        assert not matched
 
 
 class TestNewSyncCallAfterDeployment:
@@ -576,176 +528,6 @@ class TestNPlusOne:
         assert N_PLUS_ONE.confidence >= 0.85
 
 
-class TestWorkerImbalance:
-    """
-    WORKER_IMBALANCE fires when one gunicorn worker handles significantly
-    more requests than others — busiest / least_busy >= 2.0.
-
-    Worker nodes: node_type="gunicorn", metadata["probe"]="gunicorn.worker.fork"
-    Edge type "handled" from worker to request node carries the load count.
-    """
-
-    def teardown_method(self):
-        PatternRegistry._reset()
-
-    def _build_imbalanced_workers(
-        self,
-        worker_loads: list,  # e.g. [10, 2] means worker0 handled 10, worker1 handled 2
-    ) -> RuntimeGraph:
-        g = RuntimeGraph()
-
-        for i, load in enumerate(worker_loads):
-            worker_id = f"gunicorn::worker-{i}"
-            g.upsert_node(
-                worker_id,
-                node_type="gunicorn",
-                service="gunicorn",
-                metadata={
-                    "probe": "gunicorn.worker.fork",
-                    "worker_pid": 1000 + i,
-                },
-            )
-            # Each "handled" edge represents requests routed to this worker
-            request_id = "uvicorn::/api/"
-            if request_id not in [n.id for n in g.all_nodes()]:
-                g.upsert_node(request_id, "uvicorn", "uvicorn")
-            for _ in range(load):
-                g.upsert_edge(worker_id, request_id, "handled")
-
-        return g
-
-    # @pytest.mark.requires_rule("worker_imbalance")
-    def test_fires_when_one_worker_handles_much_more(
-        self, tracker
-    ):
-        g, t, a = fresh(tracker)
-        g = self._build_imbalanced_workers([10, 2])  # ratio = 5x
-
-        matched, evidence = WORKER_IMBALANCE.predicate(g, t, a)
-        assert matched
-        assert "busiest_worker" in evidence
-
-    def test_silent_when_workers_balanced(self, tracker):
-        g, t, a = fresh(tracker)
-        g = self._build_imbalanced_workers(
-            [5, 5, 4]
-        )  # ratio ≈ 1.25 — balanced
-
-        matched, _ = WORKER_IMBALANCE.predicate(g, t, a)
-        assert not matched
-
-    def test_silent_with_single_worker(self, tracker):
-        """One worker cannot be imbalanced — need at least two."""
-        g, t, a = fresh(tracker)
-        g = self._build_imbalanced_workers([10])
-
-        matched, _ = WORKER_IMBALANCE.predicate(g, t, a)
-        assert not matched
-
-    def test_evidence_names_busy_and_idle_workers(self, tracker):
-        g, t, a = fresh(tracker)
-        g = self._build_imbalanced_workers([20, 2])
-
-        matched, evidence = WORKER_IMBALANCE.predicate(g, t, a)
-        assert matched
-        assert "busiest_worker" in evidence
-        assert "ratio" in evidence
-        assert evidence["ratio"] >= 2.0
-
-
-class TestRequestDurationAnomaly1:
-
-    def _make_tracker_with_history(
-        self,
-        tracker,
-        pattern: str,
-        fast_avg_ms: float,
-        slow_p99_ms: float,
-    ):
-        """
-        Build a tracker with:
-          - 50+ historical completions at fast_avg_ms (stored in graph node)
-          - Recent completions at slow_p99_ms (stored in tracker)
-        """
-        # Simulate 50 historical completions
-        for i in range(50):
-            tid = f"hist-{i}"
-            tracker.start(
-                trace_id=tid, service="django", pattern=pattern
-            )
-            span = tracker._active[tid]
-            span.start_time -= (
-                fast_avg_ms / 1000
-            )  # fast completion
-            tracker.complete(trace_id=tid)
-
-        # Simulate 10 recent slow completions
-        for i in range(10):
-            tid = f"slow-{i}"
-            tracker.start(
-                trace_id=tid, service="django", pattern=pattern
-            )
-            span = tracker._active[tid]
-            span.start_time -= slow_p99_ms / 1000
-            tracker.complete(trace_id=tid)
-
-        return tracker
-
-    def test_fires_when_p99_exceeds_3x_avg(self, tracker):
-
-        pattern = "django::/api/users/{id}/"
-        tracker = self._make_tracker_with_history(
-            tracker,
-            pattern=pattern,
-            fast_avg_ms=50,  # historical average
-            slow_p99_ms=200,  # 4x — above threshold
-        )
-
-        g, t, a = fresh(tracker)
-        # Add the graph node with historical average duration
-        g.upsert_node(pattern, "fn", "django")
-        node = g._nodes[pattern]
-        for _ in range(50):
-            node.total_duration_ns += 50_000_000  # 50ms
-            node.call_count += 1
-        matched, evidence = REQUEST_DURATION_ANOMALY.predicate(
-            g, t, a
-        )
-        assert matched
-        assert any(
-            e["historical_n"] >= 50
-            for e in evidence["anomalous_endpoints"]
-        )
-
-    def test_silent_when_latency_within_normal_range(
-        self, tracker
-    ):
-        pattern = "django::/api/users/{id}/"
-        self._make_tracker_with_history(
-            tracker,
-            pattern=pattern,
-            fast_avg_ms=50,
-            slow_p99_ms=60,  # only 1.2x — well within threshold
-        )
-
-        g, t, a = fresh(tracker)
-        g.upsert_node(pattern, "fn", "django")
-        node = g._nodes[pattern]
-        for _ in range(50):
-            node.total_duration_ns += 50_000_000
-            node.call_count += 1
-        matched, _ = REQUEST_DURATION_ANOMALY.predicate(g, t, a)
-        assert not matched
-
-    def test_silent_when_tracker_is_none(self, tracker):
-        """Anomaly rule with tracker=None must never crash."""
-        rule = REQUEST_DURATION_ANOMALY
-        g, t, a = fresh(tracker)
-        matched, evidence = rule.predicate(g, t, None)
-        assert not matched
-        assert evidence == {}
-
-
 class TestUserRuleConvention:
 
     def teardown_method(self):
@@ -773,206 +555,6 @@ class TestUserRuleConvention:
 
         assert "user_custom_rule" in r.rule_names()
         assert called_with[0] is r
-
-
-class TestRequestDurationAnomaly2:
-
-    def _make_node(
-        self,
-        g: RuntimeGraph,
-        pattern: str,
-        service: str,
-        call_count: int,
-        avg_duration_ns: int,
-    ) -> None:
-        """Upsert a node call_count times with avg_duration_ns each call."""
-        for _ in range(call_count):
-            g.upsert_node(
-                f"{service}::{pattern}",
-                node_type=service,
-                service=service,
-                duration_ns=avg_duration_ns,
-            )
-
-    def _fill_tracker(
-        self,
-        tracker: ActiveRequestTracker,
-        pattern: str,
-        service: str,
-        durations,
-    ) -> None:
-        """Directly populate completions ring buffer."""
-        with tracker._lock:
-            for ms in durations:
-                tracker._completions[pattern].append(ms)
-
-    def teardown_method(self):
-        pass  # fresh() creates a new tracker per test, stop if you hold a ref
-
-    def test_fires_when_p99_exceeds_threshold(self, tracker):
-        g, t, a = fresh(tracker)
-        self._make_node(
-            g,
-            "/api/slow",
-            "django",
-            call_count=100,
-            avg_duration_ns=50 * 1_000_000,
-        )
-        self._fill_tracker(
-            a, "/api/slow", "django", [200.0] * 15
-        )
-
-        matched, evidence = REQUEST_DURATION_ANOMALY.predicate(
-            g, t, a
-        )
-        assert matched
-        ep = evidence["anomalous_endpoints"][0]
-        assert ep["pattern"] == "/api/slow"
-        assert ep["ratio"] >= 3.0
-
-    def test_silent_when_no_tracker(self, tracker):
-        """No tracker — rule must not crash and must return False."""
-        g, t, _ = fresh(tracker)
-        matched, evidence = REQUEST_DURATION_ANOMALY.predicate(
-            g, t, None
-        )
-        assert not matched
-        assert evidence == {}
-
-    def test_silent_when_recent_count_below_threshold(
-        self, tracker
-    ):
-        """Fewer than 10 recent samples — not enough to trust P99."""
-        g, t, a = fresh(tracker)
-        self._make_node(
-            g,
-            "/api/slow",
-            "django",
-            call_count=100,
-            avg_duration_ns=50 * 1_000_000,
-        )
-        # only 5 completions — below threshold of 10
-        self._fill_tracker(a, "/api/slow", "django", [500.0] * 5)
-
-        matched, _ = REQUEST_DURATION_ANOMALY.predicate(g, t, a)
-        assert not matched
-
-    def test_silent_when_historical_count_below_threshold(
-        self, tracker
-    ):
-        """Fewer than 50 historical samples — baseline not trusted."""
-        g, t, a = fresh(tracker)
-        # only 20 historical calls on the node
-        self._make_node(
-            g,
-            "/api/slow",
-            "django",
-            call_count=20,
-            avg_duration_ns=50 * 1_000_000,
-        )
-        self._fill_tracker(
-            a, "/api/slow", "django", [500.0] * 15
-        )
-
-        matched, _ = REQUEST_DURATION_ANOMALY.predicate(g, t, a)
-        assert not matched
-
-    def test_silent_when_ratio_below_threshold(self, tracker):
-        """P99 only 1.8x historical — below 3x threshold."""
-        g, t, a = fresh(tracker)
-        self._make_node(
-            g,
-            "/api/view",
-            "django",
-            call_count=100,
-            avg_duration_ns=50 * 1_000_000,
-        )
-        # 50ms historical, p99 ~90ms = 1.8x — below threshold
-        self._fill_tracker(a, "/api/view", "django", [90.0] * 15)
-
-        matched, _ = REQUEST_DURATION_ANOMALY.predicate(g, t, a)
-        assert not matched
-
-    def test_silent_when_historical_avg_below_1ms(self, tracker):
-        """Historical avg < 1ms — too fast to be meaningful, skip."""
-        g, t, a = fresh(tracker)
-        # 0.5ms historical avg
-        self._make_node(
-            g,
-            "/health",
-            "django",
-            call_count=100,
-            avg_duration_ns=500_000,
-        )
-        self._fill_tracker(a, "/health", "django", [50.0] * 15)
-
-        matched, _ = REQUEST_DURATION_ANOMALY.predicate(g, t, a)
-        assert not matched
-
-    def test_slow_in_flight_attached_when_present(self, tracker):
-        g, t, a = fresh(tracker)
-        self._make_node(
-            g,
-            "/api/slow",
-            "django",
-            call_count=100,
-            avg_duration_ns=50 * 1_000_000,
-        )
-        self._fill_tracker(
-            a, "/api/slow", "django", [300.0] * 15
-        )
-
-        # inject a slow in-flight span
-        trace_id = str(uuid.uuid4())
-        a.start(trace_id, "django", "/api/slow")
-        with a._lock:
-            a._active[trace_id].start_time = (
-                time.monotonic() - 5.0
-            )
-            a._active[trace_id].probe_sequence = [
-                "request.entry",
-                "django.db.query",
-                "django.db.query",
-            ]
-
-        matched, evidence = REQUEST_DURATION_ANOMALY.predicate(
-            g, t, a
-        )
-        assert matched
-        ep = evidence["anomalous_endpoints"][0]
-        assert "slow_in_flight" in ep
-        assert ep["slow_in_flight"]["trace_id"] == trace_id
-
-    def test_multiple_anomalies_sorted_by_ratio(self, tracker):
-        """Multiple anomalous endpoints are sorted by ratio descending."""
-        g, t, a = fresh(tracker)
-        self._make_node(
-            g,
-            "/api/a",
-            "django",
-            call_count=100,
-            avg_duration_ns=50 * 1_000_000,
-        )
-        self._make_node(
-            g,
-            "/api/b",
-            "django",
-            call_count=100,
-            avg_duration_ns=50 * 1_000_000,
-        )
-        # /api/a: p99=200ms = 4x historical 50ms
-        self._fill_tracker(a, "/api/a", "django", [200.0] * 15)
-        # /api/b: p99=500ms = 10x historical 50ms
-        self._fill_tracker(a, "/api/b", "django", [500.0] * 15)
-
-        matched, evidence = REQUEST_DURATION_ANOMALY.predicate(
-            g, t, a
-        )
-        assert matched
-        ratios = [
-            ep["ratio"] for ep in evidence["anomalous_endpoints"]
-        ]
-        assert ratios == sorted(ratios, reverse=True)
 
 
 def _build_cascade_graph(upstream_calls=100, downstream_calls=0):
@@ -1019,64 +601,6 @@ def _temporal_with_removed(
     return t
 
 
-class TestCascadeFailure:
-    def teardown_method(self):
-        from origintracer.core.causal import PatternRegistry
-
-        PatternRegistry._reset()
-
-    def test_fires_when_upstream_removed_and_downstream_exists(
-        self,
-    ):
-        g = _build_cascade_graph(
-            upstream_calls=100, downstream_calls=50
-        )
-        t = _temporal_with_removed(
-            removed_nodes=["gunicorn::UvicornWorker-4341"],
-            removed_edges=[
-                "gunicorn::UvicornWorker-4341→uvicorn::/api/orders/:handles"
-            ],
-        )
-        matched, evidence = CASCADE_FAILURE.predicate(g, t, None)
-        assert matched
-        assert evidence["removed_nodes"]
-
-    def test_silent_when_nothing_removed(self):
-        g = _build_cascade_graph(
-            upstream_calls=100, downstream_calls=50
-        )
-        t = _temporal_with_removed()
-        matched, _ = CASCADE_FAILURE.predicate(g, t, None)
-        assert not matched
-
-    def test_silent_when_removed_node_has_no_dependents(self):
-        g = _build_cascade_graph(
-            upstream_calls=100, downstream_calls=0
-        )
-        t = _temporal_with_removed(
-            removed_nodes=["gunicorn::UvicornWorker-4341"]
-        )
-        matched, _ = CASCADE_FAILURE.predicate(g, t, None)
-        assert not matched
-
-    def test_evidence_contains_affected_downstream(self):
-        g = _build_cascade_graph(
-            upstream_calls=100, downstream_calls=50
-        )
-        t = _temporal_with_removed(
-            removed_nodes=["gunicorn::UvicornWorker-4341"],
-            removed_edges=[
-                "gunicorn::UvicornWorker-4341→uvicorn::/api/orders/:handles"
-            ],
-        )
-        matched, evidence = CASCADE_FAILURE.predicate(g, t, None)
-        assert matched
-        assert len(evidence["removed_edges"]) > 0
-
-    def test_confidence_is_high(self):
-        assert CASCADE_FAILURE.confidence >= 0.80
-
-
 def _build_regression_graph(avg_duration_ns=500_000_000):
     g = RuntimeGraph()
     # simulate a view that got slower after deployment
@@ -1119,70 +643,6 @@ def _temporal_with_new_edges(added_edges=None):
     return t
 
 
-class TestPostDeploymentRegression:
-    def teardown_method(self):
-        from origintracer.core.causal import PatternRegistry
-
-        PatternRegistry._reset()
-
-    def test_fires_when_new_edge_and_high_latency(self):
-        # avg > 200ms and new edge appeared after deployment
-        g = _build_regression_graph(avg_duration_ns=500_000_000)
-        t = _temporal_with_new_edges(
-            added_edges=[
-                "django::/api/products/→django::SELECT product WHERE id=%s:calls"
-            ]
-        )
-        matched, evidence = POST_DEPLOYMENT_REGRESSION.predicate(
-            g, t, None
-        )
-        assert matched
-        assert evidence["regressed_nodes"]
-
-    def test_silent_when_latency_normal(self):
-        g = _build_regression_graph(
-            avg_duration_ns=50_000_000
-        )  # 50ms — fine
-        t = _temporal_with_new_edges(
-            added_edges=[
-                "django::/api/products/→django::SELECT product WHERE id=%s:calls"
-            ]
-        )
-        matched, _ = POST_DEPLOYMENT_REGRESSION.predicate(
-            g, t, None
-        )
-        assert not matched
-
-    def test_silent_when_no_new_edges(self):
-        g = _build_regression_graph(avg_duration_ns=500_000_000)
-        t = _temporal_with_new_edges()
-        matched, _ = POST_DEPLOYMENT_REGRESSION.predicate(
-            g, t, None
-        )
-        assert not matched
-
-    def test_evidence_contains_node_and_duration(self):
-        g = _build_regression_graph(avg_duration_ns=500_000_000)
-        t = _temporal_with_new_edges(
-            added_edges=[
-                "django::/api/products/→django::SELECT product WHERE id=%s:calls"
-            ]
-        )
-        matched, evidence = POST_DEPLOYMENT_REGRESSION.predicate(
-            g, t, None
-        )
-        assert matched
-        node = evidence["regressed_nodes"][0]
-        assert "avg_ms" in node
-        assert node["avg_ms"] > 200
-
-    def test_confidence_is_high(self):
-        assert POST_DEPLOYMENT_REGRESSION.confidence >= 0.80
-
-
-TIMEOUT_NS = 2_000_000_000  # 2 seconds
-
-
 def _build_external_graph(
     avg_duration_ns=3_000_000_000, call_count=50
 ):
@@ -1212,74 +672,6 @@ def _build_external_graph(
     return g
 
 
-class TestExternalDependencyTimeout:
-    def teardown_method(self):
-        from origintracer.core.causal import PatternRegistry
-
-        PatternRegistry._reset()
-
-    def test_fires_when_external_call_slow(self):
-        g = _build_external_graph(avg_duration_ns=3_000_000_000)
-        matched, evidence = (
-            EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
-                g, TemporalStore(), None
-            )
-        )
-        assert matched
-        assert evidence["slow_dependencies"]
-
-    def test_silent_when_external_call_fast(self):
-        g = _build_external_graph(
-            avg_duration_ns=100_000_000
-        )  # 100ms
-        matched, _ = EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
-            g, TemporalStore(), None
-        )
-        assert not matched
-
-    def test_silent_when_not_external(self):
-        g = RuntimeGraph()
-        for _ in range(50):
-            g.upsert_node(
-                "django::internal-view",
-                node_type="django",
-                service="django",
-                metadata={"probe": "django.view.enter"},
-            )
-        matched, _ = EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
-            g, TemporalStore(), None
-        )
-        assert not matched
-
-    def test_evidence_contains_dependency_name(self):
-        g = _build_external_graph(avg_duration_ns=3_000_000_000)
-        matched, evidence = (
-            EXTERNAL_DEPENDENCY_TIMEOUT.predicate(
-                g, TemporalStore(), None
-            )
-        )
-        assert matched
-        dep = evidence["slow_dependencies"][0]
-        assert "node" in dep
-        assert "avg_ms" in dep
-        assert dep["avg_ms"] > 2000
-
-    def test_confidence(self):
-        assert EXTERNAL_DEPENDENCY_TIMEOUT.confidence >= 0.75
-
-
-def _build_spike_graph(call_count=1000):
-    g = RuntimeGraph()
-    for _ in range(call_count):
-        g.upsert_node(
-            "uvicorn::/api/",
-            node_type="uvicorn",
-            service="uvicorn",
-            metadata={"probe": "uvicorn.request.complete"},
-        )
-    return g
-
-
 def _temporal_with_added_nodes(count=50):
     t = TemporalStore()
     t._diffs.append(
@@ -1295,117 +687,6 @@ def _temporal_with_added_nodes(count=50):
         )
     )
     return t
-
-
-class TestTrafficSpike:
-    def teardown_method(self):
-        from origintracer.core.causal import PatternRegistry
-
-        PatternRegistry._reset()
-
-    def test_fires_on_large_node_growth(self):
-        g = _build_spike_graph(call_count=1000)
-        t = _temporal_with_added_nodes(count=50)
-        matched, evidence = TRAFFIC_SPIKE.predicate(g, t, None)
-        assert matched
-        assert evidence["added_node_count"] >= 50
-
-    def test_silent_on_normal_growth(self):
-        g = _build_spike_graph(call_count=100)
-        t = _temporal_with_added_nodes(count=2)
-        matched, _ = TRAFFIC_SPIKE.predicate(g, t, None)
-        assert not matched
-
-    def test_evidence_contains_growth_rate(self):
-        g = _build_spike_graph(call_count=1000)
-        t = _temporal_with_added_nodes(count=50)
-        matched, evidence = TRAFFIC_SPIKE.predicate(g, t, None)
-        assert matched
-        assert "growth_rate" in evidence
-        assert evidence["growth_rate"] > 0
-
-    def test_confidence(self):
-        assert TRAFFIC_SPIKE.confidence >= 0.70
-
-
-def _build_duplicate_graph(query_count=20, view_count=10):
-    g = RuntimeGraph()
-    for _ in range(view_count):
-        g.upsert_node(
-            "django::PaymentView",
-            node_type="django",
-            service="django",
-            metadata={"probe": "django.view.enter"},
-        )
-    # same query fires twice per view — duplicate
-    for _ in range(query_count):
-        g.upsert_node(
-            "django::INSERT INTO payments VALUES (%s)",
-            node_type="django",
-            service="django",
-            metadata={
-                "probe": "django.db.query",
-                "db_alias": "default",
-            },
-        )
-    g.upsert_edge(
-        "django::PaymentView",
-        "django::INSERT INTO payments VALUES (%s)",
-        "calls",
-    )
-    return g
-
-
-class TestDuplicateTransaction:
-    def teardown_method(self):
-        from origintracer.core.causal import PatternRegistry
-
-        PatternRegistry._reset()
-
-    def test_fires_when_write_ratio_exceeds_threshold(self):
-        # 20 inserts for 10 view calls = ratio 2x — duplicate
-        g = _build_duplicate_graph(query_count=20, view_count=10)
-        matched, evidence = DUPLICATE_TRANSACTION.predicate(
-            g, TemporalStore(), None
-        )
-        assert matched
-        assert evidence["duplicate_writes"]
-
-    def test_silent_when_ratio_normal(self):
-        # 10 inserts for 10 view calls = 1:1 — expected
-        g = _build_duplicate_graph(query_count=10, view_count=10)
-        matched, _ = DUPLICATE_TRANSACTION.predicate(
-            g, TemporalStore(), None
-        )
-        assert not matched
-
-    def test_silent_when_read_not_write(self):
-        g = RuntimeGraph()
-        for _ in range(20):
-            g.upsert_node(
-                "django::SELECT * FROM payments",
-                node_type="django",
-                service="django",
-                metadata={"probe": "django.db.query"},
-            )
-        matched, _ = DUPLICATE_TRANSACTION.predicate(
-            g, TemporalStore(), None
-        )
-        assert not matched
-
-    def test_evidence_contains_query_and_ratio(self):
-        g = _build_duplicate_graph(query_count=20, view_count=10)
-        matched, evidence = DUPLICATE_TRANSACTION.predicate(
-            g, TemporalStore(), None
-        )
-        assert matched
-        dup = evidence["duplicate_writes"][0]
-        assert "query" in dup
-        assert "ratio" in dup
-        assert dup["ratio"] >= 2.0
-
-    def test_confidence(self):
-        assert DUPLICATE_TRANSACTION.confidence >= 0.80
 
 
 def _add_celery_task(

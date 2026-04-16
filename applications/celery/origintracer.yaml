@@ -10,8 +10,6 @@
 #   origintracer/rules/*_rules.py
 
 probes:
-  - gunicorn
-  - uvicorn
   - asyncio
   - django
   - celery

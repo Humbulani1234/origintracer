@@ -3,20 +3,14 @@
 # Place this file in the project root (same directory as manage.py).
 
 probes:
-  - gunicorn
-  - uvicorn
   - asyncio
   - django
-  # - nginx
 
 rules:
-  - worker_imbalance
   - new_sync_call_after_deployment
   - asyncio_event_loop_starvation
   - n_plus_one_queries
   - db_query_hotspot
-  - retry_amplification
-  - request_duration_anomaly
 
 semantic:
   - label: http

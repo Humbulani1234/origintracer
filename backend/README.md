@@ -53,8 +53,10 @@ storage key. Use the same key in `stacktracer.init()` on the agent side.
 ```bash
 STACKTRACER_API_KEYS=test-key-123:local-dev \
 STACKTRACER_DB_DSN=postgresql://user:password@localhost/stacktracer \
-uvicorn main:app --host 0.0.0.0 --port 8001 --log-level info
+uvicorn backend.main:app --host 0.0.0.0 --port 8001 --log-level info
 ```
+
+**Note**: when running with ReactUI start the server first, then `OriginTracer` tool for it to send the `deployment marker`
 
 Create the database first:
 

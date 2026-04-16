@@ -636,51 +636,6 @@ class TestGunicornTopologyEndToEnd:
             "Check _add_structural_edges for uvicorn.request.receive events."
         )
 
-    def test_worker_imbalance_fires_via_causal(self, engine):
-        """
-        Two workers where worker-0 handles all requests and worker-1 is idle
-        should fire WORKER_IMBALANCE through the causal registry.
-        """
-        # Two workers fork
-        for pid, name in [
-            (14442, "UvicornWorker-0"),
-            (14443, "UvicornWorker-1"),
-        ]:
-            emit(
-                NormalizedEvent.now(
-                    "gunicorn.worker.fork",
-                    "t-guni",
-                    "gunicorn",
-                    name,
-                    worker_pid=pid,
-                )
-            )
-
-        # worker-0 handles 10 requests, worker-1 handles 1
-        for i in range(10):
-            emit(
-                NormalizedEvent.now(
-                    "uvicorn.request.receive",
-                    str(uuid.uuid4()),
-                    "uvicorn",
-                    "/api/",
-                    worker_pid=14442,
-                )
-            )
-        emit(
-            NormalizedEvent.now(
-                "uvicorn.request.receive",
-                str(uuid.uuid4()),
-                "uvicorn",
-                "/api/",
-                worker_pid=14443,
-            )
-        )
-
-        matches = engine.evaluate()
-        rule_names = [m.rule_name for m in matches]
-        assert "worker_imbalance" in rule_names
-
 
 class TestConfigMergePipeline:
     """

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import NodeTable from "./components/NodeTable";
 import EdgeTable from "./components/EdgeTable";
 import TraceTimeline from "./components/TraceTimeline";
-import EventLog from "./components/EventLog";
+import EventLog from "./components/Eventlog";
 import StatusBar from "./components/StatusBar";
 import QueryBar from "./components/QueryBar";
 import DiffView from "./components/DiffView";
@@ -34,13 +34,17 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      setBackendError(null);
-      const [n, e, ev, s, d, g,] = await Promise.all([
-        api.nodes(), api.edges(), api.events(), api.status(),
-        api.diff(), api.graph()
+      const [n, e, ev, s, d, g, ca, ws] = await Promise.all
+      ([
+        api.nodes(),
+        api.edges(),
+        api.events(),
+        api.status(),
+        api.diff(),
+        api.graph(),
+        api.causal(),
+        api.workers(),
       ]);
-      const ca = await api.causal("origintracer-snapshot");
-      const ws = await api.workers();
       if (n?.data?.data?.length) setNodes(n.data.data);
       if (e?.data?.data?.length) setEdges(e.data.data);
       if (ev?.data?.length) setEvents(ev.data);

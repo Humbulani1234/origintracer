@@ -14,11 +14,8 @@
 #   override this unless adding a completely custom module path.
  
 builtin_probes:
-  - ".probes.gunicorn_probe"
-  - ".probes.uvicorn_probe"
   - ".probes.asyncio_probe"
   - ".probes.django_probe"
-  # - ".probes.nginx_probe"
 
 
 # probes: Names of probes to actually start.
@@ -27,9 +24,6 @@ builtin_probes:
 probes:
   - django
   - asyncio
-  - uvicorn
-  - gunicorn
-  # - nginx
 
 # ---------------- Rules activation ---------------------------
 

@@ -55,8 +55,6 @@ from ..sdk.emitter import emit
 
 logger = logging.getLogger("stacktracer.probes.asyncio")
 
-SUPPORTED_PYTHONS = ((3, 11), (3, 12), (3, 13))
-
 # Register probe types
 ProbeTypes.register_many(
     {
@@ -71,20 +69,20 @@ ProbeTypes.register_many(
 # ---------------- Asyncio-only BPF fragment ----------------------
 
 _ASYNCIO_EPOLL_BPF = r"""
-// ********** epoll_wait enter **********
+/* --------------- epoll_wait enter ------------- */
 // ── epoll_pwait enter (what uvicorn/gunicorn actually uses) ───────────────────
 TRACEPOINT_PROBE(syscalls, sys_enter_epoll_pwait) {
     u64 pid_tid = bpf_get_current_pid_tgid();
-    u64 ts      = bpf_ktime_get_ns();
+    u64 ts = bpf_ktime_get_ns();
     asyncio_epoll_ts.update(&pid_tid, &ts);
     return 0;
 }
 
-// ── epoll_pwait exit (mirrors epoll_wait exit exactly) ───────────────────────
+// epoll_pwait exit (mirrors epoll_wait exit exactly)
 TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait) {
-    u64 pid_tid   = bpf_get_current_pid_tgid();
-    u32 pid       = (u32)(pid_tid >> 32);
-    u32 tid       = (u32)pid_tid;
+    u64 pid_tid = bpf_get_current_pid_tgid();
+    u32 pid = (u32)(pid_tid >> 32);
+    u32 tid = (u32)pid_tid;
 
     u64 *entry_ts = asyncio_epoll_ts.lookup(&pid_tid);
     if (!entry_ts) return 0;
@@ -98,26 +96,26 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait) {
 
     struct kernel_event_t ev = {};
     ev.timestamp_ns = now;
-    ev.pid          = pid;
-    ev.tid          = tid;
-    ev.duration_ns  = diff;
-    ev.value1       = args->ret;
+    ev.pid = pid;
+    ev.tid = tid;
+    ev.duration_ns = diff;
+    ev.value1 = args->ret;
     __builtin_memcpy(ev.event_type, "epoll.wait", 11);
-    __builtin_memcpy(ev.trace_id,   ctx->trace_id, 36);
-    __builtin_memcpy(ev.service,    ctx->service,  32);
+    __builtin_memcpy(ev.trace_id, ctx->trace_id, 36);
+    __builtin_memcpy(ev.service, ctx->service,  32);
     kernel_events.perf_submit(args, &ev, sizeof(ev));
     return 0;
 }
 """
 
 # Uncomment ONLY when deploying without the nginx probe:
-# register_bpf(
-#     "asyncio",
-#     BPFProgramPart(
-#         maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
-#         probes=[_ASYNCIO_EPOLL_BPF],
-#     ),
-# )
+register_bpf(
+    "asyncio",
+    BPFProgramPart(
+        maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
+        probes=[_ASYNCIO_EPOLL_BPF],
+    ),
+)
 
 
 class _EpollKprobe:

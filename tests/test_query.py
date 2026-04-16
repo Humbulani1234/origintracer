@@ -294,7 +294,6 @@ class TestQueryExecutor:
         names = result["data"]
         assert "db_query_hotspot" in names
         assert "n_plus_one_queries" in names
-        assert "worker_imbalance" in names
 
     def test_show_semantic_lists_labels_with_descriptions(
         self, engine

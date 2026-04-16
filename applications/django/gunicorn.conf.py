@@ -1,3 +1,0 @@
-from origintracer.probes.gunicorn_probe import install_hooks
-
-install_hooks()

@@ -1,6 +1,8 @@
 origintracer.code-workspace
 origintracer.sublime-workspace
 /env
+repl/run_demo.sh
+repl/demo.tape
 
 # Python
 __pycache__/
