@@ -69,6 +69,7 @@ select = [
 ignore = [
     "E501",
     "F401",
+    "F821"
 ]
 
 # pytest config
