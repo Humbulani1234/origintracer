@@ -4,7 +4,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Set
 
-logger = logging.getLogger("stacktracer.compactor")
+logger = logging.getLogger("origintracer.compactor")
 
 if TYPE_CHECKING:
     from .runtime_graph import RuntimeGraph

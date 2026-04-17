@@ -36,7 +36,7 @@ _pre_fork_events: list = []
 def _drain_pre_fork_events() -> None:
     """
     Feed events captured in the main process into the worker's fresh engine.
-    Called from _on_worker_fork after stacktracer.init() succeeds.
+    Called from _on_worker_fork after origintracer.init() succeeds.
     fork() copies _pre_fork_events into every worker - we drain once then clear.
     """
 
@@ -147,7 +147,7 @@ class CeleryProbe(BaseProbe):
     def _on_worker_fork(self, **_) -> None:
         """
         Fires inside each forked prefork worker before it starts consuming tasks.
-        Re-inits StackTracer, drains pre-fork events, then emits the fork event.
+        Re-inits OriginTracer, drains pre-fork events, then emits the fork event.
         """
         worker_pid = os.getpid()
         master_pid = os.getppid()

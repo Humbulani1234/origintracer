@@ -30,7 +30,7 @@ def _graph(*node_specs) -> RuntimeGraph:
 
 def _layer_with_defaults() -> SemanticLayer:
     """
-    SemanticLayer loaded from the default stacktracer.yaml semantic section.
+    SemanticLayer loaded from the default origintracer.yaml semantic section.
     Mirrors the actual YAML so tests reflect production configuration.
     """
     return load_from_dict(
@@ -629,7 +629,7 @@ semantic:
 
 class TestDefaultYamlLabels:
     """
-    Each label from the default stacktracer.yaml must resolve to the
+    Each label from the default origintracer.yaml must resolve to the
     correct set of nodes against a graph that mirrors a live stack.
     This is the test that catches YAML typos and pattern mistakes.
     """

@@ -55,7 +55,7 @@ def register_bpf(name: str, part: BPFProgramPart) -> None:
     The name is used for logging and deduplication diagnostics only.
 
     Example - inside nginx_probe.py:
-        from stacktracer.core.bpf_programs import BPFProgramPart, register_bpf
+        from originracer.core.bpf_programs import BPFProgramPart, register_bpf
         register_bpf("nginx", BPFProgramPart(
             headers=[...],
             maps=[...],

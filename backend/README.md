@@ -44,15 +44,15 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info
 ```
 
 `test-key-123` is the API key. `local-dev` is the customer_id used as the
-storage key. Use the same key in `stacktracer.init()` on the agent side.
+storage key. Use the same key in `origintracer.init()` on the agent side.
 
 ---
 
 ## Quick start - PostgreSQL
 
 ```bash
-STACKTRACER_API_KEYS=test-key-123:local-dev \
-STACKTRACER_DB_DSN=postgresql://user:password@localhost/stacktracer \
+ORIGINTRACER_API_KEYS=test-key-123:local-dev \
+ORIGINTRACER_DB_DSN=postgresql://user:password@localhost/origintracer \
 uvicorn backend.main:app --host 0.0.0.0 --port 8001 --log-level info
 ```
 

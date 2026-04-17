@@ -22,7 +22,7 @@ Proposed solution - a shared BPF hash map:
         value = { trace_id: char[36], start_ns: u64, service: char[32] }
 
 Usage - Python side:
-    from stacktracer.core.kprobe_bridge import KprobeBridge
+    from origintracer.core.kprobe_bridge import KprobeBridge
 
     bridge = KprobeBridge()
     bridge.start() # loads the BPF program, creates the map
