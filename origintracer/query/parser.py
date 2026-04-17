@@ -247,13 +247,15 @@ def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
         return {"error": str(exc), "query": query.raw}
 
 
-KNOWN_FILTER_KEYS = {
+# TODO: must be made scalable for more filters support
+SEMANTIC_FILTER_KEYS = {
     "system",
     "service",
     "node",
     "probe",
-    "tags",
 }
+# These are already meaningful — skip semantic resolution
+DIRECT_FILTER_KEYS = {"tags", "trace_id"}
 
 
 # SHOW - dispatch by metric
@@ -263,7 +265,7 @@ def _exec_show(
 
     metric = query.metric
     filters = query.filters
-    unknown = set(filters.keys()) - KNOWN_FILTER_KEYS
+    unknown = set(filters.keys()) - SEMANTIC_FILTER_KEYS
     if unknown:
         return {
             "error": f"Unknown filter key(s): {', '.join(sorted(unknown))}",
@@ -272,24 +274,23 @@ def _exec_show(
     # Handles system=, service=, node=, etc all through the same semantic layer
     node_scope = None
     # TODO: must be made scalable for more filters support
-    candidate = (
+    semantic_candidate = (
         filters.get("system")
         or filters.get("service")
         or filters.get("node")
         or filters.get("probe")
-        or filters.get("tags")
     )
 
-    if candidate:
+    if semantic_candidate:
         resolved = engine.semantic.resolve_nodes(
-            candidate, engine.graph
+            semantic_candidate, engine.graph
         )
         if resolved:
             node_scope = resolved
         else:
             # If a candidate was provided but couldn't be resolved, it's an error
             return {
-                "error": f"Could not find any nodes matching '{candidate}'",
+                "error": f"Could not find any nodes matching '{semantic_candidate}'",
                 "hint": "Check your spelling or use 'show graph' without a"
                 "WHERE clause to see everything.",
                 "available_labels": engine.semantic.all_labels(),
@@ -414,10 +415,10 @@ def _show_graph(engine: Any, node_scope: Optional[set]) -> Dict:
     edges = list(engine.graph.all_edges())
 
     if node_scope:
-        # STRICT SCOPE: Only show what the user specifically asked for
+        # Only show what the user specifically asked for
         nodes = [n for n in nodes if n.id in node_scope]
 
-        # EDGE FILTER: Only show connections between nodes inside this system
+        # Only show connections between nodes inside this system
         edges = [
             e
             for e in edges
@@ -479,28 +480,68 @@ def _show_edges(engine: Any, node_scope: Optional[set]) -> Dict:
 
 def _show_status(engine: Any) -> Dict:
     """
-    Engine health snapshot - same fields as the old built-in SHOW STATUS.
+    Engine health snapshot.
     """
     graph = engine.graph
     tracker = getattr(engine, "tracker", None)
-    started = getattr(engine, "_started_at", 0)
+    started = getattr(engine, "_started_at", None)
+    event_log = getattr(engine, "_event_log", [])
+
+    # Uptime
+    uptime_s = (
+        round(time.monotonic() - started, 1) if started else None
+    )
+    uptime_human = (
+        _format_uptime(uptime_s) if uptime_s else "unknown"
+    )
+
+    # Graph
+    nodes = list(graph.all_nodes())
+    edges = list(graph.all_edges())
+
+    # Probe health
+    probes = getattr(engine, "probes", [])
+    active_probes = [str(probe.name) for probe in probes]
+    active_probe_count = len(active_probes)
+
+    # Semantic layer
+    semantic = getattr(engine, "semantic", None)
+    label_count = len(semantic.all_labels()) if semantic else 0
 
     return {
         "verb": "STATUS",
         "data": {
+            # Process
             "pid": os.getpid(),
-            "socket": f"/tmp/stacktracer-{os.getpid()}.sock",
-            "uptime_s": round(time.monotonic() - started, 1),
-            "graph_nodes": len(list(graph.all_nodes())),
-            "graph_edges": len(list(graph.all_edges())),
-            "event_log_size": len(
-                getattr(engine, "_event_log", [])
-            ),
+            "socket": f"/tmp/origintracer-{os.getpid()}.sock",
+            "uptime_s": uptime_s,
+            "uptime": uptime_human,
+            # Graph
+            "graph_nodes": len(nodes),
+            "graph_edges": len(edges),
+            "semantic_labels": label_count,
+            # Probes
+            "probes_total": active_probe_count,
+            "probes_active": active_probes,
+            # Activity
             "active_requests": (
                 tracker.active_count() if tracker else 0
             ),
+            "event_log_size": len(event_log),
         },
     }
+
+
+def _format_uptime(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60}s"
+    else:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        return f"{h}h {m}m"
 
 
 def _show_active(engine: Any) -> Dict:

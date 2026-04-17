@@ -267,6 +267,7 @@ class TestQueryExecutor:
         engine.process(
             evt(service="django", name="view", trace_id=trace_id)
         )
+        engine.probes = []
         result = self._run("SHOW status", engine)
         data = result.get("data", result)
         assert "graph_nodes" in data
@@ -334,7 +335,9 @@ class TestQueryExecutor:
     def test_show_nodes_unknown_system_returns_error_with_available(
         self, engine
     ):
-        """system= must return error AND list available labels."""
+        """
+        system= must return error AND list available labels.
+        """
         result = self._run(
             'SHOW nodes WHERE system = "xyz_unknown_zzz"', engine
         )
@@ -345,7 +348,7 @@ class TestQueryExecutor:
         self, engine, trace_id
     ):
         """
-        WHERE service = "django" — "django" is a real service name.
+        WHERE service = "django" - "django" is a real service name.
         Even if semantic resolution returns nothing, literal fallback must work.
         """
         engine.process(

@@ -152,7 +152,7 @@ class ActiveRequestTracker:
             if span is None:
                 return
             span.last_event = time.monotonic()
-            # Keep probe sequence bounded — first 20 probes only
+            # Keep probe sequence bounded - first 20 probes only
             if len(span.probe_sequence) < 20:
                 span.probe_sequence.append(probe)
 
@@ -179,7 +179,9 @@ class ActiveRequestTracker:
         return span
 
     def active_count(self, service: Optional[str] = None) -> int:
-        """Number of requests currently in-flight."""
+        """
+        Number of requests currently in-flight.
+        """
         with self._lock:
             if service is None:
                 return len(self._active)

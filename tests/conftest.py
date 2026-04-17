@@ -119,6 +119,7 @@ def engine(tracker) -> Engine:
     )
     e.tracker = tracker
     e.causal = PatternRegistry
+    e.probes = []
     bind_engine(e)
     return e
 

@@ -64,6 +64,7 @@ class Engine:
         self._snapshot_interval = snapshot_interval_s
         self._snapshot_thread: Optional[threading.Thread] = None
         self._running = False
+        self._started_at = time.monotonic()
 
         # Last event per trace - used to build graph edges between consecutive events.
         # Stored as (event, last_updated_timestamp) so stale entries can be evicted.

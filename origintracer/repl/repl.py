@@ -20,7 +20,7 @@ DSL queries:
     SHOW events WHERE probe = "db.query.start" LIMIT 20
     HOTSPOT TOP 10
     CAUSAL
-    CAUSAL WHERE tags = "blocking"
+    CAUSAL WHERE tags = "blocking, worker"
     BLAME WHERE system = "export"
     DIFF SINCE deployment
     TRACE <trace_id>
@@ -867,13 +867,24 @@ def main():
     # Quick health check on connect
     status = query(sock_path, "SHOW STATUS")
     if status.get("ok"):
-        d = status["data"]
+        d = status["data"]["data"]
+        print()
+        ok("  Engine Status")
         dim(
-            f"  graph: {d.get('graph_nodes', '?')} nodes  ·  "
-            f"{d.get('graph_edges', '?')} edges  ·  "
-            f"pid={d.get('pid', '?')}"
+            f"  pid={d.get('pid', '?')} · socket={d.get('socket', '?')}  ·  uptime={d.get('uptime', '?')}"
         )
-    print()
+        print()
+        dim(
+            f"  Graph      {d.get('graph_nodes', '?')} nodes  ·  {d.get('graph_edges', '?')} edges  ·  {d.get('semantic_labels', '?')} semantic labels"
+        )
+        dim(
+            f"  Probes     {d.get('probes_active', '?')} active / {d.get('probes_total', '?')} total"
+        )
+        dim(
+            f"  Requests   {d.get('active_requests', '?')} active"
+        )
+        dim(f"  Events     {d.get('event_log_size', '?')} total")
+        print()
 
     while True:
         try:
