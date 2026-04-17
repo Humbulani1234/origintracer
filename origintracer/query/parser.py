@@ -252,10 +252,7 @@ SEMANTIC_FILTER_KEYS = {
     "system",
     "service",
     "node",
-    "probe",
 }
-# These are already meaningful — skip semantic resolution
-DIRECT_FILTER_KEYS = {"tags", "trace_id"}
 
 
 # SHOW - dispatch by metric
@@ -735,11 +732,13 @@ def _exec_diff(query: ParsedQuery, engine: Any) -> Dict:
 
     return {
         "verb": "DIFF",
-        "since": since_ts,
-        "since_label": since_label,
-        "new_edges": new_edges,
-        "removed_edges": removed_edges,
-        "diff_count": len(changes),
+        "data": {
+            "since": since_ts,
+            "since_label": since_label,
+            "new_edges": new_edges,
+            "removed_edges": removed_edges,
+            "diff_count": len(changes),
+        },
     }
 
 

@@ -191,7 +191,6 @@ class Engine:
                 for e in self._event_log
                 if e.trace_id == trace_id
             ]
-
         events.sort(key=lambda e: e.timestamp)
 
         # All registered probes are meaningful - infrastructure probes

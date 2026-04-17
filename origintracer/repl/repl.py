@@ -223,6 +223,9 @@ def render(result: dict) -> None:
         return
 
     data = result.get("data")
+    import pdb
+
+    pdb.set_trace()
 
     # Unwrap executor - executor returns {"metric": "...", "data": <payload>}
     # local_server wraps that in {"ok": True, "data": <executor_result>}
@@ -305,23 +308,6 @@ def render(result: dict) -> None:
             for e in gone:
                 print(c(f"      {e}", RED))
         print()
-        return
-
-    # HOTSPOT/generic tabular list
-    if verb == "HOTSPOT" or (
-        isinstance(data, list)
-        and data
-        and isinstance(data[0], dict)
-    ):
-        rows = (
-            data
-            if isinstance(data, list)
-            else (data or {}).get("data", [])
-        )
-        if not rows:
-            dim("No results.")
-            return
-        _render_table(rows)
         return
 
     # TRACE/critical path
@@ -452,6 +438,23 @@ def render(result: dict) -> None:
                     + c(suffix, DIM)
                 )
         print()
+        return
+
+    # HOTSPOT or events and nodes
+    if verb == "HOTSPOT" or (
+        isinstance(data, list)
+        and data
+        and isinstance(data[0], dict)
+    ):
+        rows = (
+            data
+            if isinstance(data, list)
+            else (data or {}).get("data", [])
+        )
+        if not rows:
+            dim("No results.")
+            return
+        _render_table(rows)
         return
 
     # SNAPSHOT result
@@ -945,7 +948,6 @@ def main():
         # DSL query - forwarded to the live engine
         t0 = time.perf_counter()
         result = query(sock_path, raw)
-        # print(f"DEBUG raw: {result}")  # add this temporarily
         elapsed = (time.perf_counter() - t0) * 1000
         render(result)
         if result.get("ok"):

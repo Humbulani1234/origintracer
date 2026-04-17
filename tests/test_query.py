@@ -494,5 +494,5 @@ class TestQueryExecutor:
         result = self._run("DIFF", engine)
         assert isinstance(result, dict)
         # Must have the structural keys even if empty
-        assert "new_edges" in result
-        assert "removed_edges" in result
+        assert "new_edges" in result["data"]
+        assert "removed_edges" in result["data"]
