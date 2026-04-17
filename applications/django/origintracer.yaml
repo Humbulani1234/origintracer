@@ -1,0 +1,41 @@
+# origintracer.yaml
+# OriginTracer configuration for the Django demo application.
+# Place this file in the project root (same directory as manage.py).
+
+probes:
+  - asyncio
+  - django
+
+rules:
+  - new_sync_call_after_deployment
+  - asyncio_event_loop_starvation
+  - n_plus_one_queries
+  - db_query_hotspot
+
+semantic:
+  - label: http
+    description: Full HTTP request lifecycle across all layers
+    services:
+      - nginx
+      - uvicorn
+      - gunicorn
+    node_patterns:
+      - ".*::request\\.entry"
+      - ".*::request\\.exit"
+
+  - label: django
+    description: Django application layer
+    services:
+      - django
+      - asyncio
+    node_patterns:
+      - "django::.*"
+      - "asyncio::.*"
+
+  - label: database
+    description: Database queries from Django ORM
+    services:
+      - postgres
+      - sqlite
+    node_patterns:
+      - ".*::db\\.query.*"

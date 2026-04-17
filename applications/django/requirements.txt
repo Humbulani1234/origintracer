@@ -1,0 +1,6 @@
+django>=5.0
+uvicorn[standard]
+gunicorn
+httptools
+asgiref
+stacktracer

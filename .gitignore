@@ -1,2 +1,57 @@
-stack-tracer.code-workspace
+origintracer.code-workspace
+origintracer.sublime-workspace
 /env
+repl/run_demo.sh
+repl/demo.tape
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+migrations/
+
+# Virtual environments
+env/
+env2/
+venv/
+.venv/
+saim/
+
+# Distribution/packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# OriginTracer specific
+*.db
+*.sqlite3
+
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+
+# vite cache
+.vite/
+.cache/
