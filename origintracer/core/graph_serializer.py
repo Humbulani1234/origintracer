@@ -12,7 +12,7 @@ from origintracer.core.runtime_graph import (
     RuntimeGraph,
 )
 
-logger = logging.getLogger("stacktracer.serializer")
+logger = logging.getLogger("origintracer.serializer")
 
 
 def graph_to_dict(graph: Any) -> Dict:
@@ -124,7 +124,7 @@ class GraphSerializer(ABC):
     Two backends are provided:
 
     ProtobufSerializer - Experimental
-        Uses the compiled origintracer_pb2 module generated from stacktracer.proto.
+        Uses the compiled origintracer_pb2 module generated from origintracer.proto.
         Requires: pip install protobuf grpcio-tools
         Compile first:
             python -m grpc_tools.protoc \\
@@ -318,9 +318,9 @@ class ProtobufSerializer(GraphSerializer):
     @staticmethod
     def _import_pb2():
         try:
-            from origintracer.core import stacktracer_pb2
+            from origintracer.core import origintracer_pb2
 
-            return stacktracer_pb2
+            return origintracer_pb2
         except ImportError:
             raise ImportError(
                 "origintracer_pb2 not found. Compile the protobuf schema first:\n"
