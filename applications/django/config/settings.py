@@ -1,5 +1,5 @@
 """
-Minimal Django settings for StackTracer demonstration.
+Minimal Django settings for OriginTracer demonstration.
 """
 
 import os

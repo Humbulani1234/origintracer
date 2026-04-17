@@ -97,7 +97,7 @@ semantic:
       - "nginx::.*"
   
   - label: http
-    description: HTTP layer — nginx and uvicorn
+    description: HTTP layer - nginx and uvicorn
     services:
       - nginx
       - uvicorn

@@ -1,5 +1,5 @@
 """
-Django + Celery settings for the StackTracer celery demo app.
+Django + Celery settings for the OriginTracer celery demo app.
 
 Run with gunicorn:
     gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker \

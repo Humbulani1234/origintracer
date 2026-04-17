@@ -13,11 +13,11 @@ class WorkerConfig(AppConfig):
         if os.environ.get("RUN_MAIN") == "false":
             return
 
-        # Bootstrap the native StackTracer engine
+        # Bootstrap the native OriginTracer engine
         self._bootstrap_native()
 
         # Optionally layer on OpenTelemetry instrumentation
-        if getattr(settings, "STACKTRACER_OTEL_MODE", False):
+        if getattr(settings, "ORIGINTRACER_OTEL_MODE", False):
             self._init_otel()
 
     def _bootstrap_native(self):

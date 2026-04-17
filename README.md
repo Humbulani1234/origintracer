@@ -229,15 +229,8 @@ pre-commit install
 
 See `docs/` for full architecture, probe internals, and contribution guidelines.
 
-## License
-
-- **Core engine** (graph, engine, emitter, auto-discovery, REPL, etc.): MIT
-- Advanced probes, rule libraries, and traced book chapters: Commercial (available on [origintracer.app](https://origintracer.app))
-
-The open core is designed for wide use and community contributions. High-value, battle-tested extensions (especially nginx eBPF depth and causal rules derived from the traced books) remain commercial to sustain development.
-
 ---
 
 **Made for engineers who want to move beyond "it's slow" to "here's exactly why - and how to fix it."**
 
-Questions or ideas? Open an issue or reach out via the site.
+Questions or ideas? reach out via the [site](https://origintracer.app)
