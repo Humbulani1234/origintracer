@@ -87,7 +87,6 @@ class Engine:
         """
         Called by the Uploader for every emitted probe event.
         """
-        # Update runtime graph - build edges between consecutive events in same trace
         with self._last_event_lock:
             entry = self._last_event_per_trace.get(
                 event.trace_id
@@ -124,7 +123,7 @@ class Engine:
             except Exception as exc:
                 logger.debug("Repository insert failed: %s", exc)
 
-        # Add events to graph
+        # Update runtime graph - build edges between consecutive events in same trace
         self.graph.add_from_event(event, parent_event=parent)
 
         # 3. Append to in-memory event log (bounded)
@@ -135,7 +134,7 @@ class Engine:
                     -self._event_log_max :
                 ]
 
-        # 4. Update Active Request Tracker (ADD THIS)
+        # 4. Update Active Request Tracker
         if self.tracker:
             self.tracker.event(
                 trace_id=event.trace_id, probe=event.probe
@@ -144,7 +143,9 @@ class Engine:
     def snapshot(
         self, label: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Capture and store a graph diff. Returns the diff summary."""
+        """
+        Capture and store a graph diff. Returns the diff summary.
+        """
         snap = self.graph.snapshot()
         diff = self.temporal.capture(snap, label=label)
         return diff.to_dict()
@@ -152,7 +153,6 @@ class Engine:
     def mark_deployment(self, label: str = "deployment") -> None:
         """
         Mark a deployment boundary in the temporal store.
-        Call this from your CD pipeline or deployment hook.
         """
         self.temporal.mark_event(label)
         logger.info("Deployment marker set: %s", label)
@@ -183,7 +183,6 @@ class Engine:
         Derive the critical path for a single trace_id from the event log.
         Returns all registered probe events in chronological order,
         annotated with inter-stage durations.
-        Uses ProbeTypes registry.
         """
         with self._event_log_lock:
             events = [
@@ -307,11 +306,11 @@ class Engine:
         """
         Remove trace_ids from _last_event_per_trace that have not received
         an event in _trace_ttl_s seconds (default 60s).
-        Why this matters: every unique trace_id that ever passes through
-        process() is inserted into this dict. Without eviction it grows
-        forever - one entry per request for the lifetime of the process.
-        Called from _snapshot_loop so it runs every snapshot_interval seconds
-        (default 15s), which is well within the 60s TTL threshold.
+        Every unique trace_id that ever passes through process() is inserted
+        into this dict. Without eviction it grows forever - one entry per request
+        for the lifetime of the process. Called from _snapshot_loop so it runs every
+        snapshot_interval seconds (default 15s), which is well within the 60s TTL
+        threshold.
         """
         now = time.monotonic()
         cutoff = now - self._trace_ttl_s

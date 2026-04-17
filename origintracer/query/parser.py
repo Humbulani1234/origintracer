@@ -362,7 +362,7 @@ def _show_latency(
 def _show_events(engine: Any, filters: Dict, limit: int) -> Dict:
     """
     Query historical events. Falls back to in-memory event log if
-    no repository is attached (which is the common dev-mode case).
+    no repository is attached.
     """
     events = getattr(engine, "_event_log", [])
 
@@ -413,7 +413,6 @@ def _show_graph(engine: Any, node_scope: Optional[set]) -> Dict:
         nodes = [n for n in nodes if n.id in node_scope]
 
         # EDGE FILTER: Only show connections between nodes inside this system
-        # This keeps the graph from looking like "spaghetti"
         edges = [
             e
             for e in edges
@@ -537,7 +536,9 @@ def _show_rules(engine: Any) -> Dict:
 
 
 def _show_semantic(engine: Any) -> Dict:
-    """List all semantic labels with descriptions."""
+    """
+    List all semantic labels with descriptions.
+    """
     semantic = getattr(engine, "semantic", None)
     if semantic is None:
         return {"metric": "semantic", "data": []}
@@ -545,7 +546,7 @@ def _show_semantic(engine: Any) -> Dict:
     labels = []
     for label in semantic.all_labels():
         desc = ""
-        # SemanticLayer may store descriptions — try common attribute patterns
+        # SemanticLayer may store descriptions - try common attribute patterns
         defn = getattr(semantic, "_definitions", {}).get(
             label
         ) or getattr(semantic, "_labels", {}).get(label)
@@ -577,7 +578,6 @@ def _exec_trace(query: ParsedQuery, engine: Any) -> Dict:
 def _exec_blame(query: ParsedQuery, engine: Any) -> Dict:
     """
     For a given system label, find upstream callers.
-    Useful for: "who is hammering the database?"
     """
     label = query.filters.get("system")
     if not label:
@@ -624,7 +624,7 @@ def _exec_hotspot(query: ParsedQuery, engine: Any) -> Dict:
             "data": engine.hotspots(top_n=top_n),
         }
 
-    # Fallback - ssort all_nodes() by call_count directly
+    # Fallback - sort all_nodes() by call_count directly
     nodes = sorted(
         engine.graph.all_nodes(),
         key=lambda n: n.call_count,
@@ -742,5 +742,5 @@ def _edge_dict(e) -> Dict:
         "target": e.target,
         "type": e.edge_type,
         "call_count": e.call_count,
-        "weight": e.call_count,  # alias for REPL table renderer
+        "weight": e.call_count,
     }

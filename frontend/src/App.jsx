@@ -98,7 +98,7 @@ export default function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="logo">STACK<span>TRACER</span></div>
+        <div className="logo">ORIGIN<span>TRACER</span></div>
         <nav className="nav">
           {VIEWS.map(v => (
             <div key={v}

@@ -1,36 +1,3 @@
-"""
-Unix domain socket server that the OriginTracer REPL connects to.
-
-OriginTracer starts this server at init() time.
-The REPL (running in a separate terminal) connects to the socket and
-sends query strings. The server evaluates them against the live engine
-and returns JSON responses.
-
-Socket path: /tmp/stacktracer-{pid}.sock
-    pid = worker process pid, so each worker has its own socket.
-    The REPL discovers the socket by listing /tmp/stacktracer-*.sock.
-
-Protocol: newline-delimited JSON.
-    Request: {"query": "SHOW nodes", "id": "1"}\\n
-    Response: {"id": "1", "ok": true, "data": [...]}\\n
-              {"id": "1", "ok": false, "error": "..."}\\n
-
-Supported query types:
-    SHOW nodes - all graph nodes
-    SHOW edges - all graph edges
-    SHOW graph - nodes + edges together
-    SHOW trace <trace_id> - all events for a trace
-    SHOW status - engine health/stats
-    BLAME WHERE service = "django" - causal blame query
-
-REPL usage:
-    # In a separate terminal
-    python -m origintracer.repl
-
-    The REPL auto-discovers the socket, connects, and presents
-    an interactive prompt where you can type queries.
-"""
-
 from __future__ import annotations
 
 import json
@@ -74,11 +41,36 @@ def discover_sockets() -> list[str]:
 
 class LocalQueryServer:
     """
-    Unix socket server - one per worker process.
+    Unix domain socket server that the OriginTracer REPL connects to.
 
-    Starts a daemon thread that accepts connections from the REPL.
-    Each connection receives one JSON query, returns one JSON response,
-    then closes.
+    OriginTracer starts this server at init() time.
+    The REPL (running in a separate terminal) connects to the socket and
+    sends query strings. The server evaluates them against the live engine
+    and returns JSON responses.
+
+    Socket path: /tmp/stacktracer-{pid}.sock
+        pid = worker process pid, so each worker has its own socket.
+        The REPL discovers the socket by listing /tmp/stacktracer-*.sock.
+
+    Protocol: newline-delimited JSON.
+        Request: {"query": "SHOW nodes", "id": "1"}\\n
+        Response: {"id": "1", "ok": true, "data": [...]}\\n
+                  {"id": "1", "ok": false, "error": "..."}\\n
+
+    Supported query types:
+        SHOW nodes - all graph nodes
+        SHOW edges - all graph edges
+        SHOW graph - nodes + edges together
+        SHOW trace <trace_id> - all events for a trace
+        SHOW status - engine health/stats
+        BLAME WHERE service = "django" - causal blame query
+
+    REPL usage:
+        # In a separate terminal
+        python -m origintracer.repl
+
+        The REPL auto-discovers the socket, connects, and presents
+        an interactive prompt where you can type queries.
     """
 
     def __init__(self, engine: Any) -> None:

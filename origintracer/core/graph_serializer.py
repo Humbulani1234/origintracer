@@ -123,26 +123,25 @@ class GraphSerializer(ABC):
 
     Two backends are provided:
 
-    ProtobufSerializer
-        Uses the compiled stacktracer_pb2 module generated from stacktracer.proto.
+    ProtobufSerializer - Experimental
+        Uses the compiled origintracer_pb2 module generated from stacktracer.proto.
         Requires: pip install protobuf grpcio-tools
         Compile first:
             python -m grpc_tools.protoc \\
-                -I stacktracer/core \\
-                --python_out=stacktracer/core \\
-                stacktracer/core/stacktracer.proto
+                -I origintracer/core \\
+                --python_out=origintracer/core \\
+                origintracer/core/origintracer.proto
 
         Smaller output, strictly typed, good for network transport.
-        Typical sizes: 5000-node graph ≈ 800KB protobuf vs 6MB JSON.
 
     MsgpackSerializer
-        Uses MessagePack — no schema, no compilation step needed.
+        Uses MessagePack.
         Requires: pip install msgpack
         Simpler to set up, slightly larger than protobuf, still 3-5x smaller than JSON.
         Good first choice for local persistence before adding the protobuf compile step.
 
     Usage:
-        from stacktracer.core.graph_serializer import MsgpackSerializer
+        from origintracer.core.graph_serializer import MsgpackSerializer
 
         serializer = MsgpackSerializer()
 
@@ -155,7 +154,7 @@ class GraphSerializer(ABC):
             restored_graph = serializer.deserialize(f.read())
 
         # Or use protobuf
-        from stacktracer.core.graph_serializer import ProtobufSerializer
+        from origintracer.core.graph_serializer import ProtobufSerializer
         serializer = ProtobufSerializer()
         data = serializer.serialize(graph) # bytes
         graph2 = serializer.deserialize(data) # RuntimeGraph
@@ -230,6 +229,7 @@ class MsgpackSerializer(GraphSerializer):
 
 class ProtobufSerializer(GraphSerializer):
     """
+    Experimental.
     Serialize RuntimeGraph using Protocol Buffers.
 
     Requires:
@@ -323,20 +323,18 @@ class ProtobufSerializer(GraphSerializer):
             return stacktracer_pb2
         except ImportError:
             raise ImportError(
-                "stacktracer_pb2 not found. Compile the protobuf schema first:\n"
+                "origintracer_pb2 not found. Compile the protobuf schema first:\n"
                 "  pip install grpcio-tools\n"
                 "  python -m grpc_tools.protoc \\\n"
-                "      -I stacktracer/core \\\n"
-                "      --python_out=stacktracer/core \\\n"
-                "      stacktracer/core/stacktracer.proto"
+                "      -I origintracer/core \\\n"
+                "      --python_out=origintracer/core \\\n"
+                "      origintracer/core/origintracer.proto"
             )
 
 
 class JSONSerializer(GraphSerializer):
     """
-    Serialize to JSON. Largest output, human readable.
-    Use for debugging and development only.
-    Not recommended for production — 5-10x larger than protobuf.
+    Serialize to JSON. Use for debugging and development only.
     """
 
     def __init__(self, indent: int = None) -> None:

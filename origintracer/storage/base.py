@@ -95,35 +95,35 @@ class BaseRepository(ABC):
 
 _PG_CREATE_EVENTS = """
 CREATE TABLE IF NOT EXISTS st_events (
-    id              BIGSERIAL PRIMARY KEY,
-    customer_id     TEXT         NOT NULL DEFAULT 'default',
-    trace_id        TEXT         NOT NULL,
-    span_id         TEXT,
-    parent_span_id  TEXT,
-    probe           TEXT         NOT NULL,
-    service         TEXT         NOT NULL,
-    name            TEXT         NOT NULL,
-    wall_time       DOUBLE PRECISION NOT NULL,
-    duration_ns     BIGINT,
-    pid             INT,
-    tid             INT,
-    metadata        JSONB
+    id BIGSERIAL PRIMARY KEY,
+    customer_id TEXT NOT NULL DEFAULT 'default',
+    trace_id TEXT NOT NULL,
+    span_id TEXT,
+    parent_span_id TEXT,
+    probe TEXT NOT NULL,
+    service TEXT NOT NULL,
+    name TEXT NOT NULL,
+    wall_time DOUBLE PRECISION NOT NULL,
+    duration_ns BIGINT,
+    pid INT,
+    tid INT,
+    metadata JSONB
 );
-CREATE INDEX IF NOT EXISTS idx_st_events_trace    ON st_events (trace_id);
+CREATE INDEX IF NOT EXISTS idx_st_events_trace ON st_events (trace_id);
 CREATE INDEX IF NOT EXISTS idx_st_events_customer ON st_events (customer_id, wall_time DESC);
-CREATE INDEX IF NOT EXISTS idx_st_events_service  ON st_events (service);
-CREATE INDEX IF NOT EXISTS idx_st_events_probe    ON st_events (probe);
+CREATE INDEX IF NOT EXISTS idx_st_events_service ON st_events (service);
+CREATE INDEX IF NOT EXISTS idx_st_events_probe ON st_events (probe);
 """
 
 _PG_CREATE_SNAPSHOTS = """
 CREATE TABLE IF NOT EXISTS st_snapshots (
-    id              BIGSERIAL PRIMARY KEY,
-    customer_id     TEXT             NOT NULL,
-    received_at     DOUBLE PRECISION NOT NULL,
-    content_type    TEXT             NOT NULL DEFAULT 'application/msgpack',
-    node_count      INT,
-    edge_count      INT,
-    data            BYTEA            NOT NULL
+    id BIGSERIAL PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    received_at DOUBLE PRECISION NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'application/msgpack',
+    node_count INT,
+    edge_count INT,
+    data BYTEA NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_st_snapshots_customer
     ON st_snapshots (customer_id, received_at DESC);
@@ -131,10 +131,10 @@ CREATE INDEX IF NOT EXISTS idx_st_snapshots_customer
 
 _PG_CREATE_MARKERS = """
 CREATE TABLE IF NOT EXISTS st_markers (
-    id              BIGSERIAL PRIMARY KEY,
-    customer_id     TEXT             NOT NULL,
-    label           TEXT             NOT NULL,
-    created_at      DOUBLE PRECISION NOT NULL
+    id BIGSERIAL PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_st_markers_customer
     ON st_markers (customer_id, created_at DESC);
@@ -143,14 +143,14 @@ CREATE INDEX IF NOT EXISTS idx_st_markers_customer
 
 _PG_CREATE_GRAPH_DIFFS = """
 CREATE TABLE graph_diffs (
-    id              SERIAL PRIMARY KEY,
-    customer_id     VARCHAR(100) NOT NULL,
-    snapshot_time   TIMESTAMPTZ  DEFAULT NOW(),
-    added_nodes     JSONB,
-    removed_nodes   JSONB,
-    added_edges     JSONB,
-    removed_edges   JSONB,
-    label           VARCHAR(200)   -- populated when a deployment marker exists
+    id SERIAL PRIMARY KEY,
+    customer_id VARCHAR(100) NOT NULL,
+    snapshot_time TIMESTAMPTZ DEFAULT NOW(),
+    added_nodes JSONB,
+    removed_nodes JSONB,
+    added_edges JSONB,
+    removed_edges JSONB,
+    label VARCHAR(200) -- populated when a deployment marker exists
 );
 """
 
@@ -158,9 +158,6 @@ CREATE TABLE graph_diffs (
 class PGEventRepository(BaseRepository):
     """
     PostgreSQL-backed store.
-    Uses psycopg2 with a plain connection for MVP.
-    For production: replace with psycopg2.pool.ThreadedConnectionPool
-    or asyncpg for async FastAPI handlers.
     """
 
     def __init__(self, conn: Any) -> None:
@@ -392,19 +389,19 @@ class PGEventRepository(BaseRepository):
 
 _CH_EVENTS_DDL = """
 CREATE TABLE IF NOT EXISTS st_probe_events (
-    customer_id     String       DEFAULT 'default',
-    trace_id        String,
-    span_id         String       DEFAULT '',
-    parent_span_id  String       DEFAULT '',
-    probe           String,
-    service         String,
-    name            String,
-    wall_time       DateTime64(3),
-    duration_ns     Nullable(Int64),
-    pid             Nullable(Int32),
-    tid             Nullable(Int32),
-    metadata        String       DEFAULT '{}',
-    date            Date         DEFAULT toDate(wall_time)
+    customer_id String DEFAULT 'default',
+    trace_id String,
+    span_id String DEFAULT '',
+    parent_span_id String DEFAULT '',
+    probe String,
+    service String,
+    name String,
+    wall_time DateTime64(3),
+    duration_ns Nullable(Int64),
+    pid Nullable(Int32),
+    tid Nullable(Int32),
+    metadata String DEFAULT '{}',
+    date Date DEFAULT toDate(wall_time)
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(date)
@@ -421,9 +418,9 @@ AS
 SELECT
     customer_id,
     trace_id,
-    minState(wall_time)    AS min_wall_time,
-    maxState(wall_time)    AS max_wall_time,
-    countState()           AS event_count,
+    minState(wall_time) AS min_wall_time,
+    maxState(wall_time) AS max_wall_time,
+    countState() AS event_count,
     groupArrayState(probe) AS probes
 FROM st_probe_events
 GROUP BY customer_id, trace_id
@@ -433,12 +430,12 @@ GROUP BY customer_id, trace_id
 # in a String column.
 _CH_SNAPSHOTS_DDL = """
 CREATE TABLE IF NOT EXISTS st_snapshots (
-    customer_id     String,
-    received_at     Float64,
-    content_type    String  DEFAULT 'application/msgpack',
-    node_count      Int32   DEFAULT 0,
-    edge_count      Int32   DEFAULT 0,
-    data_b64        String
+    customer_id String,
+    received_at Float64,
+    content_type String DEFAULT 'application/msgpack',
+    node_count Int32 DEFAULT 0,
+    edge_count Int32 DEFAULT 0,
+    data_b64 String
 )
 ENGINE = ReplacingMergeTree(received_at)
 ORDER BY (customer_id, received_at)
@@ -446,9 +443,9 @@ ORDER BY (customer_id, received_at)
 
 _CH_MARKERS_DDL = """
 CREATE TABLE IF NOT EXISTS st_markers (
-    customer_id     String,
-    label           String,
-    created_at      Float64
+    customer_id String,
+    label String,
+    created_at Float64
 )
 ENGINE = MergeTree()
 ORDER BY (customer_id, created_at)
@@ -457,13 +454,13 @@ ORDER BY (customer_id, created_at)
 
 _CH_GRAPH_DIFFS_DDL = """
 CREATE TABLE IF NOT EXISTS graph_diffs (
-    customer_id    String,
-    snapshot_time  DateTime64(3) DEFAULT now(),
-    added_nodes    String,   -- JSON array
-    removed_nodes  String,
-    added_edges    String,
-    removed_edges  String,
-    label          Nullable(String)
+    customer_id String,
+    snapshot_time DateTime64(3) DEFAULT now(),
+    added_nodes String, -- JSON array
+    removed_nodes String,
+    added_edges String,
+    removed_edges String,
+    label Nullable(String)
 ) ENGINE = MergeTree()
 ORDER BY (customer_id, snapshot_time);
 """
@@ -588,10 +585,10 @@ class ClickHouseRepository(BaseRepository):
         sql = f"""
             SELECT trace_id, span_id, probe, service, name,
                    wall_time, duration_ns, metadata
-            FROM   st_probe_events
-            WHERE  {' AND '.join(conditions)}
-            ORDER  BY wall_time DESC
-            LIMIT  %(limit)s
+            FROM st_probe_events
+            WHERE {' AND '.join(conditions)}
+            ORDER BY wall_time DESC
+            LIMIT %(limit)s
         """
         try:
             rows = self._client.execute(sql, params)
@@ -611,8 +608,6 @@ class ClickHouseRepository(BaseRepository):
                 "ClickHouse query_events failed: %s", exc
             )
             return []
-
-    # ── Snapshots ────────────────────────────────────────────────────────
 
     def insert_snapshot(
         self,
@@ -721,7 +716,6 @@ class InMemoryRepository(BaseRepository):
     """
     Refactored In-Memory store using collections for performance.
     - Uses deque(maxlen=X) to automatically rotate old data out.
-    - Uses defaultdict to eliminate boilerplate key-initialization.
     """
 
     def __init__(

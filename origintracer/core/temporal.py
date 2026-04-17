@@ -150,7 +150,9 @@ class TemporalStore:
             ]
 
     def new_edges_since(self, since: float) -> Set[str]:
-        """Which edges appeared after a given timestamp? (Deployment analysis)"""
+        """
+        Which edges appeared after a given timestamp
+        """
         result: Set[str] = set()
         for diff in self.changes_since(since):
             result |= diff.added_edge_keys
