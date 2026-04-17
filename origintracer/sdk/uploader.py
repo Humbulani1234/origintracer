@@ -81,12 +81,12 @@ def _serialize_graph(graph: Any) -> tuple:
 
 class Uploader:
     """
-    Ships probe events and graph snapshots to the StackTracer backend.
+    Ships probe events and graph snapshots to the OriginTracer backend.
 
     Implements the BaseRepository insert_event() interface so Engine.process()
     can call it as a repository without knowing about HTTP transport.
 
-    Usage in stacktracer/__init__.py:
+    Usage in origintracer/__init__.py:
         uploader = Uploader(endpoint=..., api_key=...)
         uploader.start()
         uploader.bind_engine(engine) # must be called after start()

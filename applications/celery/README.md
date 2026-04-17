@@ -12,7 +12,7 @@ applications/celery/
 ├── config/
 │   ├── __init__.py << exports celery_app
 │   ├── settings.py << TracerMiddleware MUST be first in MIDDLEWARE
-│   ├── celery.py << Celery app - nO stacktracer.init() here
+│   ├── celery.py << Celery app - no origintracer.init() here
 │   ├── asgi.py
 │   └── urls.py
 ├── worker/ << Django app directory (not a celery module)
@@ -25,7 +25,7 @@ applications/celery/
 │   ├── __init__.py
 │   ├── celery_probe.py << CeleryProbe - handles fork + task lifecycle
 │   └── redis_probe.py << TracedRedis subclass
-├── stacktracer.yaml
+├── origintracer.yaml
 └── gunicorn.conf.py
 ```
 ---
@@ -115,8 +115,8 @@ class WorkerConfig(AppConfig):
     name = "worker"
 
     def ready(self):
-        import stacktracer
-        stacktracer.init(debug=True)
+        import origintracer
+        origintracer.init(debug=True)
         # Celery worker gets its own init() inside celery_probe._on_worker_fork
 ```
 

@@ -3,4 +3,4 @@ uvicorn[standard]
 gunicorn
 httptools
 asgiref
-stacktracer
+origintracer

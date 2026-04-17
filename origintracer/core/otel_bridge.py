@@ -12,15 +12,15 @@ What is lost when using OTel mode:
     - kernel-level timing (kprobe on accept4, epoll_wait)
     - gunicorn worker lifecycle events
     - nginx correlation
-    OTel does not go that deep. These are StackTracer-only observations.
+    OTel does not go that deep. These are OriginTracer-only observations.
     OTel mode gives you the graph and causal rules. Native probe mode
     gives you the graph + kernel internals + asyncio internals.
 
 Architecture:
     OTel SDK (in Django)
-        >> StackTracerSpanExporter (this file)
-        >> span_to_event() converts OTel Span → NormalizedEvent
-        >> engine.process(event) feeds the StackTracer graph
+        >> OriginTracerSpanExporter (this file)
+        >> span_to_event() converts OTel Span >> NormalizedEvent
+        >> engine.process(event) feeds the OriginTracer graph
 
     The engine, graph, causal rules, REPL, and React UI are unchanged.
     Only the event source changes from native probes to OTel spans.
@@ -37,21 +37,21 @@ Usage - Django:
     from opentelemetry.instrumentation.django import DjangoInstrumentor
     from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
     from opentelemetry.instrumentation.redis import RedisInstrumentor
-    from stacktracer.bridge.otel_bridge import StackTracerSpanExporter
+    from origintracer.bridge.otel_bridge import OriginTracerSpanExporter
 
     class MyAppConfig(AppConfig):
         name = "myapp"
 
         def ready(self):
-            import stacktracer
+            import origintracer
 
-            # init StackTracer in OTel mode — skips probe startup
-            stacktracer.init(otel_mode=True)
+            # init OriginTracer in OTel mode - skips probe startup
+            origintracer.init(otel_mode=True)
 
-            # set up OTel with StackTracer as the exporter
+            # set up OTel with OriginTracer as the exporter
             provider = TracerProvider()
             provider.add_span_processor(
-                BatchSpanProcessor(StackTracerSpanExporter())
+                BatchSpanProcessor(OriginTracerSpanExporter())
             )
             trace.set_tracer_provider(provider)
 
@@ -61,7 +61,7 @@ Usage - Django:
             RedisInstrumentor().instrument()
 
     This is the complete integration. OTel instruments your code,
-    spans flow to StackTracerSpanExporter, StackTracer builds the
+    spans flow to OriginTracerSpanExporter, OriginTracer builds the
     causal graph, REPL and React UI work as normal.
 
 OTel span >> NormalizedEvent mapping:
@@ -99,7 +99,7 @@ _SPAN_KIND_TO_PROBE = {
     4: "otel.consumer",  # CONSUMER - message queue consume
 }
 
-# OTel semantic convention attributes >> StackTracer service names
+# OTel semantic convention attributes >> OriginTracer service names
 _SERVICE_HINTS = {
     "db.system": lambda v: v,  # "postgresql", "redis", etc.
     "http.scheme": lambda v: "http",
@@ -180,7 +180,7 @@ def span_to_event(span: "ReadableSpan") -> Optional[object]:
         )
     except ImportError:
         logger.error(
-            "stacktracer not installed - cannot convert OTel span"
+            "origintracer not installed - cannot convert OTel span"
         )
         return None
 
@@ -247,7 +247,7 @@ def span_to_event(span: "ReadableSpan") -> Optional[object]:
 
 class OriginTracerSpanExporter:
     """
-    OpenTelemetry SpanExporter that feeds spans into StackTracer's engine.
+    OpenTelemetry SpanExporter that feeds spans into OriginTracer's engine.
 
     Install as a span processor in your OTel setup:
 
@@ -293,14 +293,14 @@ class OriginTracerSpanExporter:
                 )
 
         logger.debug(
-            "OTel bridge: exported %d/%d spans to StackTracer engine",
+            "OTel bridge: exported %d/%d spans to OriginTracer engine",
             converted,
             len(spans),
         )
         return SpanExportResult.SUCCESS
 
     def shutdown(self) -> None:
-        """Called by OTel SDK on process exit. Nothing to do — engine shutdown is handled by stacktracer.shutdown()."""
+        """Called by OTel SDK on process exit. Nothing to do - engine shutdown is handled by origintracer.shutdown()."""
         pass
 
     def force_flush(self, timeout_millis: int = 30_000) -> bool:

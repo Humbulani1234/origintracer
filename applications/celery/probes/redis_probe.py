@@ -60,7 +60,7 @@ from origintracer.core.event_schema import (
 from origintracer.sdk.base_probe import BaseProbe
 from origintracer.sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.redis")
+logger = logging.getLogger("origintracer.probes.redis")
 
 ProbeTypes.register_many(
     {

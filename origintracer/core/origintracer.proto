@@ -3,9 +3,9 @@
 // Compile with:
 //   pip install grpcio-tools
 //   python -m grpc_tools.protoc \
-//       -I stacktracer/core \
-//       --python_out=stacktracer/core \
-//       stacktracer/core/stacktracer.proto
+//       -I origintracer/core \
+//       --python_out=origintracer/core \
+//       origintracer/core/origintracer.proto
 //
 // This generates origintracer_pb2.py in the same directory.
 // Import: from origintracer.core import origintracer_pb2
@@ -96,7 +96,7 @@ message SerializedEvent {
 
 //--------- Full snapshot (graph + recent events) ------------
 
-message StackTracerSnapshot {
+message OriginTracerSnapshot {
   SerializedGraph graph = 1;
   repeated SerializedGraphDiff diffs = 2;
   repeated SerializedEvent events = 3; // recent event log (bounded)

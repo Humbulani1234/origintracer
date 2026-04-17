@@ -640,10 +640,10 @@ class TestGunicornTopologyEndToEnd:
 class TestConfigMergePipeline:
     """
     ResolvedConfig is built from three sources:
-        defaults.yaml < user stacktracer.yaml < init() kwargs
+        defaults.yaml < user origintracer.yaml < init() kwargs
 
     These tests verify the merge semantics without calling the full
-    stacktracer.init() (which starts threads and needs a live app).
+    origintracer.init() (which starts threads and needs a live app).
     """
 
     def _merge(

@@ -158,7 +158,7 @@ from ..core.kprobe_bridge import get_bridge
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
 
-logger = logging.getLogger("stacktracer.probes.asyncio")
+logger = logging.getLogger("origintracer.probes.asyncio")
 
 # Register probe types
 ProbeTypes.register_many(

@@ -1,4 +1,4 @@
 celery[redis]>=5.3
 redis
 django>=5.0
-stacktracer
+origintracer
