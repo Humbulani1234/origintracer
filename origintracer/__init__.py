@@ -827,7 +827,6 @@ def mark_deployment(label: str = "deployment") -> None:
         logger.warning("mark_deployment called before init()")
 
 
-__version__ = "0.1.0"
 __all__ = [
     "init",
     "shutdown",

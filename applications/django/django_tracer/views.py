@@ -27,7 +27,7 @@ class IndexView(View):
         return JsonResponse(
             {
                 "view": "index",
-                "message": "StackTracer Django demo",
+                "message": "OriginTracer Django demo",
                 "probe": "try /async/, /slow/, /db/ for more interesting traces",
             }
         )
@@ -63,7 +63,7 @@ class AsyncView(View):
                 "view": "async",
                 "result_a": result_a,
                 "result_b": result_b,
-                "note": "Two tasks ran concurrently. Check asyncio.loop.tick avg_duration_ns — should be < 1ms.",
+                "note": "Two tasks ran concurrently. Check asyncio.loop.tick avg_duration_ns - should be < 1ms.",
             }
         )
 
@@ -95,7 +95,7 @@ class SlowView(View):
                 "note": (
                     "time.sleep() blocked the event loop. "
                     "Run CAUSAL in the OriginTracer REPL to detect it. "
-                    "asyncio.loop.tick avg_duration_ns will be >> 10ms."
+                    "asyncio.loop.tick avg_duration_ns will be: 10ms."
                 ),
             }
         )
@@ -131,7 +131,7 @@ class DbView(View):
                 "note": (
                     "ORM query ran via sync_to_async. "
                     "Check db.query.start and db.query.end in the REPL. "
-                    "Run: SHOW latency WHERE system = 'database'"
+                    "Run: SHOW latency"
                 ),
             }
         )
@@ -141,7 +141,7 @@ class NPlusOneView(View):
     """
     Simulates the N+1 query problem.
 
-    The bug: fetch all authors, then for each author fire a separate
+    The issue: fetch all authors, then for each author fire a separate
     query to get their books. 10 authors = 11 queries (1 + 10).
 
     The fix: use select_related() or prefetch_related() to fetch everything
@@ -170,8 +170,7 @@ class NPlusOneView(View):
     """
 
     def get(self, request):
-        # adjust to your app
-        # Query 1 — fetch all authors
+        # Query 1 - fetch all authors
         from django_tracer.models import (
             Author,
         )
@@ -181,8 +180,8 @@ class NPlusOneView(View):
 
         results = []
         for author in authors:
-            # Query 2..N — one per author, fetching their books separately
-            # This is the bug. Django does NOT batch these automatically.
+            # Query 2..N - one per author, fetching their books separately
+            # This is the issue. Django does not batch these automatically.
             books = list(author.book_set.all())
             results.append(
                 {

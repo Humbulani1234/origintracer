@@ -2,8 +2,6 @@
 #
 # Built-in probes (from origintracer.probes.*):
 #   django - TracerMiddleware + View.dispatch + ORM execute_wrapper
-#   gunicorn - on_starting/post_fork/worker_exit hooks
-#   uvicorn - request.receive/response.send events
 #   celery - task_prerun/task_postrun worker_process_init signals
 #
 # Custom rules are auto-discovered from:
@@ -46,7 +44,7 @@ semantic:
       - "celery::.*"
 
   - label: worker
-    description: Full worker layer — celery tasks and any DB they touch
+    description: Full worker layer - celery tasks and any DB they touch
     services:
       - celery
       - sqlite

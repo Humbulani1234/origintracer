@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-StackTracer REPL - connects to a running agent via Unix socket.
+OriginTracer REPL - connects to a running agent via Unix socket.
 
 Run from any terminal while gunicorn is running:
-    python repl.py
+    python -m origintracer.replrepl
 
-The REPL auto-discovers /tmp/stacktracer-{pid}.sock and connects.
+The REPL auto-discovers /tmp/origintracer-{pid}.sock and connects.
 All queries run against the live engine in the worker process.
 
 Protocol: JSON over Unix domain socket.
@@ -20,7 +20,7 @@ DSL queries:
     SHOW events WHERE probe = "db.query.start" LIMIT 20
     HOTSPOT TOP 10
     CAUSAL
-    CAUSAL WHERE tags = "blocking,celery"
+    CAUSAL WHERE tags = "blocking, worker"
     BLAME WHERE system = "export"
     DIFF SINCE deployment
     TRACE <trace_id>
@@ -86,7 +86,7 @@ def dim(text):
 
 
 # Unix socket client
-_SOCKET_PREFIX = "/tmp/stacktracer-"
+_SOCKET_PREFIX = "/tmp/origintracer-"
 _SOCKET_SUFFIX = ".sock"
 
 
@@ -103,11 +103,22 @@ def discover_sockets() -> list[str]:
             os.kill(int(pid), 0)
             live.append(path)
         except (ProcessLookupError, ValueError):
-            # Process is dead — remove the stale socket
+            # Process is dead - remove the stale socket
             try:
                 os.unlink(path)
             except OSError:
                 pass
+        except PermissionError:
+            # Process is alive but owned by a privileged user (e.g. gunicorn run with sudo for eBPF access)
+            # The REPL must also be run with elevated privileges to connect to it.
+            print(
+                f"[origintracer] Found socket {path} but cannot access it - "
+                "gunicorn appears to be running with elevated privileges (sudo) "
+                "likely for eBPF access.\n"
+                "Please restart the REPL with sudo:\n\n"
+                "    sudo python -m origintracer.repl.repl\n"
+            )
+            sys.exit(1)
     return live
 
 
@@ -212,6 +223,9 @@ def render(result: dict) -> None:
         return
 
     data = result.get("data")
+    import pdb
+
+    pdb.set_trace()
 
     # Unwrap executor - executor returns {"metric": "...", "data": <payload>}
     # local_server wraps that in {"ok": True, "data": <executor_result>}
@@ -294,23 +308,6 @@ def render(result: dict) -> None:
             for e in gone:
                 print(c(f"      {e}", RED))
         print()
-        return
-
-    # HOTSPOT/generic tabular list
-    if verb == "HOTSPOT" or (
-        isinstance(data, list)
-        and data
-        and isinstance(data[0], dict)
-    ):
-        rows = (
-            data
-            if isinstance(data, list)
-            else (data or {}).get("data", [])
-        )
-        if not rows:
-            dim("No results.")
-            return
-        _render_table(rows)
         return
 
     # TRACE/critical path
@@ -441,6 +438,23 @@ def render(result: dict) -> None:
                     + c(suffix, DIM)
                 )
         print()
+        return
+
+    # HOTSPOT or events and nodes
+    if verb == "HOTSPOT" or (
+        isinstance(data, list)
+        and data
+        and isinstance(data[0], dict)
+    ):
+        rows = (
+            data
+            if isinstance(data, list)
+            else (data or {}).get("data", [])
+        )
+        if not rows:
+            dim("No results.")
+            return
+        _render_table(rows)
         return
 
     # SNAPSHOT result
@@ -717,7 +731,7 @@ def cmd_stitch(trace_id: str) -> None:
     Query every live worker socket for the same trace_id and print
     a unified timeline across all processes, ordered by timestamp.
 
-    This is the cross-process story: one HTTP request, one Celery task,
+    This is the cross-process flow: one HTTP request, one Celery task,
     two processes, one trace. The trace_id is the thread connecting them.
 
     Usage:
@@ -755,7 +769,7 @@ def cmd_stitch(trace_id: str) -> None:
                 all_stages.extend(stages)
                 found_in.append(pid)
         except Exception:
-            pass  # worker may have restarted — skip silently
+            pass  # worker may have restarted - skip silently
 
     if not all_stages:
         dim(f"  Trace {trace_id[:16]}… not found in any worker.")
@@ -830,7 +844,7 @@ def cmd_stitch(trace_id: str) -> None:
 
 # -------------------- Main loop ------------------------------
 
-HISTORY_FILE = os.path.expanduser("~/.stacktracer_history")
+HISTORY_FILE = os.path.expanduser("~/.origintracer_history")
 
 
 def main():
@@ -856,13 +870,24 @@ def main():
     # Quick health check on connect
     status = query(sock_path, "SHOW STATUS")
     if status.get("ok"):
-        d = status["data"]
+        d = status["data"]["data"]
+        print()
+        ok("  Engine Status")
         dim(
-            f"  graph: {d.get('graph_nodes', '?')} nodes  ·  "
-            f"{d.get('graph_edges', '?')} edges  ·  "
-            f"pid={d.get('pid', '?')}"
+            f"  pid={d.get('pid', '?')} · socket={d.get('socket', '?')}  ·  uptime={d.get('uptime', '?')}"
         )
-    print()
+        print()
+        dim(
+            f"  Graph      {d.get('graph_nodes', '?')} nodes  ·  {d.get('graph_edges', '?')} edges  ·  {d.get('semantic_labels', '?')} semantic labels"
+        )
+        dim(
+            f"  Probes     {d.get('probes_active', '?')} active / {d.get('probes_total', '?')} total"
+        )
+        dim(
+            f"  Requests   {d.get('active_requests', '?')} active"
+        )
+        dim(f"  Events     {d.get('event_log_size', '?')} total")
+        print()
 
     while True:
         try:
@@ -923,7 +948,6 @@ def main():
         # DSL query - forwarded to the live engine
         t0 = time.perf_counter()
         result = query(sock_path, raw)
-        # print(f"DEBUG raw: {result}")  # add this temporarily
         elapsed = (time.perf_counter() - t0) * 1000
         render(result)
         if result.get("ok"):
