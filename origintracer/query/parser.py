@@ -170,11 +170,9 @@ def _parse_where_limit(
 
         if tok == "WHERE":
             i += 1
-            # Process conditions until we hit LIMIT or end of tokens
             while (
                 i < len(tokens) and tokens[i].upper() != "LIMIT"
             ):
-                # Skip "AND" tokens between conditions
                 if tokens[i].upper() == "AND":
                     i += 1
                     continue
@@ -196,7 +194,6 @@ def _parse_where_limit(
                         else:
                             val = float(val)
                     except ValueError:
-                        # Strip quotes if it's a string literal like '"service"'
                         val = val.strip("'\"")
 
                     filters[key] = val
@@ -222,7 +219,6 @@ def _parse_where_limit(
                 )
 
         else:
-            # Ignore other parts of the query (like 'SHOW', 'GRAPH')
             i += 1
 
     return filters, limit
@@ -251,7 +247,13 @@ def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
         return {"error": str(exc), "query": query.raw}
 
 
-KNOWN_FILTER_KEYS = {"system", "service", "node"}
+KNOWN_FILTER_KEYS = {
+    "system",
+    "service",
+    "node",
+    "probe",
+    "tags",
+}
 
 
 # SHOW - dispatch by metric
@@ -267,12 +269,15 @@ def _exec_show(
             "error": f"Unknown filter key(s): {', '.join(sorted(unknown))}",
             "hint": f"Valid filters are: {', '.join(sorted(KNOWN_FILTER_KEYS))}",
         }
-    # Handles system=, service=, node= all through the same semantic layer
+    # Handles system=, service=, node=, etc all through the same semantic layer
     node_scope = None
+    # TODO: must be made scalable for more filters support
     candidate = (
         filters.get("system")
         or filters.get("service")
         or filters.get("node")
+        or filters.get("probe")
+        or filters.get("tags")
     )
 
     if candidate:
