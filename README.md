@@ -47,7 +47,7 @@ If you want to help accelerate this, the open engine and clear event protocol ma
 ## Installation
 
 ```bash
-git clone git@github.com:Humbulani1234/origintracer.git
+git clone https://github.com/Humbulani1234/origintracer.git
 cd origintracer 
 pip install -e .
 ```
