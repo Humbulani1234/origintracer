@@ -8,10 +8,10 @@ import threading
 import time
 from typing import Any, Optional
 
-logger = logging.getLogger("stacktracer.local_server")
+logger = logging.getLogger("origintracer.local_server")
 
 _SOCKET_DIR = "/tmp"
-_SOCKET_PREFIX = "stacktracer-"
+_SOCKET_PREFIX = "origintracer-"
 _SOCKET_SUFFIX = ".sock"
 _READ_TIMEOUT = 30.0  # seconds - drop idle connections
 _MAX_MSG_BYTES = 65_536  # 64 KB - max query size
@@ -25,7 +25,7 @@ def _socket_path(pid: int) -> str:
 
 def discover_sockets() -> list[str]:
     """
-    Return all live StackTracer sockets in /tmp.
+    Return all live OriginTracer sockets in /tmp.
     Called by the REPL to find running agents.
     """
     try:
@@ -48,9 +48,9 @@ class LocalQueryServer:
     sends query strings. The server evaluates them against the live engine
     and returns JSON responses.
 
-    Socket path: /tmp/stacktracer-{pid}.sock
+    Socket path: /tmp/origintracer-{pid}.sock
         pid = worker process pid, so each worker has its own socket.
-        The REPL discovers the socket by listing /tmp/stacktracer-*.sock.
+        The REPL discovers the socket by listing /tmp/origintracer-*.sock.
 
     Protocol: newline-delimited JSON.
         Request: {"query": "SHOW nodes", "id": "1"}\\n
@@ -100,7 +100,7 @@ class LocalQueryServer:
         self._thread = threading.Thread(
             target=self._serve,
             daemon=True,
-            name=f"stacktracer-local-server-{self._pid}",
+            name=f"origintracer-local-server-{self._pid}",
         )
         self._thread.start()
         logger.info(
