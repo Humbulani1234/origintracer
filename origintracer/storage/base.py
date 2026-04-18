@@ -92,6 +92,29 @@ class BaseRepository(ABC):
         """
         ...
 
+    @abstractmethod
+    def save_causal_matches(
+        self,
+        customer_id: str,
+        matches: List[Dict],
+        timestamp: float,
+    ) -> None:
+        """
+        Persist causal rule matches for historical review.
+        """
+        ...
+
+    @abstractmethod
+    def get_causal_history(
+        self,
+        customer_id: str,
+        limit: int = 50,
+    ) -> List[Dict]:
+        """
+        Return most recent causal match snapshots.
+        """
+        ...
+
 
 _PG_CREATE_EVENTS = """
 CREATE TABLE IF NOT EXISTS st_events (
@@ -152,6 +175,17 @@ CREATE TABLE graph_diffs (
     removed_edges JSONB,
     label VARCHAR(200) -- populated when a deployment marker exists
 );
+"""
+
+_PG_CREATE_CAUSAL_RULES = """
+CREATE TABLE causal_matches (
+    id SERIAL PRIMARY KEY,
+    customer_id VARCHAR(255) NOT NULL,
+    timestamp DOUBLE PRECISION NOT NULL,
+    matches JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_causal_customer ON causal_matches(customer_id, timestamp DESC);
 """
 
 
@@ -374,6 +408,28 @@ class PGEventRepository(BaseRepository):
             logger.warning("PG insert_marker failed: %s", exc)
             self._safe_rollback()
 
+    def save_causal_matches(
+        self, customer_id, matches, timestamp
+    ):
+        self._conn.execute(
+            """
+            INSERT INTO causal_matches (customer_id, timestamp, label, matches)
+            VALUES (%s, %s, %s, %s)
+        """,
+            (customer_id, timestamp, label, json.dumps(matches)),
+        )
+
+    def get_causal_history(self, customer_id, limit=50):
+        rows = self._conn.execute(
+            """
+            SELECT timestamp, label, matches FROM causal_matches
+            WHERE customer_id = %s
+            ORDER BY timestamp DESC LIMIT %s
+        """,
+            (customer_id, limit),
+        )
+        return [dict(r) for r in rows]
+
     def close(self) -> None:
         try:
             self._conn.close()
@@ -385,331 +441,6 @@ class PGEventRepository(BaseRepository):
             self._conn.rollback()
         except Exception:
             pass
-
-
-_CH_EVENTS_DDL = """
-CREATE TABLE IF NOT EXISTS st_probe_events (
-    customer_id String DEFAULT 'default',
-    trace_id String,
-    span_id String DEFAULT '',
-    parent_span_id String DEFAULT '',
-    probe String,
-    service String,
-    name String,
-    wall_time DateTime64(3),
-    duration_ns Nullable(Int64),
-    pid Nullable(Int32),
-    tid Nullable(Int32),
-    metadata String DEFAULT '{}',
-    date Date DEFAULT toDate(wall_time)
-)
-ENGINE = MergeTree()
-PARTITION BY toYYYYMM(date)
-ORDER BY (customer_id, trace_id, wall_time)
-TTL date + INTERVAL 30 DAY
-"""
-
-_CH_TRACE_SUMMARY_DDL = """
-CREATE MATERIALIZED VIEW IF NOT EXISTS st_trace_summary
-ENGINE = AggregatingMergeTree()
-PARTITION BY toYYYYMM(toDate(min_wall_time))
-ORDER BY (customer_id, trace_id)
-AS
-SELECT
-    customer_id,
-    trace_id,
-    minState(wall_time) AS min_wall_time,
-    maxState(wall_time) AS max_wall_time,
-    countState() AS event_count,
-    groupArrayState(probe) AS probes
-FROM st_probe_events
-GROUP BY customer_id, trace_id
-"""
-
-# ClickHouse has no BYTEA - store snapshots base64-encoded
-# in a String column.
-_CH_SNAPSHOTS_DDL = """
-CREATE TABLE IF NOT EXISTS st_snapshots (
-    customer_id String,
-    received_at Float64,
-    content_type String DEFAULT 'application/msgpack',
-    node_count Int32 DEFAULT 0,
-    edge_count Int32 DEFAULT 0,
-    data_b64 String
-)
-ENGINE = ReplacingMergeTree(received_at)
-ORDER BY (customer_id, received_at)
-"""
-
-_CH_MARKERS_DDL = """
-CREATE TABLE IF NOT EXISTS st_markers (
-    customer_id String,
-    label String,
-    created_at Float64
-)
-ENGINE = MergeTree()
-ORDER BY (customer_id, created_at)
-"""
-
-
-_CH_GRAPH_DIFFS_DDL = """
-CREATE TABLE IF NOT EXISTS graph_diffs (
-    customer_id String,
-    snapshot_time DateTime64(3) DEFAULT now(),
-    added_nodes String, -- JSON array
-    removed_nodes String,
-    added_edges String,
-    removed_edges String,
-    label Nullable(String)
-) ENGINE = MergeTree()
-ORDER BY (customer_id, snapshot_time);
-"""
-
-
-class ClickHouseRepository(BaseRepository):
-    """
-    ClickHouse-backed analytical store.
-    Requires: pip install clickhouse-driver
-    """
-
-    def __init__(
-        self,
-        host: str = "localhost",
-        port: int = 9000,
-        database: str = "origintracer",
-    ) -> None:
-        try:
-            from clickhouse_driver import Client
-
-            self._client = Client(
-                host=host, port=port, database=database
-            )
-            self._ensure_schema()
-            logger.info(
-                "ClickHouse connected: %s:%d/%s",
-                host,
-                port,
-                database,
-            )
-        except ImportError:
-            raise RuntimeError(
-                "clickhouse-driver not installed: pip install clickhouse-driver"
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"ClickHouse connection failed: {exc}"
-            ) from exc
-
-    def _ensure_schema(self) -> None:
-        for ddl in (
-            _CH_EVENTS_DDL,
-            _CH_TRACE_SUMMARY_DDL,
-            _CH_SNAPSHOTS_DDL,
-            _CH_MARKERS_DDL,
-            _CH_GRAPH_DIFFS_DDL,
-        ):
-            try:
-                self._client.execute(ddl)
-            except Exception as exc:
-                logger.debug(
-                    "ClickHouse DDL skip (may exist): %s", exc
-                )
-
-    def insert_event(self, event: NormalizedEvent) -> None:
-        from datetime import datetime
-
-        try:
-            self._client.execute(
-                """
-                INSERT INTO st_probe_events
-                    (customer_id, trace_id, span_id, parent_span_id,
-                     probe, service, name, wall_time,
-                     duration_ns, pid, tid, metadata)
-                VALUES
-                """,
-                [
-                    (
-                        event.metadata.get(
-                            "customer_id", "default"
-                        ),
-                        event.trace_id,
-                        event.span_id or "",
-                        event.parent_span_id or "",
-                        event.probe,
-                        event.service,
-                        event.name,
-                        datetime.utcfromtimestamp(
-                            event.wall_time
-                        ),
-                        event.duration_ns,
-                        event.pid,
-                        event.tid,
-                        json.dumps(event.metadata),
-                    )
-                ],
-            )
-        except Exception as exc:
-            logger.warning(
-                "ClickHouse insert_event failed: %s", exc
-            )
-
-    def query_events(
-        self,
-        *,
-        trace_id: Optional[str] = None,
-        probe: Optional[str] = None,
-        service: Optional[str] = None,
-        since: Optional[float] = None,
-        limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        conditions: List[str] = ["1=1"]
-        params: Dict[str, Any] = {}
-
-        if trace_id:
-            conditions.append("trace_id = %(trace_id)s")
-            params["trace_id"] = trace_id
-        if probe:
-            conditions.append("probe = %(probe)s")
-            params["probe"] = probe
-        if service:
-            conditions.append("service = %(service)s")
-            params["service"] = service
-        if since:
-            from datetime import datetime
-
-            conditions.append("wall_time >= %(since)s")
-            params["since"] = datetime.utcfromtimestamp(since)
-
-        params["limit"] = limit
-
-        sql = f"""
-            SELECT trace_id, span_id, probe, service, name,
-                   wall_time, duration_ns, metadata
-            FROM st_probe_events
-            WHERE {' AND '.join(conditions)}
-            ORDER BY wall_time DESC
-            LIMIT %(limit)s
-        """
-        try:
-            rows = self._client.execute(sql, params)
-            cols = [
-                "trace_id",
-                "span_id",
-                "probe",
-                "service",
-                "name",
-                "wall_time",
-                "duration_ns",
-                "metadata",
-            ]
-            return [dict(zip(cols, r)) for r in rows]
-        except Exception as exc:
-            logger.error(
-                "ClickHouse query_events failed: %s", exc
-            )
-            return []
-
-    def insert_snapshot(
-        self,
-        customer_id: str,
-        data: bytes,
-        content_type: str = "application/msgpack",
-        node_count: int = 0,
-        edge_count: int = 0,
-    ) -> None:
-        try:
-            self._client.execute(
-                """
-                INSERT INTO st_snapshots
-                    (customer_id, received_at, content_type,
-                     node_count, edge_count, data_b64)
-                VALUES
-                """,
-                [
-                    (
-                        customer_id,
-                        time.time(),
-                        content_type,
-                        node_count,
-                        edge_count,
-                        base64.b64encode(data).decode("ascii"),
-                    )
-                ],
-            )
-        except Exception as exc:
-            logger.warning(
-                "ClickHouse insert_snapshot failed: %s", exc
-            )
-
-    def get_latest_snapshot(
-        self,
-        customer_id: str,
-    ) -> Optional[Dict[str, Any]]:
-        try:
-            rows = self._client.execute(
-                """
-                SELECT data_b64, content_type, received_at
-                FROM   st_snapshots
-                WHERE  customer_id = %(cid)s
-                ORDER  BY received_at DESC
-                LIMIT  1
-                """,
-                {"cid": customer_id},
-            )
-            if not rows:
-                return None
-            row = rows[0]
-            return {
-                "data": base64.b64decode(row[0]),
-                "content_type": row[1],
-                "received_at": float(row[2]),
-            }
-        except Exception as exc:
-            logger.error(
-                "ClickHouse get_latest_snapshot failed: %s", exc
-            )
-            return None
-
-    def insert_deployment_marker(
-        self, customer_id: str, label: str
-    ) -> None:
-        self._client.execute(
-            "INSERT INTO deployment_markers (customer_id, label) VALUES",
-            [{"customer_id": customer_id, "label": label}],
-        )
-
-    def insert_graph_diff(
-        self, customer_id: str, diff: Dict
-    ) -> None:
-        import json
-
-        self._client.execute(
-            """INSERT INTO graph_diffs
-            (customer_id, added_nodes, removed_nodes,
-                added_edges, removed_edges, label)
-            VALUES""",
-            [
-                {
-                    "customer_id": customer_id,
-                    "added_nodes": json.dumps(
-                        list(diff.get("added_nodes", []))
-                    ),
-                    "removed_nodes": json.dumps(
-                        list(diff.get("removed_nodes", []))
-                    ),
-                    "added_edges": json.dumps(
-                        list(diff.get("added_edges", []))
-                    ),
-                    "removed_edges": json.dumps(
-                        list(diff.get("removed_edges", []))
-                    ),
-                    "label": diff.get("label"),
-                }
-            ],
-        )
-
-    def close(self) -> None:
-        pass  # clickhouse-driver manages connections internally
 
 
 class InMemoryRepository(BaseRepository):
@@ -733,6 +464,8 @@ class InMemoryRepository(BaseRepository):
         self._diffs: Dict[str, deque] = defaultdict(
             lambda: deque(maxlen=max_diffs)
         )
+        # For rules that matched - anti-patterns
+        self._causal_history: List[Dict] = []
 
     def insert_event(self, event: NormalizedEvent) -> None:
         # deque handles the maxlen=100_000 internally
@@ -821,6 +554,27 @@ class InMemoryRepository(BaseRepository):
 
     def get_diffs(self, customer_id: str) -> List[GraphDiff]:
         return list(self._diffs.get(customer_id, []))
+
+    def save_causal_matches(
+        self, customer_id, matches, timestamp, label=None
+    ):
+        self._causal_history.append(
+            {
+                "customer_id": customer_id,
+                "timestamp": timestamp,
+                "matches": matches,
+            }
+        )
+        # keep last 200 snapshots - causal runs every 5s, 200 = ~16 mins
+        if len(self._causal_history) > 200:
+            self._causal_history = self._causal_history[-200:]
+
+    def get_causal_history(self, customer_id, limit=50):
+        return [
+            e
+            for e in reversed(self._causal_history)
+            if e["customer_id"] == customer_id
+        ][:limit]
 
     def close(self) -> None:
         pass
