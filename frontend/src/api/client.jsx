@@ -33,4 +33,5 @@ export const api = {
   graph: () => request("/api/v1/graph"),
   causal: (tags) => request(`/api/v1/causal${tags ? `?tags=${tags}` : ''}`),
   workers: () => request("/api/v1/workers"),
+  causalHistory: (limit = 50) => request(`/api/v1/causal/history?limit=${limit}`),
 };
