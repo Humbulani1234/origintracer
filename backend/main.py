@@ -7,6 +7,7 @@ Surfaces:
     GET  /api/v1/graph - current graph (from latest snapshot)
     GET  /api/v1/traces/{id} - critical path from event store
     GET  /api/v1/causal - causal rules on latest snapshot
+    GET  /api/v1/causal/history - return causal matches history
     GET  /api/v1/hotspots - top N busiest nodes
     GET  /api/v1/diff - graph diff since marker
     POST /api/v1/deployment - store deployment marker
@@ -30,7 +31,6 @@ Environment variables:
     ORIGINTRACER_API_KEYS - comma-separated key:customer pairs
                             e.g. "sk_dev_yyy:dev_customer"
     ORIGINTRACER_DB_DSN - PostgreSQL DSN for event + snapshot storage
-    ORIGINTRACER_CH_HOST - ClickHouse host (alternative to Postgres)
 """
 
 from __future__ import annotations
@@ -151,13 +151,12 @@ def _load_api_keys() -> None:
 def _init_repository() -> None:
     """
     Connect to the configured storage backend.
-    Tries PostgreSQL first (ORIGINTRACER_DB_DSN), then ClickHouse
-    (ORIGINTRACER_CH_HOST), then falls back to InMemoryRepository for dev.
+    Tries to connect to PostgreSQL (ORIGINTRACER_DB_DSN), then falls back
+    to InMemoryRepository for dev.
     """
     global _repository
 
     db_dsn = os.getenv("ORIGINTRACER_DB_DSN")
-    ch_host = os.getenv("ORIGINTRACER_CH_HOST")
 
     if db_dsn:
         try:
@@ -176,21 +175,6 @@ def _init_repository() -> None:
         except Exception as exc:
             logger.warning(
                 "PostgreSQL connect failed: %s — falling back",
-                exc,
-            )
-
-    if ch_host:
-        try:
-            from origintracer.storage.base import (
-                ClickHouseRepository,
-            )
-
-            _repository = ClickHouseRepository(host=ch_host)
-            logger.info("Storage: ClickHouse (%s)", ch_host)
-            return
-        except Exception as exc:
-            logger.warning(
-                "ClickHouse connect failed: %s — falling back",
                 exc,
             )
 
@@ -568,6 +552,18 @@ async def get_graph_route(
     }
 
 
+@app.get("/api/v1/causal/history")
+async def causal_history(
+    limit: int = Query(50),
+    authorization: Optional[str] = Header(None),
+    repository: InMemoryRepository = Depends(get_repository),
+):
+    customer_id = _authenticate(authorization)
+    return {
+        "data": repository.get_causal_history(customer_id, limit)
+    }
+
+
 @app.get("/api/v1/causal")
 async def causal(
     tags: Optional[str] = None,
@@ -609,6 +605,13 @@ async def causal(
     # No tracker - backend has no live requests.
     # rules that depends on it won't be executed
     matches = registry.evaluate(graph, temporal, tags=tag_list)
+    # persist to storage
+    if matches:
+        repository.save_causal_matches(
+            customer_id=customer_id,
+            matches=[m.to_dict() for m in matches],
+            timestamp=time.time(),
+        )
     return {
         "match_count": len(matches),
         "data": [m.to_dict() for m in matches],

@@ -9,10 +9,12 @@ import DiffView from "./components/DiffView";
 import GraphView from "./components/GraphView";
 import CausalView from "./components/CausalView";
 import StatusView from "./components/StatusView";
+import CausalHistory from "./components/CausalHistory";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { api } from "./api/client";
 
 const VIEWS = ["nodes", "edges", "trace", "events", "diff",
-  "status", "graph", "causal"];
+  "status", "graph", "causal", "history"];
 
 export default function App() {
   const [view, setView] = useState("nodes");
@@ -31,10 +33,12 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [backendError, setBackendError] = useState(null);
   const [workers, setWorkers] = useState([]);
+  const [causalHistory, setCausalHistory] = useState([]);
+
 
   const refresh = useCallback(async () => {
     try {
-      const [n, e, ev, s, d, g, ca, ws] = await Promise.all
+      const [n, e, ev, s, d, g, ca, ws, ch] = await Promise.all
       ([
         api.nodes(),
         api.edges(),
@@ -44,6 +48,7 @@ export default function App() {
         api.graph(),
         api.causal(),
         api.workers(),
+        api.causalHistory()
       ]);
       if (n?.data?.data?.length) setNodes(n.data.data);
       if (e?.data?.data?.length) setEdges(e.data.data);
@@ -53,6 +58,7 @@ export default function App() {
       if (g?.data?.data) setGraph(g.data.data);
       if (ca?.data?.length) setCausal(ca.data);
       if (ws?.data?.length) setWorkers(ws.data);
+      if (ch?.data?.length) setCausalHistory(ch.data);
     } catch (err) {
       console.warn("Backend unavailable:", err?.message ?? err);
       setBackendError(err?.message ?? "Backend unavailable");
@@ -93,6 +99,7 @@ export default function App() {
     graph: `${nodes.length} nodes · ${edges.length} edges`,
     causal: `${causal.length} patterns`,
     status: "live",
+    history: `${causalHistory.length} snapshots`,
   };
 
   return (
@@ -149,23 +156,26 @@ export default function App() {
         </div>
         <QueryBar onRun={runQuery} loading={loading} />
         <div className="content">
-          {view === "nodes" && <NodeTable nodes={nodes} />}
-          {view === "edges" && <EdgeTable edges={edges} />}
-          {view === "trace" && <TraceTimeline trace={trace} />}
-          {view === "events" && <EventLog events={events} />}
-          {view === "diff" && <DiffView diff={diff} />}
-          {view === "graph" && <GraphView nodes={nodes} edges={edges} />}
-          {view === "causal" && <CausalView causal={causal} />}
-          {view === "status" && (
-            <StatusView
-              nodes={nodes}
-              edges={edges}
-              events={events}
-              status={status}
-            />
-          )}
-        </div>
-        <StatusBar nodes={nodes} edges={edges} events={events} status={status} />
+          <ErrorBoundary key={view}>
+            {view === "nodes" && <NodeTable nodes={nodes} />}
+            {view === "edges" && <EdgeTable edges={edges} />}
+            {view === "trace" && <TraceTimeline trace={trace} />}
+            {view === "events" && <EventLog events={events} />}
+            {view === "diff" && <DiffView diff={diff} />}
+            {view === "graph" && <GraphView nodes={nodes} edges={edges} />}
+            {view === "causal" && <CausalView causal={causal} />}
+            {view === "status" && (
+              <StatusView
+                nodes={nodes}
+                edges={edges}
+                events={events}
+                status={status}
+              />
+            )}
+            {view === "history" && <CausalHistory history={causalHistory} />}
+          </ErrorBoundary>
+          </div>
+          <StatusBar nodes={nodes} edges={edges} events={events} status={status} />
       </div>
     </div>
   );
