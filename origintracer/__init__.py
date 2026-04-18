@@ -43,6 +43,7 @@ _active_rules: Optional[PatternRegistry] = None
 _active_probes: List[BaseProbe] = []
 _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
+_local_server = None
 
 
 # Used for probes that construct structural topology of the system
@@ -746,7 +747,7 @@ def init(
         repository=repository,
     )
 
-    _init_local_server(_engine)
+    _local_server = _init_local_server(_engine)
 
     _active_rules = _init_rules(_config, _engine, app_root)
     _engine.causal = _active_rules
@@ -788,7 +789,7 @@ def get_engine() -> Any:
 
 
 def shutdown() -> None:
-    global _active_probes, _engine, _uploader, _config
+    global _active_probes, _engine, _uploader, _config, _local_server
 
     for probe in _active_probes:
         try:
@@ -798,6 +799,13 @@ def shutdown() -> None:
                 "Probe %s stop error: %s", probe.name, exc
             )
     _active_probes = []
+
+    if _local_server:
+        try:
+            _local_server.stop()
+        except Exception as exc:
+            logger.debug("Local server stop error: %s", exc)
+        _local_server = None
 
     if _uploader:
         try:
