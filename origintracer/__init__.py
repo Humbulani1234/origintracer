@@ -33,6 +33,7 @@ from .core.causal import PatternRegistry
 from .core.engine import Engine
 from .core.event_schema import NormalizedEvent
 from .core.runtime_graph import RuntimeGraph
+from .core.semantic import SemanticLayer
 from .sdk.base_probe import BaseProbe, ProbeRegistry
 from .sdk.emitter import bind_engine, emit
 from .sdk.uploader import Uploader
@@ -379,10 +380,10 @@ def _init_tracker(cfg: ResolvedConfig) -> Any:
 
 def _init_engine(
     cfg: ResolvedConfig,
-    normalizer: Any,
-    compactor: Any,
-    semantic: Any,
-    tracker: Any,
+    normalizer: GraphNormalizer,
+    compactor: GraphCompactor,
+    semantic: SemanticLayer,
+    tracker: ActiveRequestTracker,
     repository: Optional[Uploader],
 ) -> Engine:
     graph = RuntimeGraph()
