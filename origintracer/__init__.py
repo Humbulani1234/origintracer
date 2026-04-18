@@ -21,9 +21,12 @@ import os
 import sys
 import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import yaml
+
+from origintracer.utils.logging import setup_file_logging
 
 from .context.vars import get_trace_id
 from .core.causal import PatternRegistry
@@ -703,6 +706,8 @@ def init(
         MERGES key-by-key.  Keys: ttl_s, max_size
     """
     global _config, _engine, _active_probes, _active_rules
+
+    setup_file_logging(debug)
 
     # 1. Load and merge
     package_defaults = _load_package_defaults()
