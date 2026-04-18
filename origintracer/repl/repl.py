@@ -223,9 +223,6 @@ def render(result: dict) -> None:
         return
 
     data = result.get("data")
-    import pdb
-
-    pdb.set_trace()
 
     # Unwrap executor - executor returns {"metric": "...", "data": <payload>}
     # local_server wraps that in {"ok": True, "data": <executor_result>}
