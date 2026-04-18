@@ -159,10 +159,9 @@ class LocalQueryServer:
                     pass
 
     def _handle(self, conn: socket.socket) -> None:
-
-        # import pdb
-        # pdb.set_trace()
-
+        """
+        Process the connection
+        """
         conn.settimeout(_READ_TIMEOUT)
         raw = b""
         while b"\n" not in raw:
@@ -224,7 +223,7 @@ class LocalQueryServer:
         """
         query_str.upper().strip()
 
-        # DSL parser — handles everything else
+        # DSL parser - handles everything else
         try:
             from origintracer.query.parser import execute, parse
 
