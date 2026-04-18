@@ -1,6 +1,8 @@
 origintracer.code-workspace
 origintracer.sublime-workspace
 /env
+logs/
+*.log
 
 # Python
 __pycache__/
