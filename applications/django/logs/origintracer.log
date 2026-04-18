@@ -1,0 +1,27 @@
+2026-04-18 09:25:56,729 DEBUG    origintracer.initialisation: Package defaults loaded from /home/humbulani/origintracer/origintracer/config/defaults.yaml
+2026-04-18 09:25:56,731 INFO     origintracer.initialisation: User config loaded from /home/humbulani/origintracer/applications/django/origintracer.yaml
+2026-04-18 09:25:56,761 INFO     origintracer.initialisation: Probe started: asyncio
+2026-04-18 09:25:56,761 INFO     origintracer.initialisation: Probe started: django
+2026-04-18 09:25:56,761 INFO     origintracer.initialisation: Uploader active → http://localhost:8001 (interval=10s)
+2026-04-18 09:25:56,761 INFO     origintracer.initialisation: OriginTracer ready | probes=['asyncio', 'django'] config=/home/humbulani/origintracer/applications/django/origintracer.yaml app_root=/home/humbulani/origintracer/applications/django
+2026-04-18 09:38:14,614 DEBUG    origintracer.initialisation: Package defaults loaded from /home/humbulani/origintracer/origintracer/config/defaults.yaml
+2026-04-18 09:38:14,619 INFO     origintracer.initialisation: User config loaded from /home/humbulani/origintracer/applications/django/origintracer.yaml
+2026-04-18 09:38:14,620 INFO     origintracer.emitter: OriginTracer emitter bound, drain thread started
+2026-04-18 09:38:14,620 INFO     origintracer.engine: Background snapshot thread started (interval=15.0s)
+2026-04-18 09:38:14,621 INFO     origintracer.local_server: Local query server started at /tmp/origintracer-125807.sock
+2026-04-18 09:38:14,624 INFO     origintracer.probes: Loaded probe: asyncio
+2026-04-18 09:38:14,624 INFO     origintracer.probes: Loaded probe: django
+2026-04-18 09:38:14,652 INFO     origintracer.kprobe_bridge: kprobe bridge: requires root or CAP_BPF — kernel probes unavailable, Python-side observations still active
+2026-04-18 09:38:14,652 INFO     origintracer.probes.asyncio: asyncio probe: epoll kprobe unavailable (bridge failed to start). Coroutine-level tracing still active.
+2026-04-18 09:38:14,652 INFO     origintracer.initialisation: Probe started: asyncio
+2026-04-18 09:38:14,652 INFO     origintracer.probes.django: django probe: View.dispatch patched - all CBVs observed
+2026-04-18 09:38:14,653 INFO     origintracer.probes.django: django probe: database wrapper registered on connection_created signal
+2026-04-18 09:38:14,653 INFO     origintracer.probes.django: django probe: got_request_exception signal connected
+2026-04-18 09:38:14,653 INFO     origintracer.probes.django: django probe: installed
+2026-04-18 09:38:14,653 INFO     origintracer.initialisation: Probe started: django
+2026-04-18 09:38:14,653 INFO     origintracer.uploader: Uploader started → http://localhost:8001  events=10s  snapshots=60s
+2026-04-18 09:38:14,653 INFO     origintracer.initialisation: Uploader active → http://localhost:8001 (interval=10s)
+2026-04-18 09:38:14,653 INFO     origintracer.initialisation: OriginTracer ready | probes=['asyncio', 'django'] config=/home/humbulani/origintracer/applications/django/origintracer.yaml app_root=/home/humbulani/origintracer/applications/django
+2026-04-18 09:38:14,654 INFO     origintracer.engine: Deployment marker set: deployment
+2026-04-18 09:38:14,726 DEBUG    origintracer.uploader: Connection error: [Errno 111] Connection refused
+2026-04-18 09:38:15,692 DEBUG    origintracer.uploader: Snapshot connection error: [Errno 111] Connection refused
