@@ -1,0 +1,26 @@
+/* StackTracer docs — amber accent on dark/light */
+:root {
+  --md-primary-fg-color:        #0d0d0d;
+  --md-primary-fg-color--light: #e8a020;
+  --md-primary-fg-color--dark:  #0d0d0d;
+  --md-accent-fg-color:         #e8a020;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color:        #0d0d0d;
+  --md-default-fg-color:        #e0ddd5;
+  --md-code-bg-color:           #1a1a1a;
+}
+
+/* Amber inline code */
+code { color: #e8a020; }
+
+/* Probe type badges in tables */
+.probe-tag {
+  font-family: var(--md-code-font);
+  font-size: 0.75rem;
+  background: #1a1a1a;
+  color: #e8a020;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
