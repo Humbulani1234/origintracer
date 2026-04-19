@@ -703,7 +703,7 @@ def init(
 
     active_requests
         Override ActiveRequestTracker settings.
-        MERGES key-by-key.  Keys: ttl_s, max_size
+        Merges key-by-key.  Keys: ttl_s, max_size
     """
     global _config, _engine, _active_probes, _active_rules
 
