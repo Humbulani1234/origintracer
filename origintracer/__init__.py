@@ -841,6 +841,8 @@ def shutdown() -> None:
         _engine = None
 
     _config = None
+    _post_init_callbacks = []
+    _active_rules = []
     logger.info("OriginTracer shut down")
 
 
