@@ -13,11 +13,11 @@ Config merge order:
 
 from __future__ import annotations
 
-import atexit
 import importlib
 import importlib.util
 import logging
 import os
+import signal
 import sys
 import traceback
 from dataclasses import dataclass
@@ -32,6 +32,7 @@ from .context.vars import get_trace_id
 from .core.causal import PatternRegistry
 from .core.engine import Engine
 from .core.event_schema import NormalizedEvent
+from .core.local_server import LocalQueryServer
 from .core.runtime_graph import RuntimeGraph
 from .core.semantic import SemanticLayer
 from .sdk.base_probe import BaseProbe, ProbeRegistry
@@ -47,7 +48,7 @@ _active_rules: Optional[PatternRegistry] = None
 _active_probes: List[BaseProbe] = []
 _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
-_local_server = None
+_local_server: Optional[LocalQueryServer] = None
 
 
 # Used for probes that construct structural topology of the system
@@ -205,7 +206,7 @@ def _extend_normalize(
     init_kwarg_rules: Optional[List[Dict]],
 ) -> List[Dict]:
     """
-    Normalize rules are ADDITIVE - kwarg rules extend the yaml list.
+    Normalize rules are additive - kwarg rules extend the yaml list.
     User wanting a clean slate sets normalize: [] in their yaml first.
     """
     base = list(merged_yaml_rules)
@@ -593,7 +594,7 @@ def _init_uploader(
 ) -> Optional[Any]:
     global _uploader
     if not cfg.api_key:
-        logger.debug("Uploader: no api_key — skipping")
+        logger.debug("Uploader: no api_key - skipping")
         return None
     try:
         from origintracer.sdk.uploader import Uploader
@@ -604,14 +605,12 @@ def _init_uploader(
             flush_interval=cfg.flush_interval,
             max_batch_size=500,
         )
-        uploader.bind_engine(
-            engine
-        )  # ← give uploader the engine
+        uploader.bind_engine(engine)  # give uploader the engine
         uploader.start()
         engine.repository = uploader
         _uploader = uploader
         logger.info(
-            "Uploader active → %s (interval=%ds)",
+            "Uploader active: %s (interval=%ds)",
             cfg.endpoint,
             cfg.flush_interval,
         )
@@ -625,8 +624,8 @@ def _init_uploader(
 
 
 def init(
-    api_key: str = "test-key-123",
-    endpoint: str = "http://localhost:8001",
+    api_key: str = "test-key-123",  # for dev
+    endpoint: str = "http://localhost:8001",  # adjust
     config: Optional[str] = None,
     probes: Optional[List[str]] = None,
     rules: Optional[List[str]] = None,
@@ -779,7 +778,13 @@ def init(
         user_config_path or "defaults only",
         app_root,
     )
-    atexit.register(shutdown)
+
+    signal.signal(
+        signal.SIGINT, _make_signal_handler(signal.SIGINT)
+    )
+    signal.signal(
+        signal.SIGTERM, _make_signal_handler(signal.SIGTERM)
+    )
 
 
 def get_config() -> "ResolvedConfig":
@@ -792,6 +797,17 @@ def get_config() -> "ResolvedConfig":
 
 def get_engine() -> Any:
     return _engine
+
+
+def _make_signal_handler(signum):
+    old_handler = signal.getsignal(signum)
+
+    def handler(sig, frame):
+        shutdown()
+        if callable(old_handler):
+            old_handler(sig, frame)
+
+    return handler
 
 
 def shutdown() -> None:
@@ -841,14 +857,5 @@ def mark_deployment(label: str = "deployment") -> None:
         logger.warning("mark_deployment called before init()")
 
 
-__all__ = [
-    "init",
-    "shutdown",
-    "get_config",
-    "get_engine",
-    "mark_deployment",
-    "emit",
-    "NormalizedEvent",
-    "get_trace_id",
-    "ResolvedConfig",
-]
+__version__ = "0.1.0"  # use in official releases
+__all__ = ["init"]
