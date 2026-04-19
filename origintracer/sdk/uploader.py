@@ -153,11 +153,11 @@ class Uploader:
         self._thread = threading.Thread(
             target=self._run,
             daemon=True,
-            name="stacktracer-uploader",
+            name="origintracer-uploader",
         )
         self._thread.start()
         logger.info(
-            "Uploader started → %s  events=%ds  snapshots=%ds",
+            "Uploader started: %s  events=%ds  snapshots=%ds",
             self._endpoint,
             self._flush_interval,
             self._snapshot_interval,

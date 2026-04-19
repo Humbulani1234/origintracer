@@ -413,7 +413,13 @@ async def receive_graph_diff(
         customer_id,
         len(body.added_nodes or []),
         len(body.added_edges or []),
-        len([v for v in body.dict().values() if v is not None]),
+        len(
+            [
+                v
+                for v in body.model_dump().values()
+                if v is not None
+            ]
+        ),
     )
     return {"ok": True}
 
@@ -864,25 +870,7 @@ async def get_edges(
     }
 
 
-@app.exception_handler(Exception)
-async def generic_error(
-    request: Request, exc: Exception
-) -> JSONResponse:
-    logger.error(
-        "Unhandled error on %s: %s",
-        request.url.path,
-        exc,
-        exc_info=True,
-    )
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc),
-        },
-    )
-
-
+# Available in parser and repeated for backend standalone
 def _node_dict(n) -> Dict:
     """
     Full node representation - used by SHOW GRAPH.
@@ -903,6 +891,7 @@ def _node_dict(n) -> Dict:
     }
 
 
+# Available in parser and repeated for backend standalone
 def _edge_dict(e) -> Dict:
     """
     Full edge representation - used by SHOW GRAPH.
