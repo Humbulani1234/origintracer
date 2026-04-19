@@ -127,6 +127,7 @@ class LocalQueryServer:
                 pass
 
     def _serve(self) -> None:
+        assert self._sock is not None, "socket not initialised"
         while self._running:
             try:
                 conn, _ = self._sock.accept()

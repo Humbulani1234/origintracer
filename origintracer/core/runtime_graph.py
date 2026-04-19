@@ -33,9 +33,9 @@ class GraphNode:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
-    def avg_duration_ns(self) -> Optional[float]:
+    def avg_duration_ns(self) -> float:
         if self.call_count == 0:
-            return None
+            return 0.0
         return self.total_duration_ns / self.call_count
 
     def touch(self, duration_ns: Optional[int] = None) -> None:

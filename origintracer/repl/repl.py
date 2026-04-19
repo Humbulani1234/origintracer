@@ -382,21 +382,16 @@ def render(result: dict) -> None:
         return
 
     # SHOW STATUS
-    if verb == "STATUS" or (
-        isinstance(data, dict) and "graph_nodes" in data
-    ):
+    if verb == "STATUS":
         header("Engine Status")
+        assert isinstance(data, dict)
         for k, v in data.items():
             print(f"  {c(k, DIM):<30} {c(v, WHITE)}")
         print()
         return
 
     # SHOW GRAPH
-    if metric == "graph" or (
-        isinstance(data, dict)
-        and "nodes" in data
-        and "edges" in data
-    ):
+    if metric == "graph":
         g = data if isinstance(data, dict) else {}
         nodes = g.get("nodes", [])
         edges = g.get("edges", [])
@@ -439,10 +434,10 @@ def render(result: dict) -> None:
         return
 
     # HOTSPOT or events and nodes
-    if verb == "HOTSPOT" or (
-        isinstance(data, list)
-        and data
-        and isinstance(data[0], dict)
+    if (
+        verb == "HOTSPOT"
+        or metric == "nodes"
+        or metric == "edges"
     ):
         rows = (
             data

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Union
 
 logger = logging.getLogger("origintracer.compactor")
 
@@ -56,7 +56,7 @@ class GraphCompactor:
         self._total_evictions = 0
         self._compact_runs = 0
 
-    def compact(self, graph: RuntimeGraph) -> Dict[str, Any]:
+    def compact(self, graph: RuntimeGraph) -> dict:
         """
         Run one compaction pass against the graph.
         Returns a stats dict describing what was evicted and why.
@@ -185,8 +185,8 @@ class GraphCompactor:
         return edges_removed
 
     def estimate_memory_bytes(
-        self, graph: Any
-    ) -> Dict[str, int]:
+        self, graph: RuntimeGraph
+    ) -> Dict[str, Union[int, float]]:
         r"""
         Rough memory estimate for the current graph.
         Useful for \status in the REPL.

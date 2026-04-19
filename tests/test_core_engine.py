@@ -244,6 +244,14 @@ class TestEngineTemporalIntegration:
                 m.rule_name != "new_sync_call_after_deployment"
             )
 
+    def test_no_causal_object_returns_empty_list(self, engine):
+        """
+        Without a causal object configured evaluate returns and empty list
+        """
+        engine.causal = None
+        matches = engine.evaluate()
+        assert matches == []
+
     def test_status_contains_expected_keys(
         self, engine, trace_id
     ):

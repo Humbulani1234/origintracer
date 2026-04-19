@@ -27,6 +27,8 @@ dev = [
     "black>=24.0",
     "ruff>=0.4",
     "pre-commit>=3.7",
+    "mypy>=1.9.0",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -97,3 +99,7 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
 ]
+
+[tool.mypy]
+ignore_missing_imports = true
+files = ["origintracer/"]
