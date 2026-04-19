@@ -1,5 +1,16 @@
 # OriginTracer
 
+![Backend](https://img.shields.io/badge/Backend-FastAPI-green?style=flat-square)
+![Frontend](https://img.shields.io/badge/Frontend-React_UI_%26_REPL-blue?style=flat-square)
+![Website](https://img.shields.io/badge/Website-origintracer.app-orange?style=flat-square&link=https://origintracer.app)
+![License](https://img.shields.io/badge/license-MIT-red?style=flat-square)
+![eBPF](https://img.shields.io/badge/Kernel-eBPF_Powered-blueviolet?style=flat-square)
+
+
+![WSL2](https://img.shields.io/badge/WSL2-0078D4?style=for-the-badge&logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
+
+
 **Live causal graph for async services.**
 
 OriginTracer instruments your full production stack - **nginx --> gunicorn/uvicorn --> Django/FastAPI --> asyncio --> Celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
