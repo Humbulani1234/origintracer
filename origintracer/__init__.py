@@ -799,17 +799,6 @@ def get_engine() -> Any:
     return _engine
 
 
-def _make_signal_handler(signum):
-    old_handler = signal.getsignal(signum)
-
-    def handler(sig, frame):
-        shutdown()
-        if callable(old_handler):
-            old_handler(sig, frame)
-
-    return handler
-
-
 def shutdown() -> None:
     global _active_probes, _engine, _uploader, _config, _local_server
 
