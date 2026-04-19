@@ -45,7 +45,17 @@ import re
 import shlex
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+)
+
+if TYPE_CHECKING:
+    from origintracer.core.engine import Engine
 
 
 @dataclass
@@ -229,7 +239,9 @@ def _parse_filters(tokens: List[str]) -> Dict[str, Any]:
     return filters
 
 
-def execute(query: ParsedQuery, engine: Any) -> Dict[str, Any]:
+def execute(
+    query: ParsedQuery, engine: Engine
+) -> Dict[str, Any]:
     dispatch = {
         "SHOW": _exec_show,
         "TRACE": _exec_trace,
@@ -257,7 +269,7 @@ SEMANTIC_FILTER_KEYS = {
 
 # SHOW - dispatch by metric
 def _exec_show(
-    query: ParsedQuery, engine: Any
+    query: ParsedQuery, engine: Engine
 ) -> Dict[str, Any]:
 
     metric = query.metric
@@ -321,7 +333,7 @@ def _exec_show(
 
 
 def _show_latency(
-    engine: Any,
+    engine: Engine,
     filters: Dict,
     node_scope: Optional[set],
     limit: int,
@@ -362,7 +374,9 @@ def _show_latency(
     }
 
 
-def _show_events(engine: Any, filters: Dict, limit: int) -> Dict:
+def _show_events(
+    engine: Engine, filters: Dict, limit: int
+) -> Dict:
     """
     Query historical events. Falls back to in-memory event log if
     no repository is attached.
@@ -394,7 +408,7 @@ def _show_events(engine: Any, filters: Dict, limit: int) -> Dict:
     }
 
 
-def _show_path(engine: Any, filters: Dict) -> Dict:
+def _show_path(engine: Engine, filters: Dict) -> Dict:
     trace_id = filters.get("trace_id")
     if not trace_id:
         return {
@@ -407,7 +421,9 @@ def _show_path(engine: Any, filters: Dict) -> Dict:
     }
 
 
-def _show_graph(engine: Any, node_scope: Optional[set]) -> Dict:
+def _show_graph(
+    engine: Engine, node_scope: Optional[set]
+) -> Dict:
     nodes = list(engine.graph.all_nodes())
     edges = list(engine.graph.all_edges())
 
@@ -432,7 +448,7 @@ def _show_graph(engine: Any, node_scope: Optional[set]) -> Dict:
 
 
 def _show_nodes(
-    engine: Any,
+    engine: Engine,
     filters: Dict,
     node_scope: Optional[set],
     limit: int,
@@ -456,7 +472,9 @@ def _show_nodes(
     }
 
 
-def _show_edges(engine: Any, node_scope: Optional[set]) -> Dict:
+def _show_edges(
+    engine: Engine, node_scope: Optional[set]
+) -> Dict:
     """
     Full edge listing - same fields as the old built-in SHOW EDGES.
     """
@@ -475,7 +493,7 @@ def _show_edges(engine: Any, node_scope: Optional[set]) -> Dict:
     }
 
 
-def _show_status(engine: Any) -> Dict:
+def _show_status(engine: Engine) -> Dict:
     """
     Engine health snapshot.
     """
@@ -541,7 +559,7 @@ def _format_uptime(seconds: float) -> str:
         return f"{h}h {m}m"
 
 
-def _show_active(engine: Any) -> Dict:
+def _show_active(engine: Engine) -> Dict:
     tracker = getattr(engine, "tracker", None)
     if tracker is None:
         return {"metric": "active", "data": []}
@@ -553,7 +571,7 @@ def _show_active(engine: Any) -> Dict:
     return {"metric": "active", "data": active}
 
 
-def _show_probes(engine: Any) -> Dict:
+def _show_probes(engine: Engine) -> Dict:
     """
     List registered probe adapters by name.
     """
@@ -566,7 +584,7 @@ def _show_probes(engine: Any) -> Dict:
     return {"metric": "probes", "data": probes}
 
 
-def _show_rules(engine: Any) -> Dict:
+def _show_rules(engine: Engine) -> Dict:
     """List registered causal rule names."""
     registry = getattr(engine, "causal", None)
 
@@ -578,7 +596,7 @@ def _show_rules(engine: Any) -> Dict:
     return {"metric": "rules", "data": rules}
 
 
-def _show_semantic(engine: Any) -> Dict:
+def _show_semantic(engine: Engine) -> Dict:
     """
     List all semantic labels with descriptions.
     """
@@ -605,7 +623,7 @@ def _show_semantic(engine: Any) -> Dict:
 
 
 #
-def _exec_trace(query: ParsedQuery, engine: Any) -> Dict:
+def _exec_trace(query: ParsedQuery, engine: Engine) -> Dict:
     trace_id = query.filters.get("trace_id")
     if not trace_id:
         return {"error": "TRACE requires a trace_id"}
@@ -618,7 +636,7 @@ def _exec_trace(query: ParsedQuery, engine: Any) -> Dict:
     }
 
 
-def _exec_blame(query: ParsedQuery, engine: Any) -> Dict:
+def _exec_blame(query: ParsedQuery, engine: Engine) -> Dict:
     """
     For a given system label, find upstream callers.
     """
@@ -653,7 +671,7 @@ def _exec_blame(query: ParsedQuery, engine: Any) -> Dict:
     }
 
 
-def _exec_hotspot(query: ParsedQuery, engine: Any) -> Dict:
+def _exec_hotspot(query: ParsedQuery, engine: Engine) -> Dict:
     """
     Return the N busiest nodes by call_count.
     Falls back to a direct graph sort if engine.hotspots() doesn't exist.
@@ -695,7 +713,7 @@ def _exec_hotspot(query: ParsedQuery, engine: Any) -> Dict:
     }
 
 
-def _exec_diff(query: ParsedQuery, engine: Any) -> Dict:
+def _exec_diff(query: ParsedQuery, engine: Engine) -> Dict:
     since_label = query.filters.get("since")
     since_ts: Optional[float] = None
 
@@ -742,7 +760,7 @@ def _exec_diff(query: ParsedQuery, engine: Any) -> Dict:
     }
 
 
-def _exec_causal(query: ParsedQuery, engine: Any) -> Dict:
+def _exec_causal(query: ParsedQuery, engine: Engine) -> Dict:
     tags = None
     if "tags" in query.filters:
         tags = [

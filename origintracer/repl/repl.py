@@ -224,6 +224,7 @@ def render(result: dict) -> None:
 
     data = result.get("data")
 
+    # TODO: look into this nested nature and simplify
     # Unwrap executor - executor returns {"metric": "...", "data": <payload>}
     # local_server wraps that in {"ok": True, "data": <executor_result>}
     # So result["data"] is the executor result, and the real payload is inside that.
