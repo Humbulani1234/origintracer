@@ -17,7 +17,7 @@ def _n_plus_one_queries(
     graph: RuntimeGraph,
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
-) -> Tuple[bool, Dict]:
+) -> Tuple[bool, Dict[str, Any]]:
     """
     Detects the N+1 pattern: a query node whose call_count is significantly
     higher than the view node that called it.
@@ -115,7 +115,7 @@ def _db_query_hotspot(
     graph: RuntimeGraph,
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
-) -> Tuple[bool, Dict]:
+) -> Tuple[bool, Dict[str, Any]]:
     """
     A single query pattern accounts for >30% of all observed calls.
     Distinct from N+1 — fires even without a view caller, e.g. a
