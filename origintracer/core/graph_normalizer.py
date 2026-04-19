@@ -268,7 +268,7 @@ class GraphNormalizer:
         return result.strip()
 
     @classmethod
-    def from_yaml(cls, config: List[dict]) -> "GraphNormalizer":
+    def from_yaml(cls, config: dict) -> "GraphNormalizer":
         """
         Build a GraphNormalizer from the normalize: section of origintracer.yaml.
 
