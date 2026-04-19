@@ -52,6 +52,7 @@ from typing import (
     List,
     Optional,
     Tuple,
+    Union,
 )
 
 if TYPE_CHECKING:
@@ -190,22 +191,20 @@ def _parse_where_limit(
                 if i + 2 < len(tokens):
                     key = tokens[i]
                     op = tokens[i + 1]
-                    val = tokens[i + 2]
-
+                    raw = tokens[i + 2]
+                    val: Union[str, int, float]
                     if op != "=":
                         raise ValueError(
                             f"Unsupported operator: {op}"
                         )
-
                     # Type coercion
                     try:
-                        if val.isdigit():
-                            val = int(val)
+                        if raw.isdigit():
+                            val = int(raw)
                         else:
-                            val = float(val)
+                            val = float(raw)
                     except ValueError:
-                        val = val.strip("'\"")
-
+                        val = raw.strip("'\"")
                     filters[key] = val
                     i += 3
                 else:
@@ -278,7 +277,7 @@ def _exec_show(
     if unknown:
         return {
             "error": f"Unknown filter key(s): {', '.join(sorted(unknown))}",
-            "hint": f"Valid filters are: {', '.join(sorted(KNOWN_FILTER_KEYS))}",
+            "hint": f"Valid filters are: {', '.join(sorted(SEMANTIC_FILTER_KEYS))}",
         }
     # Handles system=, service=, node=, etc all through the same semantic layer
     node_scope = None

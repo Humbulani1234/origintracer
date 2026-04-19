@@ -13,7 +13,7 @@ def _new_sync_call_after_deployment(
     graph: RuntimeGraph,
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
-) -> Tuple[bool, Dict]:
+) -> Tuple[bool, Dict[str, Any]]:
     deployment_diff = temporal.label_diff("deployment")
     if not deployment_diff:
         return False, {}
@@ -87,7 +87,7 @@ def _asyncio_loop_starvation(
     graph: RuntimeGraph,
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
-) -> Tuple[bool, Dict]:
+) -> Tuple[bool, Dict[str, Any]]:
     """
     High average loop-tick duration means something is blocking the event
     loop — CPU work, a missing await, or a synchronous call on the hot path.
