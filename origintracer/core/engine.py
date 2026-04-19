@@ -136,10 +136,9 @@ class Engine:
                 ]
 
         # 4. Update Active Request Tracker
-        if self.tracker:
-            self.tracker.event(
-                trace_id=event.trace_id, probe=event.probe
-            )
+        self.tracker.event(
+            trace_id=event.trace_id, probe=event.probe
+        )
 
     def snapshot(
         self, label: Optional[str] = None
