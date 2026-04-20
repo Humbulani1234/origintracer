@@ -16,6 +16,8 @@ import time
 from collections import deque
 from typing import List, Optional
 
+import origintracer
+
 from ..core.engine import Engine
 from ..core.event_schema import NormalizedEvent
 
@@ -180,8 +182,6 @@ def emit_direct(event: NormalizedEvent) -> None:
 
     And per-request events belong in the buffer.
     """
-    import origintracer
-
     engine = (
         origintracer.get_engine()
     )  # always reads current live engine

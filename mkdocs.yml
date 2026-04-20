@@ -49,7 +49,6 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - Django Integration: getting-started/django.md
     - Celery Integration: getting-started/celery.md
-    - Configuration: getting-started/configuration.md
   - Probes:
     - Overview: probes/overview.md
     - Django Probe: probes/django.md
@@ -58,30 +57,19 @@ nav:
     - Writing Your Own Probe: probes/custom.md
   - Causal Rules:
     - Overview: rules/overview.md
-    - Built-in Rules: rules/builtin.md
-    - Writing Rules: rules/custom.md
+    - Built-in Rules: rules/django_rules.md
+    - Writing Rules: rules/django_rules.md
   - REPL:
     - Overview: repl/overview.md
-    - Command Reference: repl/commands.md
-    - Stitch Command: repl/stitch.md
   - React UI:
     - Overview: ui/overview.md
-    - Installation: ui/installation.md
-    - Wiring to Backend: ui/backend.md
   - FastAPI Backend:
     - Overview: backend/overview.md
-    - API Reference: backend/api.md
     - Storage Backends: backend/storage.md
   - OTel Bridge:
     - Overview: otel/overview.md
-    - Django Integration: otel/django.md
   - Architecture:
     - Design Principles: architecture/design.md
-    - Event Schema: architecture/events.md
-    - Runtime Graph: architecture/graph.md
-    - Engine & Buffer: architecture/engine.md
-    - Active Request Tracker: architecture/tracker.md
-    - Serialisation: architecture/serialisation.md
   - API Reference:
     - origintracer: api/origintracer.md
     - core.engine: api/engine.md
@@ -96,8 +84,6 @@ nav:
     - core.kprobe_bridge: api/kprobe_bridge.md
   - Development:
     - Running Tests: development/tests.md
-    - CI: development/ci.md
-    - Contributing: development/contributing.md
 
 plugins:
   - search

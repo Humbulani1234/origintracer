@@ -85,14 +85,21 @@ class Uploader:
     """
     Ships probe events and graph snapshots to the OriginTracer backend.
 
-    Implements the BaseRepository insert_event() interface so Engine.process()
-    can call it as a repository without knowing about HTTP transport.
+    Implements the ``BaseRepository.insert_event()`` interface so
+    ``Engine.process()`` can call it as a repository without knowing about
+    HTTP transport.
 
-    Usage in origintracer/__init__.py:
+    Usage
+    -----
+    ::
+
         uploader = Uploader(endpoint=..., api_key=...)
         uploader.start()
         uploader.bind_engine(engine) # must be called after start()
-        engine.repository = uploader  # Engine calls insert_event() per event
+        engine.repository = uploader # Engine calls insert_event() per event
+
+    Call ``uploader.stop()`` on shutdown to flush the queue and close the
+    background thread cleanly.
     """
 
     def __init__(
@@ -149,6 +156,26 @@ class Uploader:
         self._engine = engine
 
     def start(self) -> None:
+        """
+        Start the uploader background thread.
+
+        The thread wakes every ``snapshot_interval`` seconds and performs
+        two uploads:
+
+        **Events** — drains the event buffer and posts to
+        ``POST /api/v1/events``. Best-effort: failures are silently discarded.
+        Probe events are not critical path.
+
+        **Snapshots** - serializes the current ``RuntimeGraph`` and posts to
+        ``POST /api/v1/graph/snapshot`` (full replacement) and
+        ``POST /api/v1/graph/diff`` (incremental, if available).
+        Serialization failures abort the snapshot cycle for that interval.
+        Snapshot and diff uploads are tracked independently.
+
+        No exceptions escape the thread - all errors are logged at
+        debug/warning level. Call ``stop()`` on shutdown to flush and join
+        cleanly.
+        """
         if self._running:
             return
         self._running = True

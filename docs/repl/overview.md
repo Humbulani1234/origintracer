@@ -1,48 +1,85 @@
 # REPL Overview
 
-The REPL connects to the engine via a Unix socket (`/tmp/stacktracer-*.sock`) and queries it in real time while your app runs.
+The OriginTracer REPL connects directly to a running agent via Unix domain
+socket. All queries run against the live engine in the worker process —
+no HTTP, no serialisation round-trip, no restart required.
 
-## Start
+## Starting the REPL
 
 ```bash
-python -m stacktracer.scripts.repl
+python -m origintracer.repl
 ```
 
-## Command reference
+The REPL auto-discovers `/tmp/origintracer-{pid}.sock` and connects. If
+multiple workers are running, it presents a socket picker.
+
+## Protocol
+
+JSON over Unix domain socket:
+
+```json
+// Send
+{"id": "1", "query": "SHOW NODES"}
+
+// Receive
+{"id": "1", "ok": true, "data": {...}}
+```
+
+## Relationship to the Backend
+
+The REPL and the FastAPI backend serve the same data from different surfaces.
+The REPL connects directly to the agent's Unix socket — useful for live
+debugging in a terminal. The backend serves the same graph over HTTP — useful
+for dashboards and remote access.
+
+Use the REPL when you need to inspect a live worker interactively. Use the
+backend when you need persistent storage, historical queries, or a UI.
+
+
+# REPL Command Reference
+
+## DSL Queries
+
+DSL queries interrogate the live RuntimeGraph and event store.
 
 | Command | Description |
 |---|---|
-| `SHOW nodes` | All graph nodes with call count and avg duration |
-| `SHOW edges` | All graph edges with call count |
-| `SHOW events LIMIT 20` | Recent probe events |
-| `SHOW latency` | Nodes sorted by avg duration |
-| `SHOW active` | Currently in-flight requests |
-| `SHOW status` | Engine health, buffer depth, dropped events |
-| `SHOW probes` | Active probes |
-| `CAUSAL` | Run all causal rules |
-| `CAUSAL <tag>` | Run rules filtered by tag |
-| `DIFF SINCE deployment` | Graph changes since last deployment marker |
-| `MARK DEPLOYMENT <label>` | Mark a deployment boundary |
-| `TRACE <trace_id>` | Events for one trace |
-| `\stitch <trace_id>` | Merge multi-process graphs into one timeline |
-| `HOTSPOT TOP 10` | Top 10 nodes by call count |
-| `BLAME <node>` | Upstream callers of a node |
+| `SHOW latency WHERE service = "django"` | Latency breakdown for a service |
+| `SHOW latency WHERE system = "export"` | Latency for a semantic system alias |
+| `SHOW graph` | Full RuntimeGraph as adjacency list |
+| `SHOW graph WHERE system = "worker"` | Graph filtered to a semantic system |
+| `SHOW events WHERE probe = "db.query.start" LIMIT 20` | Raw events by probe type |
+| `HOTSPOT TOP 10` | Top 10 busiest nodes by call count |
+| `CAUSAL` | Run all causal rules against the live graph |
+| `CAUSAL WHERE tags = "blocking, worker"` | Causal rules filtered by tag |
+| `BLAME WHERE system = "export"` | Root cause candidates for a system |
+| `DIFF SINCE deployment` | Graph diff since the last deployment marker |
+| `TRACE <trace_id>` | Critical path for a specific trace |
 
-## \stitch command
+## Meta-commands
 
-`\stitch` is the centrepiece. It takes a `trace_id` visible in `SHOW events` and reconstructs the full causal timeline across process boundaries — gunicorn worker + celery worker + redis — into one ordered sequence of stages with durations.
+Meta-commands inspect engine internals and control the REPL session.
 
-```
-› \stitch fbaa0af4-2305-42df-97db-caec54bd65a1
+| Command | Description |
+|---|---|
+| `\status` | Engine stats — graph size, uptime, event counts |
+| `\probes` | Registered probe adapters |
+| `\rules` | Registered causal rules with confidence and tags |
+| `\semantic` | Semantic aliases and their resolved node sets |
+| `\emit <probe> <svc> <name>` | Inject a synthetic event for testing |
+| `\snapshot [label]` | Capture a temporal diff snapshot manually |
+| `\active` | In-flight requests tracked by `ActiveRequestTracker` |
+| `\reconnect` | Pick a different worker socket |
+| `\help` | Print command reference |
+| `\quit` | Exit — also `Ctrl+C` |
 
-  nginx::accept          0.2ms
-  uvicorn::receive       0.1ms
-  django::/api/orders/   4.3ms
-    django::OrderView    4.1ms
-    django::SELECT...    3.8ms  ← 90 calls
-  celery::send_email     12.4ms
-  ─────────────────────────────
-  total                  17.3ms
-```
+## Tips
 
----
+- `CAUSAL` with no filter runs every registered rule. On a large graph this
+  is fast (<5ms) but if you only care about one category use
+  `CAUSAL WHERE tags = "db"` to narrow it.
+- `DIFF SINCE deployment` requires at least one deployment marker — post one
+  with `\snapshot deployment` or via `POST /api/v1/deployment` on the backend.
+- `TRACE <id>` works best when `ActiveRequestTracker` is enabled — it
+  reconstructs the critical path from in-memory span data. For historical
+  traces use `GET /api/v1/traces/{id}` on the backend instead.

@@ -17,7 +17,7 @@ class BaseProbe(ABC):
     - Implement `start()` - attach hooks, monkey-patch, or register middleware
     - Implement `stop()` - detach and clean up
 
-    Probes communicate ONLY via `sdk.emitter.emit(event)`.
+    Probes communicate only via `sdk.emitter.emit(event)`.
     They never import Engine, RuntimeGraph, or any core layer directly.
     """
 
