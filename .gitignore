@@ -4,6 +4,7 @@ origintracer.sublime-workspace
 logs/
 *.log
 docs/
+mkdocs.yml
 
 # Python
 __pycache__/

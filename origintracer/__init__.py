@@ -646,67 +646,56 @@ def init(
     Initialise OriginTracer.
 
     Config merge order (last wins):
-        1. origintracer/config/defaults.yaml - package defaults, never edited
-        2. origintracer.yaml - user app config, takes precedence
-        3. init() kwargs - highest priority
 
-    Minimal usage:
-        origintracer.init()   # all defaults from defaults.yaml apply
+    1. ``origintracer/config/defaults.yaml`` — package defaults, never edited
+    2. ``origintracer.yaml`` — user app config, takes precedence
+    3. ``init()`` kwargs — highest priority
 
-    Typical usage in apps.py:
+    Minimal usage::
+
+        origintracer.init()
+
+    Typical usage in ``apps.py``::
+
         origintracer.init(
-            config  = str(BASE_DIR / "origintracer.yaml"),
-            debug   = True,
+            config = str(BASE_DIR / "origintracer.yaml"),
+            debug  = True,
         )
 
     Parameters
     ----------
-    api_key
+    api_key : str, optional
         API key for remote upload to OriginTracer backend.
-
-    endpoint
-        Backend URL. Default: http://localhost:8001
-
-    config
-        Explicit path to user origintracer.yaml.
+    endpoint : str, optional
+        Backend URL. Default: ``http://localhost:8001``
+    config : str, optional
+        Explicit path to user ``origintracer.yaml``.
         If omitted, searched automatically from cwd upward.
-
-    probes
-        List of probe names to activate.
-        Replaces the default list entirely.
-        Default: ["django", "asyncio", "uvicorn", "gunicorn", "nginx"]
-
-    semantic
+    probes : list[str], optional
+        List of probe names to activate. Replaces the default list entirely.
+        Default: ``["django", "asyncio", "uvicorn", "gunicorn", "nginx"]``
+    semantic : dict, optional
         Extra semantic alias dicts to add or override.
         Merged with defaults by label — your label takes precedence on same key.
-
-    snapshot_interval
-        Seconds between temporal graph snapshots. Default: 15.0
-
-    flush_interval
-        Seconds between uploader event batch flushes. Default: 10
-
-    debug
-        If True, enables OriginTracer even when DJANGO_DEBUG=True.
-        Default: False (auto-disables in Django debug environments)
-
-    repository
-        Pre-built storage backend (PGEventRepository, ClickHouseRepository).
+    snapshot_interval : float, optional
+        Seconds between temporal graph snapshots. Default: ``15.0``
+    flush_interval : int, optional
+        Seconds between uploader event batch flushes. Default: ``10``
+    debug : bool, optional
+        If ``True``, enables OriginTracer even when ``DJANGO_DEBUG=True``.
+        Default: ``False`` — auto-disables in Django debug environments.
+    repository : object, optional
+        Pre-built storage backend (``PGEventRepository``, ``ClickHouseRepository``).
         Overrides the remote uploader as the event sink.
-
-    normalize
+    normalize : list[dict], optional
         Additional normalization rules beyond built-in patterns and yaml rules.
-        Extends the merged yaml normalize list.
-        Each rule: {"service": "django", "pattern": "...", "replacement": "..."}
-
-    compactor
-        Override specific compactor settings.
-        Merges key-by-key - unspecified keys keep their yaml / default values.
-        Keys: max_nodes, evict_to_ratio, node_ttl_s, min_call_count
-
-    active_requests
-        Override ActiveRequestTracker settings.
-        Merges key-by-key.  Keys: ttl_s, max_size
+        Each rule: ``{"service": "django", "pattern": "...", "replacement": "..."}``
+    compactor : dict, optional
+        Override specific compactor settings. Merges key-by-key.
+        Keys: ``max_nodes``, ``evict_to_ratio``, ``node_ttl_s``, ``min_call_count``
+    active_requests : dict, optional
+        Override ActiveRequestTracker settings. Merges key-by-key.
+        Keys: ``ttl_s``, ``max_size``
     """
     global _config, _engine, _active_probes, _active_rules
 

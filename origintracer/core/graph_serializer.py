@@ -119,28 +119,40 @@ def dict_to_graph(data: Dict) -> Any:
 
 class GraphSerializer(ABC):
     """
-    Serializes and deserializes RuntimeGraph using protobuf or MessagePack.
+    Serializes and deserializes ``RuntimeGraph`` using protobuf or MessagePack.
 
-    Two backends are provided:
-
-    ProtobufSerializer - Experimental
-        Uses the compiled origintracer_pb2 module generated from origintracer.proto.
-        Requires: pip install protobuf grpcio-tools
-        Compile first:
-            python -m grpc_tools.protoc \\
-                -I origintracer/core \\
-                --python_out=origintracer/core \\
-                origintracer/core/origintracer.proto
-
-        Smaller output, strictly typed, good for network transport.
+    Two backends are provided.
 
     MsgpackSerializer
-        Uses MessagePack.
-        Requires: pip install msgpack
-        Simpler to set up, slightly larger than protobuf, still 3-5x smaller than JSON.
-        Good first choice for local persistence before adding the protobuf compile step.
+    -----------------
+    Uses MessagePack. Requires::
 
-    Usage:
+        pip install msgpack
+
+    Simpler to set up, slightly larger than protobuf, still 3–5x smaller than
+    JSON. Good first choice for local persistence before adding the protobuf
+    compile step.
+
+    ProtobufSerializer *(experimental)*
+    ------------------------------------
+    Uses the compiled ``origintracer_pb2`` module generated from
+    ``origintracer.proto``. Requires::
+
+        pip install protobuf grpcio-tools
+
+    Compile the proto file first::
+
+        python -m grpc_tools.protoc          \\
+            -I origintracer/core             \\
+            --python_out=origintracer/core   \\
+            origintracer/core/origintracer.proto
+
+    Smaller output, strictly typed, good for network transport.
+
+    Usage
+    -----
+    MessagePack::
+
         from origintracer.core.graph_serializer import MsgpackSerializer
 
         serializer = MsgpackSerializer()
@@ -153,15 +165,19 @@ class GraphSerializer(ABC):
         with open("graph.msgpack", "rb") as f:
             restored_graph = serializer.deserialize(f.read())
 
-        # Or use protobuf
-        from origintracer.core.graph_serializer import ProtobufSerializer
-        serializer = ProtobufSerializer()
-        data = serializer.serialize(graph) # bytes
-        graph2 = serializer.deserialize(data) # RuntimeGraph
+    Protobuf::
 
-    Loaded graphs are fully functional RuntimeGraph instances -
-    all methods (neighbors, callers, causal rules, DSL queries) work identically
-    on a deserialized graph as on a live one.
+        from origintracer.core.graph_serializer import ProtobufSerializer
+
+        serializer = ProtobufSerializer()
+        data  = serializer.serialize(graph)    # bytes
+        graph2 = serializer.deserialize(data)  # RuntimeGraph
+
+    Note
+    ----
+    Loaded graphs are fully functional ``RuntimeGraph`` instances — all methods
+    (``neighbors``, ``callers``, causal rules, DSL queries) work identically on
+    a deserialized graph as on a live one.
     """
 
     @abstractmethod
