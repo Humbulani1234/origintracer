@@ -1,11 +1,10 @@
 # OriginTracer - Django Application
 
-Traces the full request path: nginx >> gunicorn >> uvicorn >> Django >> Redis.
-OriginTracer instruments automatically via probes - no decorators, no SDK calls in your views.
+Traces the full request path: **nginx --> gunicorn --> uvicorn --> django --> redis**. OriginTracer instruments automatically via probes - no decorators, no SDK calls in your views.
 
 ---
 
-## Directory layout
+## Project layout
 
 ```
 applications/django/
@@ -48,7 +47,17 @@ MIDDLEWARE = [
     ...
 ]
 ```
+---
 
+## origintracer.yaml
+
+```yaml
+probes:
+  - nginx
+  - gunicorn
+  - uvicorn
+  - django
+```
 ---
 
 ## apps.py
@@ -61,24 +70,12 @@ class WorkerConfig(AppConfig):
 
     def ready(self):
         import origintracer
-        origintracer.init(debug=True)
+        origintracer.init(debug=True, BASE_DIR / "origintracer.yaml")
 ```
 
 `AppConfig.ready()` runs once per process after Django is fully loaded.
 This is the only place `origintracer.init()` is called for the gunicorn worker.
 Never call `init()` at module level or in `settings.py`.
-
----
-
-## origintracer.yaml
-
-```yaml
-probes:
-  - nginx
-  - gunicorn
-  - uvicorn
-  - django
-```
 
 ---
 

@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from origintracer.core.event_schema import NormalizedEvent
+
 logger = logging.getLogger("origintracer.uploader")
 
 
@@ -28,7 +30,7 @@ class _UploaderEventBuffer:
 
     def drain(self, max_batch: int) -> List[Dict]:
         with self._lock:
-            batch = []
+            batch: list = []
             while self._q and len(batch) < max_batch:
                 batch.append(self._q.popleft())
             return batch

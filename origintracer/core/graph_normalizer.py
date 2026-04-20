@@ -63,9 +63,6 @@ class NormalizationRule:
     pattern: Optional[str] = None
     replacement: Optional[str] = None
 
-    # Function approach — takes name, returns normalized name
-    fn: Optional[Callable[[str], str]] = None
-
     # Internal compiled pattern
     _compiled: Optional[re.Pattern] = field(
         default=None, repr=False, compare=False
@@ -78,8 +75,6 @@ class NormalizationRule:
     def apply(self, name: str) -> str:
         if self._compiled and self.replacement is not None:
             return self._compiled.sub(self.replacement, name)
-        if self.fn:
-            return self.fn(name)
         return name
 
 
@@ -144,7 +139,7 @@ class GraphNormalizer:
         # Per-service rules: service → list of NormalizationRule
         self._rules: Dict[str, List[NormalizationRule]] = {}
 
-        # Cardinality guard: service → set of seen normalized names
+        # Cardinality guard: service >> set of seen normalized names
         # When a service exceeds max_unique_names_per_service, new names
         # are bucketed into "{service}::high_cardinality_node"
         self._max_unique = max_unique_names_per_service
@@ -180,31 +175,6 @@ class GraphNormalizer:
         )
         self._rules.setdefault(service, []).append(rule)
         self._cache.clear()  # invalidate cache on new rule
-
-    def add_rule(
-        self,
-        service: str,
-        fn: Callable[[str], str],
-        description: str = "",
-    ) -> None:
-        """
-        Add a function-based normalization rule.
-        fn receives the raw name string and returns the normalized name.
-
-        Example:
-            def normalize_celery_name(name: str) -> str:
-                # Strip task instance metadata appended by custom middleware
-                return name.split("[")[0].strip()
-
-            normalizer.add_rule(service="celery", fn=normalize_celery_name)
-        """
-        rule = NormalizationRule(
-            service=service,
-            description=description,
-            fn=fn,
-        )
-        self._rules.setdefault(service, []).append(rule)
-        self._cache.clear()
 
     def normalize(self, service: str, name: str) -> str:
         """
@@ -268,7 +238,7 @@ class GraphNormalizer:
         return result.strip()
 
     @classmethod
-    def from_yaml(cls, config: List[dict]) -> "GraphNormalizer":
+    def from_yaml(cls, config: dict) -> "GraphNormalizer":
         """
         Build a GraphNormalizer from the normalize: section of origintracer.yaml.
 
