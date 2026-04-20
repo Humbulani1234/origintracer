@@ -69,7 +69,7 @@ import contextlib
 import logging
 import os
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 from ..core.bpf_programs import (
     BRIDGE_BPF_HEADER,
@@ -105,8 +105,8 @@ class KprobeBridge:
     """
 
     def __init__(self) -> None:
-        self._bpf: Optional[object] = None
-        self._map = None
+        self._bpf: Optional[Any] = None
+        self._map: Optional[Any] = None
         self._available: bool = False
         self._lock = threading.Lock()
 

@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     Iterator,
@@ -11,6 +12,10 @@ from typing import (
     Optional,
     Set,
 )
+
+import yaml
+
+from origintracer.sdk.base_probe import BaseProbe
 
 
 @dataclass
@@ -136,8 +141,9 @@ def load_from_dict(data: List[Dict[str, Any]]) -> SemanticLayer:
 
 
 def load_from_yaml(path: str) -> SemanticLayer:
-    """Load a single YAML file."""
-    import yaml
+    """
+    Load a single YAML file.
+    """
 
     with open(path) as f:
         data = yaml.safe_load(f) or {}
@@ -152,7 +158,7 @@ def merge_yaml_configs(*paths: str) -> dict:
     """
     import yaml
 
-    merged = {"probes": [], "semantic": []}
+    merged: Dict[str, list] = {"probes": [], "semantic": []}
 
     for path in paths:
         if not path or not os.path.exists(path):

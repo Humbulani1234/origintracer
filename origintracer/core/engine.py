@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 
 from ..query.parser import execute, parse
 from ..sdk.base_probe import BaseProbe
@@ -57,7 +57,7 @@ class Engine:
             GraphCompactor()
         )  # overwritten in init()
         self.semantic = semantic_layer or SemanticLayer()
-        self.causal: Optional[PatternRegistry] = None
+        self.causal: Optional[Type[PatternRegistry]] = None
         # System active probes - overridden during init()
         self.probes: Optional[List[BaseProbe]] = None
 
@@ -136,10 +136,9 @@ class Engine:
                 ]
 
         # 4. Update Active Request Tracker
-        if self.tracker:
-            self.tracker.event(
-                trace_id=event.trace_id, probe=event.probe
-            )
+        self.tracker.event(
+            trace_id=event.trace_id, probe=event.probe
+        )
 
     def snapshot(
         self, label: Optional[str] = None
@@ -164,10 +163,14 @@ class Engine:
         """
         Run all registered causal rules against the current graph.
         """
-
-        return self.causal.evaluate(
-            self.graph, self.temporal, self.tracker, tags=tags
-        )
+        if self.causal is not None:
+            return self.causal.evaluate(
+                self.graph,
+                self.temporal,
+                self.tracker,
+                tags=tags,
+            )
+        return []
 
     def query(self, query_str: str) -> Dict[str, Any]:
         """
@@ -201,6 +204,7 @@ class Engine:
 
         path = []
         last_ts = None
+        duration_ms: Optional[float] = None
         for e in filtered:
             duration_ms = (
                 (e.timestamp - last_ts) * 1000
@@ -336,7 +340,11 @@ class Engine:
             "graph_nodes": len(self.graph),
             "temporal_diffs": len(self.temporal),
             "event_log_size": len(self._event_log),
-            "causal_rules": len(self.causal.rule_names()),
+            "causal_rules": (
+                len(self.causal.rule_names())
+                if self.causal is not None
+                else 0
+            ),
             "semantic_labels": self.semantic.all_labels(),
             "running": self._running,
         }

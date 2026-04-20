@@ -5,8 +5,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional
 
-# core/event_schema.py
-
 
 class ProbeTypeRegistry:
     """

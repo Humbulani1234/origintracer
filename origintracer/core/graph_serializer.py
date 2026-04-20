@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from origintracer.core.runtime_graph import (
     GraphEdge,
@@ -337,7 +337,7 @@ class JSONSerializer(GraphSerializer):
     Serialize to JSON. Use for debugging and development only.
     """
 
-    def __init__(self, indent: int = None) -> None:
+    def __init__(self, indent: Optional[int] = None) -> None:
         self._indent = indent
 
     def serialize(self, graph: Any) -> bytes:

@@ -35,7 +35,10 @@ class _DrainEventBuffer:
 
     def push(self, event: NormalizedEvent) -> None:
         with self._lock:
-            if len(self._q) >= self._q.maxlen:  # type: ignore[arg-type]
+            if (
+                self._q.maxlen is not None
+                and len(self._q) >= self._q.maxlen
+            ):
                 self._dropped += 1
                 return
             self._q.append(event)

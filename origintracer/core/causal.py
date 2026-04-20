@@ -27,7 +27,15 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+)
 
 from origintracer.core.active_requests import (
     ActiveRequestTracker,
@@ -59,7 +67,11 @@ class CausalMatch:
 
 # A rule predicate returns (matched, evidence_dict)
 RuleFn = Callable[
-    [RuntimeGraph, TemporalStore, ActiveRequestTracker],
+    [
+        RuntimeGraph,
+        TemporalStore,
+        Optional[ActiveRequestTracker],
+    ],
     Tuple[bool, Dict[str, Any]],
 ]
 
@@ -81,7 +93,7 @@ class PatternRegistry:
         matches = PatternRegistry.evaluate(graph, temporal)
     """
 
-    _rules: Dict[str, CausalRule] = {}
+    _rules: ClassVar[Dict[str, CausalRule]] = {}
 
     @classmethod
     def register(cls, rule: CausalRule) -> None:

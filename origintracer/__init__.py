@@ -22,16 +22,19 @@ import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type
 
 import yaml
 
 from origintracer.utils.logging import setup_file_logging
 
 from .context.vars import get_trace_id
+from .core.active_requests import ActiveRequestTracker
 from .core.causal import PatternRegistry
 from .core.engine import Engine
 from .core.event_schema import NormalizedEvent
+from .core.graph_compactor import GraphCompactor
+from .core.graph_normalizer import GraphNormalizer
 from .core.local_server import LocalQueryServer
 from .core.runtime_graph import RuntimeGraph
 from .core.semantic import SemanticLayer
@@ -44,7 +47,7 @@ logger = logging.getLogger("origintracer.initialisation")
 # Package-level variables
 _config: Optional["ResolvedConfig"] = None
 _engine: Optional[Engine] = None
-_active_rules: Optional[PatternRegistry] = None
+_active_rules: Optional[Type[PatternRegistry]] = None
 _active_probes: List[BaseProbe] = []
 _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
@@ -407,7 +410,7 @@ def _init_engine(
 
 def _init_probes(
     cfg: ResolvedConfig, engine: Any, app_root: str
-) -> List[Any]:
+) -> list:
     """
     1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
 
@@ -496,8 +499,8 @@ def _discover_user_probes(app_root: str) -> None:
 
 
 def _init_rules(
-    cfg: ResolvedConfig, engine: Any, app_root: str
-) -> List[Any]:
+    cfg: ResolvedConfig, engine: Engine, app_root: str
+) -> Type[PatternRegistry]:
     """
     1. Import builtin rules modules listed in defaults.yaml under builtin_rules.
 
@@ -841,8 +844,8 @@ def shutdown() -> None:
         _engine = None
 
     _config = None
-    _post_init_callbacks = []
-    _active_rules = []
+    _post_init_callbacks: List[Callable] = []
+    _active_rules: None
     logger.info("OriginTracer shut down")
 
 
