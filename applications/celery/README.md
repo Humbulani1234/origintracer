@@ -1,11 +1,11 @@
 # OriginTracer - Celery Application
 
-Traces the cross-process path: Django view --> Redis (task queue) --> Celery worker. The trace_id travels inside task kwargs (`_trace_id`) across the
+Traces the cross-process path: **django view --> redis (task queue) --> celery worker**. The trace_id travels inside task kwargs (`_trace_id`) across the
 Redis boundary, allowing `\stitch` in the REPL to join both sides into one timeline.
 
 ---
 
-## Directory layout
+## Project layout
 
 ```
 applications/celery/
@@ -106,22 +106,6 @@ class TracedRedis(redis.Redis):
 ```
 ---
 
-## worker/apps.py 
-
-```python
-from django.apps import AppConfig
-
-class WorkerConfig(AppConfig):
-    name = "worker"
-
-    def ready(self):
-        import origintracer
-        origintracer.init(debug=True)
-        # Celery worker gets its own init() inside celery_probe._on_worker_fork
-```
-
----
-
 ## origintracer.yaml
 
 ```yaml
@@ -132,6 +116,21 @@ probes:
   - uvicorn
   - celery
   - redis
+```
+---
+
+## worker/apps.py 
+
+```python
+from django.apps import AppConfig
+
+class WorkerConfig(AppConfig):
+    name = "worker"
+
+    def ready(self):
+        import origintracer
+        origintracer.init(debug=True, BASE_DIR / "origintracer.yaml")
+        # Celery worker gets its own init() inside celery_probe._on_worker_fork
 ```
 
 ---

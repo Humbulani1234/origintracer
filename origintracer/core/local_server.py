@@ -57,17 +57,9 @@ class LocalQueryServer:
         Response: {"id": "1", "ok": true, "data": [...]}\\n
                   {"id": "1", "ok": false, "error": "..."}\\n
 
-    Supported query types:
-        SHOW nodes - all graph nodes
-        SHOW edges - all graph edges
-        SHOW graph - nodes + edges together
-        SHOW trace <trace_id> - all events for a trace
-        SHOW status - engine health/stats
-        BLAME WHERE service = "django" - causal blame query
-
     REPL usage:
         # In a separate terminal
-        python -m origintracer.repl
+        python -m origintracer.repl.repl
 
         The REPL auto-discovers the socket, connects, and presents
         an interactive prompt where you can type queries.
