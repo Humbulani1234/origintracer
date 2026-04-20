@@ -14,14 +14,14 @@ class GraphCompactor:
     """
     Bounds ``RuntimeGraph`` memory via two mechanisms.
 
-    Mechanism 1 — Node TTL
+    Mechanism 1 - Node TTL
     ----------------------
     Nodes not seen for longer than ``node_ttl_s`` seconds are evicted.
     This handles services that appear temporarily (a feature flag endpoint
     that was removed, a task type that is no longer dispatched).
     Default TTL: ``3600`` seconds.
 
-    Mechanism 2 — Node Cap with LRU Eviction
+    Mechanism 2 - Node Cap with LRU Eviction
     -----------------------------------------
     When the node count exceeds ``max_nodes``, the least recently seen nodes
     are evicted to bring the count back to ``max_nodes * evict_to_ratio``.
