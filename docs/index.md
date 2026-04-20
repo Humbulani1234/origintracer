@@ -5,11 +5,11 @@
 StackTracer instruments the framework hooks — Django middleware, asyncio `Task.__step`, Gunicorn fork callbacks, Uvicorn ASGI middleware — and builds a live causal graph of your running stack from the signals they emit. No code changes in your views. No manual spans. No YAML-driven instrumentation configuration.
 
 ```
-gunicorn::master  ──spawned──►  gunicorn::UvicornWorker-24861
-                  ──handled──►  uvicorn::/api/users/
-                  ──calls──►    django::/api/users/
-                  ──calls──►    django::NPlusOneView  ×180
-                  ──calls──►    django::SELECT "auth_user"...  ×90
+gunicorn::master  ── spawned ──►  gunicorn::UvicornWorker-24861
+                  ── handled ──►  uvicorn::/api/users/
+                  ── calls ──►    django::/api/users/
+                  ── calls ──►    django::NPlusOneView  ×180
+                  ── calls ──►    django::SELECT "auth_user"...  ×90
 ```
 
 The N+1 pattern surfaces structurally — `NPlusOneView` has 180 calls, the query has 90. No query analysis needed.
