@@ -1,4 +1,11 @@
-# OriginTracer
+<div align="center">
+<h1>OriginTracer</h1>
+
+<h3>
+
+[Website](https://origintracer.app/) | [Documentation](https://origintracer.app/)
+
+</h3>
 
 ![Backend](https://img.shields.io/badge/Backend-FastAPI-green?style=flat-square)
 ![Frontend](https://img.shields.io/badge/Frontend-React_UI_%26_REPL-blue?style=flat-square)
@@ -10,10 +17,11 @@
 ![WSL2](https://img.shields.io/badge/WSL2-0078D4?style=for-the-badge&logo=windows&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
 
+</div>
 
 **Live causal graph for async services.**
 
-OriginTracer instruments your full production stack - **nginx --> gunicorn/uvicorn --> Django/FastAPI --> asyncio --> Celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
+OriginTracer instruments your full production stack - **nginx --> gunicorn --> asynico --> uvicorn --> django/fastapi --> celery** - to reveal *why* execution flowed the way it did, not just that it was slow. It builds a real-time causal graph, automatically detects anti-patterns, and lets you query the live system with REPL commands like `BLAME`, `DIFF SINCE deployment`, or `CAUSAL`.
 
 It combines:
 - Deep, source-grounded "traced book" chapters that teach framework and kernel internals via real pivot points.
@@ -77,20 +85,7 @@ MIDDLEWARE = [
 ]
 ```
 
-**2. Initialize in `apps.py`**:
-
-```python
-from django.apps import AppConfig
-
-class MyAppConfig(AppConfig):
-    name = "myapp"
-
-    def ready(self):
-        import origintracer
-        origintracer.init(debug=True)
-```
-
-**3. Create `origintracer.yaml`** in your project root:
+**2. Create `origintracer.yaml`** in your project root:
 
 ```yaml
 probes:
@@ -101,6 +96,19 @@ probes:
   - nginx  # available on origintracer.app
 ```
 
+**3. Initialize in `apps.py`**:
+
+```python
+from django.apps import AppConfig
+
+class MyAppConfig(AppConfig):
+    name = "myapp"
+
+    def ready(self):
+        import origintracer
+        origintracer.init(debug=True, config=BASE_DIR / "origintracer.yaml")
+```
+
 **4. Run your app**:
 
 ```bash
@@ -108,7 +116,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
   --worker-class uvicorn.workers.UvicornWorker
 ```
 
-Send requests to your views using the provided `load` and `burst` scripts and explore the results with the REPL.
+Send requests to your views using the provided `load_test` and `burst_test` scripts and explore the results with the REPL.
 
 Open the REPL:
 
