@@ -129,10 +129,6 @@ class GraphSerializer(ABC):
 
         pip install msgpack
 
-    Simpler to set up, slightly larger than protobuf, still 3–5x smaller than
-    JSON. Good first choice for local persistence before adding the protobuf
-    compile step.
-
     ProtobufSerializer *(experimental)*
     ------------------------------------
     Uses the compiled ``origintracer_pb2`` module generated from
@@ -146,8 +142,6 @@ class GraphSerializer(ABC):
             -I origintracer/core             \\
             --python_out=origintracer/core   \\
             origintracer/core/origintracer.proto
-
-    Smaller output, strictly typed, good for network transport.
 
     Usage
     -----
@@ -170,8 +164,8 @@ class GraphSerializer(ABC):
         from origintracer.core.graph_serializer import ProtobufSerializer
 
         serializer = ProtobufSerializer()
-        data  = serializer.serialize(graph)    # bytes
-        graph2 = serializer.deserialize(data)  # RuntimeGraph
+        data  = serializer.serialize(graph) # bytes
+        graph2 = serializer.deserialize(data) # RuntimeGraph
 
     Note
     ----
