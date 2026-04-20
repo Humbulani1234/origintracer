@@ -1,8 +1,8 @@
-site_name: StackTracer
-site_description: Probe-based Python runtime observability. No decorators. No SDK calls in your views.
-site_url: https://your-username.github.io/stack-tracer/
-repo_url: https://github.com/your-username/stack-tracer
-repo_name: stack-tracer
+site_name: OriginTracer
+site_description: Probe-based async runtime observability.
+site_url: https://origintracer.app/
+repo_url: https://github.com/Humbulani1234/origintracer
+repo_name: origintracer
 edit_uri: edit/main/docs/
 
 theme:
@@ -53,12 +53,8 @@ nav:
   - Probes:
     - Overview: probes/overview.md
     - Django Probe: probes/django.md
-    - asyncio Probe: probes/asyncio.md
-    - Gunicorn Probe: probes/gunicorn.md
-    - Uvicorn Probe: probes/uvicorn.md
-    - Celery Probe: probes/celery.md
-    - nginx Probe: probes/nginx.md
-    - Redis Probe: probes/redis.md
+    - asyncio Probe: probes/asyncio/installation.md
+    - asyncio Probe: probes/asyncio/architecture.md
     - Writing Your Own Probe: probes/custom.md
   - Causal Rules:
     - Overview: rules/overview.md
@@ -89,8 +85,8 @@ nav:
   - API Reference:
     - origintracer: api/origintracer.md
     - core.engine: api/engine.md
-    - core.runtime_graph: api/graph.md
-    - core.event_schema: api/events.md
+    - core.runtime_graph: api/runtime_graph.md
+    - core.event_schema: api/event_schema.md
     - core.causal: api/causal.md
     - core.temporal: api/temporal.md
     - core.active_requests: api/tracker.md
@@ -113,7 +109,7 @@ plugins:
             show_root_heading: true
             show_category_heading: true
             members_order: source
-            docstring_style: google
+            docstring_style: numpy
             show_signature_annotations: true
             separate_signature: true
 
