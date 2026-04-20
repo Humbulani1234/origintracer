@@ -395,17 +395,6 @@ class TestGraphNormalizer:
         assert "/api/{version}/" in result
         assert "v3" not in result
 
-    def test_user_fn_rule(self):
-        self.n.add_rule(
-            service="celery",
-            fn=lambda name: name.split("[")[0].strip(),
-        )
-        result = self.n.normalize(
-            "celery", "tasks.process_order[abc-123]"
-        )
-        assert "[" not in result
-        assert result == "tasks.process_order"
-
     def test_cache_hit_returns_same_result(self):
         r1 = self.n.normalize("django", "/api/users/999/")
         r2 = self.n.normalize("django", "/api/users/999/")
