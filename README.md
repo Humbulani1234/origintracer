@@ -3,7 +3,7 @@
 
 <h3>
 
-[Website](https://origintracer.app/) | [Documentation](https://origintracer.app/)
+[Website](https://origintracer.app/)
 
 </h3>
 
