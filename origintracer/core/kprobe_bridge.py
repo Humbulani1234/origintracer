@@ -101,18 +101,32 @@ def bridge_bpf_header() -> str:
 
 class KprobeBridge:
     """
-    Compiles and owns the single shared BPF() object.
+    Compiles and owns the single shared ``BPF()`` object.
 
-    No probe-specific knowledge lives here. The bridge simply:
-      - calls build_bpf_program() to get the assembled C source
-      - compiles it with BPF()
-      - exposes bridge.bpf so probes can attach tracepoints/open buffers
-      - exposes bridge.trace_map so Python middleware can write trace IDs
+    No probe-specific knowledge lives here. The bridge assembles all registered
+    BPF fragments into one program, compiles it once, and exposes the result
+    to probes.
 
-    Startup contract:
-      1. Import all probe modules  >> each calls register_bpf() at module level
-      2. bridge.start() >> compiles everything registered so far
-      3. probe.start(bridge, ...)  >> attaches tracepoints, opens perf buffers
+    Attributes
+    ----------
+    bpf : BPF
+        The compiled BPF program. Probes use this to attach tracepoints
+        and open perf buffers.
+    trace_map : BPF hash map
+        Shared map for Python middleware to write ``(tid, trace_id)`` pairs.
+        kprobe handlers read from this map to attribute kernel events to
+        the correct Python trace.
+
+    Startup Order
+    -------------
+    The following order is required:
+
+    1. Import all probe modules - each calls ``register_bpf()`` at module level
+    2. Call ``bridge.start()`` - compiles everything registered so far
+    3. Call ``probe.start(bridge, ...)`` - attaches tracepoints, opens perf buffers
+
+    Reversing steps 2 and 3 will compile an incomplete program missing any
+    probes imported after ``start()``.
     """
 
     def __init__(self) -> None:
@@ -156,14 +170,24 @@ class KprobeBridge:
         """
         Assemble and compile the combined BPF program.
 
-        Returns True on success, False (without raising) if:
-          - not on POSIX / not Linux
-          - bcc not installed
-          - not root / no CAP_BPF
-          - BPF compilation fails (logged as warning)
+        Must be called **after** all probe modules have been imported and
+        **before** any probe's ``start()`` method. See startup order in the
+        class docstring.
 
-        Must be called AFTER all probe modules have been imported,
-        and BEFORE any probe's start() method.
+        Returns
+        -------
+        bool
+            ``True`` on successful compilation. ``False`` — without raising —
+            in any of these cases:
+
+            - Not running on Linux
+            - ``bcc`` not installed
+            - Insufficient permissions (no ``CAP_BPF`` or root)
+            - BPF compilation error (logged as warning)
+
+            Callers should check the return value. A ``False`` result means all
+            kprobe-based probes will degrade gracefully - Python-side observations
+            still function normally.
         """
         if os.name != "posix":
             logger.info(

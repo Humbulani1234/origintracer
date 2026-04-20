@@ -153,20 +153,34 @@ int _bridge_noop(struct pt_regs *ctx) { return 0; }
 
 def build_bpf_program() -> str:
     """
-    Assemble all registered BPFProgramPart fragments into one BPF C string.
-    Called by KprobeBridge.start() immediately before BPF(text=...).
+    Assemble all registered ``BPFProgramPart`` fragments into one BPF C string.
 
-    Sections in the output:
-      1. BRIDGE_BPF_HEADER - shared structs + maps
-      2. #include headers - deduplicated union of all probe headers
-      3. struct definitions - deduplicated union of all probe structs
-      4. map declarations - deduplicated union of all probe maps
-      5. probe functions - in registration order, NOT deduplicated
-      6. _BRIDGE_NOOP - sentinel
+    Called by ``KprobeBridge.start()`` immediately before ``BPF(text=...)``.
 
-    Deduplication: exact string match after stripping whitespace.
-    Map naming convention (probe_mapname) prevents false deduplication of
-    distinct maps that happen to have similar declarations.
+    Output Sections
+    ---------------
+    Assembled in this order:
+
+    1. ``BRIDGE_BPF_HEADER`` - shared structs and maps
+    2. ``#include`` headers - deduplicated union of all probe headers
+    3. struct definitions - deduplicated union of all probe structs
+    4. map declarations - deduplicated union of all probe maps
+    5. probe functions - in registration order, **not** deduplicated
+    6. ``_BRIDGE_NOOP`` - sentinel
+
+    Returns
+    -------
+    str
+        The assembled BPF C source, ready to pass to ``BPF(text=...)``.
+
+    Notes
+    -----
+    Deduplication uses exact string match after stripping whitespace.
+    Probe functions are intentionally excluded from deduplication — two
+    probes may have functions with the same signature but different bodies.
+
+    Map naming convention (``<probe>_<mapname>``) prevents false deduplication
+    of distinct maps that happen to have similar declarations.
     """
     parts = [part for _, part in _registry]
 

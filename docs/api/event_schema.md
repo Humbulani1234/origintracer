@@ -4,7 +4,11 @@
     options:
       members:
         - now
-        - to_dict
-        - from_dict
 
 ::: origintracer.core.event_schema.ProbeRegistry
+  options:
+      members:
+        - register
+        - register_many
+
+::: origintracer.core.event_schema.ProbeTypes

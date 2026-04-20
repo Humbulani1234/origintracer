@@ -3,7 +3,6 @@ origintracer.sublime-workspace
 /env
 logs/
 *.log
-docs/
 
 # Python
 __pycache__/
