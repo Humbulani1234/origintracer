@@ -3,23 +3,33 @@ Pattern-based causal matching over the RuntimeGraph.
 
 This is a rule engine, not probabilistic causal inference.
 Rules are human-encoded failure patterns derived from real incidents.
-Each rule observes the live graph and returns a CausalMatch when it fires.
+Each rule observes the live graph and returns a ``CausalMatch`` when it fires.
 
-Rule inventory
+Rule Inventory
 --------------
-  retry_amplification - high retry counts on edges
-  new_sync_call_after_deploy - new synchronous edges after deployment marker
-  asyncio_loop_starvation - event loop ticks averaging >10ms
-  n_plus_one_queries - query call_count >> parent view call_count
-  worker_imbalance - one gunicorn worker handling far more than others
-  db_query_hotspot - single query accounts for >30% of all calls
-  request_duration_anomaly - recent P99 diverged 3x from historical avg (needs tracker)
+.. list-table::
+   :widths: 35 65
 
-Adding a new rule
+   * - ``retry_amplification``
+     - High retry counts on edges.
+   * - ``new_sync_call_after_deploy``
+     - New synchronous edges after deployment marker.
+   * - ``asyncio_loop_starvation``
+     - Event loop ticks averaging >10ms.
+   * - ``n_plus_one_queries``
+     - Query ``call_count`` >> parent view ``call_count``.
+   * - ``worker_imbalance``
+     - One gunicorn worker handling far more than others.
+   * - ``db_query_hotspot``
+     - Single query accounts for >30% of all calls.
+   * - ``request_duration_anomaly``
+     - Recent P99 diverged 3x from historical average.
+
+Adding a New Rule
 -----------------
-  1. Write a predicate: (RuntimeGraph, TemporalStore, ActiveRequestTracker) >> (bool, dict)
-  2. Wrap it in a CausalRule.
-  3. Register it.
+1. Write a predicate: ``(RuntimeGraph, TemporalStore, ActiveRequestTracker) -> (bool, dict)``
+2. Wrap it in a ``CausalRule``.
+3. Call ``PatternRegistry.register()``.
 """
 
 from __future__ import annotations

@@ -22,8 +22,8 @@ logger = logging.getLogger("origintracer.engine")
 class Engine:
     """
     Engine is the central, stack-agnostic coordinator.
-    It receives NormalizedEvents from any probe via emit(),
-    builds the RuntimeGraph, drives the TemporalStore,
+    It receives `NormalizedEvents` from any probe via `emit()`,
+    builds the `RuntimeGraph`, drives the `TemporalStore`,
     and exposes causal/semantic query surfaces.
 
     Lifecycle
@@ -184,7 +184,7 @@ class Engine:
         self, trace_id: str
     ) -> List[Dict[str, Any]]:
         """
-        Derive the critical path for a single trace_id from the event log.
+        Derive the critical path for a single `trace_id` from the event log.
         Returns all registered probe events in chronological order,
         annotated with inter-stage durations.
         """

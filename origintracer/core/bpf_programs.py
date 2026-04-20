@@ -11,29 +11,41 @@ class BPFProgramPart:
     A structured BPF fragment contributed by one probe package.
 
     Each field maps to a section in the final compiled program.
-    Keeping sections separate lets the builder deduplicate #include headers
+    Keeping sections separate lets the builder deduplicate ``#include`` headers
     and struct definitions safely, while preserving probe function order.
 
-    Map naming convention (enforced by code review, not runtime):
+    Map Naming Convention
+    ---------------------
+    Enforced by code review, not runtime::
+
         <probe_name>_<map_name>
+
         e.g.  nginx_accept_ts,  nginx_epoll_ts
+
     This prevents symbol collisions when multiple probe fragments are merged.
 
-    Fields:
-        headers: #include directives the probe needs beyond the bridge header.
-                 e.g. ["#include <linux/in.h>", "#include <linux/socket.h>"]
+    Attributes
+    ----------
+    headers : list[str], optional
+        ``#include`` directives the probe needs beyond the bridge header.
+        Example::
 
-        structs: Any extra C struct definitions the probe needs.
-                 The shared kernel_event_t and trace_entry_t are already
-                 defined in BRIDGE_BPF_HEADER.
+            ["#include <linux/in.h>", "#include <linux/socket.h>"]
 
-        maps : BPF map declarations (BPF_HASH, BPF_ARRAY, etc.).
-               kernel_events perf output is already declared in
-               BRIDGE_BPF_HEADER.
+    structs : list[str], optional
+        Extra C struct definitions the probe needs.
+        The shared ``kernel_event_t`` and ``trace_entry_t`` are already
+        defined in ``BRIDGE_BPF_HEADER``.
 
-        probes: TRACEPOINT_PROBE and kprobe function bodies.
-                Order within a probe's list is preserved.
-                Order across probes follows registration order.
+    maps : list[str], optional
+        BPF map declarations (``BPF_HASH``, ``BPF_ARRAY``, etc.).
+        The ``kernel_events`` perf output is already declared in
+        ``BRIDGE_BPF_HEADER``.
+
+    probes : list[str]
+        ``TRACEPOINT_PROBE`` and kprobe function bodies.
+        Order within a probe's list is preserved.
+        Order across probes follows registration order.
     """
 
     headers: List[str] = field(default_factory=list)
