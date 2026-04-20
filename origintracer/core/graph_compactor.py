@@ -12,32 +12,41 @@ if TYPE_CHECKING:
 
 class GraphCompactor:
     """
-    Bounds RuntimeGraph memory via two mechanisms:
+    Bounds ``RuntimeGraph`` memory via two mechanisms.
 
-    Mechanism 1 - Node TTL
-        Nodes not seen for longer than `node_ttl_s` seconds are evicted.
-        This handles services that appear temporarily (a feature flag endpoint
-        that was removed, a task type that is no longer dispatched).
-        Default TTL: 3600 seconds.
+    Mechanism 1 — Node TTL
+    ----------------------
+    Nodes not seen for longer than ``node_ttl_s`` seconds are evicted.
+    This handles services that appear temporarily (a feature flag endpoint
+    that was removed, a task type that is no longer dispatched).
+    Default TTL: ``3600`` seconds.
 
-    Mechanism 2 - Node cap with LRU eviction
-        When the node count exceeds `max_nodes`, the least recently seen
-        nodes are evicted to bring the count back to `max_nodes * evict_to_ratio`.
-        Default: cap 5000 nodes, evict to 80% (4000 nodes) when exceeded.
+    Mechanism 2 — Node Cap with LRU Eviction
+    -----------------------------------------
+    When the node count exceeds ``max_nodes``, the least recently seen nodes
+    are evicted to bring the count back to ``max_nodes * evict_to_ratio``.
+    Default: cap ``5000`` nodes, evict to 80% (``4000`` nodes) when exceeded.
 
-    Edge handling on eviction:
-        When a node is evicted, all edges incident to it are also removed.
-        Dangling edges pointing to evicted nodes are invalid for causal
-        reasoning and must not persist.
+    Edge Handling on Eviction
+    -------------------------
+    When a node is evicted, all edges incident to it are also removed.
+    Dangling edges pointing to evicted nodes are invalid for causal reasoning
+    and must not persist.
 
-    When to compact:
-        Compaction runs on a background thread (called by Engine's snapshot loop)
-        or can be triggered manually.
+    When to Compact
+    ---------------
+    Compaction runs on a background thread (called by ``Engine``'s snapshot loop)
+    or can be triggered manually.
 
-    Usage:
+    Usage
+    -----
+    ::
+
         compactor = GraphCompactor(max_nodes=5000, node_ttl_s=3600)
+
         # Called by Engine._snapshot_loop() automatically:
         stats = compactor.compact(graph)
+
         # stats = {"evicted_nodes": 12, "evicted_edges": 34, "reason": "ttl+cap"}
     """
 

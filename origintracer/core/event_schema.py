@@ -112,20 +112,32 @@ class NormalizedEvent:
     The NormalizedEvent is the only data interface between probes and the engine.
     Probe-specific fields do not cross this boundary to the engine.
 
-    Fields
-    ------
-    probe: Which type of observation this is.
-    service: Logical service name (e.g. "django", "nginx", "postgres").
-    name: The specific entity (route, function, syscall, query text…).
-    trace_id: Ties all events in one request together.
-    timestamp: perf_counter() at moment of emission. Use wall clock for display.
-    wall_time: time.time() for human-readable timestamps.
-    duration_ns: Optional measured duration (e.g. syscall wall time).
-    span_id: OpenTelemetry-compatible span identifier.
-    parent_span_id: Parent span for distributed tracing linkage.
-    pid: OS process ID (populated by kernel-level probes).
-    tid: OS thread ID.
-    metadata: Probe-specific payload. Anything that doesn't fit above.
+    Attributes
+    ----------
+    probe : ProbeType
+        Which type of observation this is.
+    service : str
+        Logical service name e.g. ``"django"``, ``"nginx"``, ``"postgres"``.
+    name : str
+        The specific entity (route, function, syscall, query text...).
+    trace_id : str
+        Ties all events in one request together.
+    timestamp : float
+        ``perf_counter()`` at moment of emission. Use wall clock for display.
+    wall_time : float
+        ``time.time()`` for human-readable timestamps.
+    duration_ns : int, optional
+        Measured duration e.g. syscall wall time.
+    span_id : str, optional
+        OpenTelemetry-compatible span identifier.
+    parent_span_id : str, optional
+        Parent span for distributed tracing linkage.
+    pid : int, optional
+        OS process ID, populated by kernel-level probes.
+    tid : int, optional
+        OS thread ID.
+    metadata : dict, optional
+        Probe-specific payload — anything that doesn't fit the fields above.
     """
 
     probe: str  # ProbeType

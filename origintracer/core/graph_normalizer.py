@@ -80,51 +80,57 @@ class NormalizationRule:
 
 class GraphNormalizer:
     """
-    Normalizes (service, name) pairs before graph insertion.
+    Normalizes ``(service, name)`` pairs before graph insertion.
 
     Applied in order:
-        1. Built-in patterns (UUIDs, numeric IDs, memory addresses, SQL literals)
-        2. Per-service rules registered by user
-        3. Global rules (service="*") registered by user
-        4. Max-length truncation
 
-    Normalizes node names before they enter the RuntimeGraph.
+    1. Built-in patterns (UUIDs, numeric IDs, memory addresses, SQL literals)
+    2. Per-service rules registered by user
+    3. Global rules (``service="*"``) registered by user
+    4. Max-length truncation
 
-    The problem:
-        RuntimeGraph keys nodes by "service::name".
-        If `name` is high-cardinality (URL with user IDs, query text,
-        coroutine repr with memory addresses), the graph grows without bound.
+    The Problem
+    -----------
+    ``RuntimeGraph`` keys nodes by ``"service::name"``. If ``name`` is
+    high-cardinality (URL with user IDs, query text, coroutine repr with memory
+    addresses), the graph grows without bound::
 
-        /api/users/1234/profile >> one node per user
-        /api/users/5678/profile >> another node
-        ... 10,000 users = 10,000 nodes for what is structurally one endpoint
+        /api/users/1234/profile  →  one node per user
+        /api/users/5678/profile  →  another node
+        ...10,000 users = 10,000 nodes for what is structurally one endpoint
 
-    This module normalizes names to their structural form before graph insertion.
+    This module normalizes names to their structural form before graph insertion::
 
-        /api/users/1234/profile >> /api/users/{id}/profile
-        /api/users/5678/profile >> /api/users/{id}/profile (same node)
+        /api/users/1234/profile  →  /api/users/{id}/profile
+        /api/users/5678/profile  →  /api/users/{id}/profile  (same node)
 
-    The graph then has one node for the endpoint pattern, with call_count
-    accumulating across all individual user requests. This is almost always
-    what you want for causal reasoning - we care that "the user profile
-    endpoint is slow", not that user 1234 specifically was slow.
+    The graph then has one node per endpoint pattern, with ``call_count``
+    accumulating across all individual user requests. This is almost always what
+    you want for causal reasoning — we care that *the user profile endpoint is
+    slow*, not that user 1234 specifically was slow.
 
-    Usage:
-        Passed to RuntimeGraph at construction time:
-            from origintracer.core.graph_normalizer import GraphNormalizer
-            normalizer = GraphNormalizer()
-            graph = RuntimeGraph(normalizer=normalizer)
+    Usage
+    -----
+    Pass to ``RuntimeGraph`` at construction time::
 
-        RuntimeGraph calls normalizer.normalize(service, name) in add_from_event()
-        before constructing the node ID.
+        from origintracer.core.graph_normalizer import GraphNormalizer
 
-    Extending:
+        normalizer = GraphNormalizer()
+        graph = RuntimeGraph(normalizer=normalizer)
 
-        In origintracer.yaml:
-            normalize:
-            - service: django
-                pattern: "/api/items/(\\d+)/"
-                replacement: "/api/items/{id}/"
+    ``RuntimeGraph`` calls ``normalizer.normalize(service, name)`` inside
+    ``add_from_event()`` before constructing the node ID.
+
+    Extending
+    ---------
+    In ``origintracer.yaml``:
+
+    .. code-block:: yaml
+
+        normalize:
+          - service: django
+            pattern: "/api/items/(\\d+)/"
+            replacement: "/api/items/{id}/"
     """
 
     def __init__(

@@ -1,31 +1,41 @@
 """
 The correlation layer between kernel-level observations and Python trace context.
 
-Issue description:
-    kprobes fire inside the kernel. They know pid, tid, and kernel state.
-    They do not know Python trace IDs, coroutine names, or Django view names.
-    Python code knows all of those but nothing about what the kernel is doing.
+The Problem
+-----------
+kprobes fire inside the kernel — they know ``pid``, ``tid``, and kernel state,
+but nothing about Python trace IDs, coroutine names, or Django view names.
+Python code knows all of those but has no visibility into what the kernel is doing.
 
-Proposed solution - a shared BPF hash map:
-    Python writes (pid, tid):trace_id into a BPF hash map when a traced
-    request starts. Every kprobe handler reads from the same map. If it finds
-    an entry for the current (pid, tid), the kernel event is attributed to
-    that trace.
+The Solution
+------------
+A shared BPF hash map bridges the two worlds. Python writes
+``(pid, tid) -> trace_id`` into the map when a traced request starts.
+Every kprobe handler reads from the same map — if it finds an entry for the
+current ``(pid, tid)``, the kernel event is attributed to that trace.
 
-    This is the only connection between Python and the kernel. No patching.
-    No uprobe on Python internals. The boundary is a 36-byte string in a
-    kernel hash map.
+This is the only connection between Python and the kernel. No patching.
+No uprobe on Python internals. The boundary is a 36-byte string in a
+kernel hash map.
 
-    Structure:
-        BPF_HASH(trace_context, u64, struct trace_entry)
-        key = tid - unique per thread
-        value = { trace_id: char[36], start_ns: u64, service: char[32] }
+BPF map structure::
 
-Usage - Python side:
+    BPF_HASH(trace_context, u64, struct trace_entry)
+
+    key = tid -- unique per thread
+    value = { trace_id: char[36],
+      start_ns: u64,
+      service:  char[32]
+    }
+
+Python Usage
+------------
+::
+
     from origintracer.core.kprobe_bridge import KprobeBridge
 
     bridge = KprobeBridge()
-    bridge.start() # loads the BPF program, creates the map
+    bridge.start()                  # loads the BPF program, creates the map
 
     # Called by context/vars.py set_trace():
     bridge.register_trace(trace_id="abc-123", service="django")
@@ -35,11 +45,9 @@ Usage - Python side:
 
     bridge.stop()
 
-Usage (BPF program side) - include in every kprobe that needs Python context:
-
-    // shared map defined once in kprobe_bridge BPF program
-    // other BPF programs reference it by map name via BPF map pinning
-    // or we compile them together.
+BPF Program Usage
+-----------------
+Include in every kprobe that needs Python context::
 
     struct trace_entry {
         char trace_id[36];
@@ -51,16 +59,19 @@ Usage (BPF program side) - include in every kprobe that needs Python context:
 
     // In any kprobe handler:
     u64 pid_tid = bpf_get_current_pid_tgid();
-    u32 tid = pid_tid; // Lower 32 bits is TID
+    u32 tid = pid_tid;   // lower 32 bits is TID
+
     struct trace_entry *entry = trace_context.lookup(&tid);
-    if (!entry) return 0;   // not a traced request, skip
+    if (!entry) return 0;    // not a traced request, skip
+
     // entry->trace_id is now the Python trace ID for attribution
 
-Permissions:
-    kprobes require CAP_BPF or root on Linux.
-    On systems without this, the bridge.start() returns False and
-    all kprobe-based probes degrade gracefully - the Python-side
-    observations (sys.monitoring, middleware) still function normally.
+Permissions
+-----------
+kprobes require ``CAP_BPF`` or root on Linux. On systems without this,
+``bridge.start()`` returns ``False`` and all kprobe-based probes degrade
+gracefully — Python-side observations (``sys.monitoring``, middleware)
+still function normally.
 """
 
 from __future__ import annotations

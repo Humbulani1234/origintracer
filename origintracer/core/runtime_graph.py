@@ -23,7 +23,7 @@ logger = logging.getLogger("core.runtime_graph")
 
 @dataclass
 class GraphNode:
-    id: str  # e.g.  "django::handle_export"
+    id: str  # e.g. "django::handle_export"
     node_type: str  # ProbeType family: "function", "service", "syscall" …
     service: str
     first_seen: float = field(default_factory=time.time)
@@ -65,12 +65,12 @@ class GraphEdge:
 
 class RuntimeGraph:
     """
-    An in-memory directed graph that grows as NormalizedEvents arrive.
-    Supports neighbor traversal, upstream blame, and reachability BFS —
+    An in-memory directed graph that grows as `NormalizedEvents` arrive.
+    Supports neighbor traversal, upstream blame, and reachability BFS -
     the minimum needed for causal reasoning.
 
-    Node ID convention: "<service>::<name>"
-    Edge key convention: "<source> >> <target>:<type>"
+    Node ID convention: ``<service>::<name>``
+    Edge key convention: ``<source> >> <target>:<type>``
     """
 
     def __init__(self) -> None:
