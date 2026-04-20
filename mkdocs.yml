@@ -39,6 +39,9 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+extra_javascript:
+  - stylesheets/header.js
+  
 nav:
   - Home: index.md
   - Getting Started:
@@ -84,7 +87,7 @@ nav:
     - Active Request Tracker: architecture/tracker.md
     - Serialisation: architecture/serialisation.md
   - API Reference:
-    - stacktracer: api/stacktracer.md
+    - origintracer: api/origintracer.md
     - core.engine: api/engine.md
     - core.runtime_graph: api/graph.md
     - core.event_schema: api/events.md
@@ -94,6 +97,7 @@ nav:
     - sdk.emitter: api/emitter.md
     - sdk.base_probe: api/base_probe.md
     - bridge.otel_bridge: api/otel_bridge.md
+    - core.kprobe_bridge: api/kprobe_bridge.md
   - Development:
     - Running Tests: development/tests.md
     - CI: development/ci.md

@@ -24,3 +24,8 @@ code { color: #e8a020; }
   border-radius: 4px;
   padding: 2px 8px;
 }
+
+/* This targets the site name in the header */
+.md-header__topic:first-child .md-ellipsis {
+  color: #e8a020;
+}
