@@ -11,7 +11,7 @@ The Solution
 ------------
 A shared BPF hash map bridges the two worlds. Python writes
 ``(pid, tid) -> trace_id`` into the map when a traced request starts.
-Every kprobe handler reads from the same map — if it finds an entry for the
+Every kprobe handler reads from the same map - if it finds an entry for the
 current ``(pid, tid)``, the kernel event is attributed to that trace.
 
 This is the only connection between Python and the kernel. No patching.
@@ -35,7 +35,7 @@ Python Usage
     from origintracer.core.kprobe_bridge import KprobeBridge
 
     bridge = KprobeBridge()
-    bridge.start()                  # loads the BPF program, creates the map
+    bridge.start() # loads the BPF program, creates the map
 
     # Called by context/vars.py set_trace():
     bridge.register_trace(trace_id="abc-123", service="django")
@@ -59,10 +59,10 @@ Include in every kprobe that needs Python context::
 
     // In any kprobe handler:
     u64 pid_tid = bpf_get_current_pid_tgid();
-    u32 tid = pid_tid;   // lower 32 bits is TID
+    u32 tid = pid_tid; // lower 32 bits is TID
 
     struct trace_entry *entry = trace_context.lookup(&tid);
-    if (!entry) return 0;    // not a traced request, skip
+    if (!entry) return 0; // not a traced request, skip
 
     // entry->trace_id is now the Python trace ID for attribution
 
@@ -70,7 +70,7 @@ Permissions
 -----------
 kprobes require ``CAP_BPF`` or root on Linux. On systems without this,
 ``bridge.start()`` returns ``False`` and all kprobe-based probes degrade
-gracefully — Python-side observations (``sys.monitoring``, middleware)
+gracefully - Python-side observations (``sys.monitoring``, middleware)
 still function normally.
 """
 
