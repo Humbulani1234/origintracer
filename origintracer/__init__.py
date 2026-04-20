@@ -647,9 +647,9 @@ def init(
 
     Config merge order (last wins):
 
-    1. ``origintracer/config/defaults.yaml`` — package defaults, never edited
-    2. ``origintracer.yaml`` — user app config, takes precedence
-    3. ``init()`` kwargs — highest priority
+    1. ``origintracer/config/defaults.yaml`` - package defaults, never edited
+    2. ``origintracer.yaml`` - user app config, takes precedence
+    3. ``init()`` kwargs `` - highest priority
 
     Minimal usage::
 
@@ -676,7 +676,7 @@ def init(
         Default: ``["django", "asyncio", "uvicorn", "gunicorn", "nginx"]``
     semantic : dict, optional
         Extra semantic alias dicts to add or override.
-        Merged with defaults by label — your label takes precedence on same key.
+        Merged with defaults by label - your label takes precedence on same key.
     snapshot_interval : float, optional
         Seconds between temporal graph snapshots. Default: ``15.0``
     flush_interval : int, optional
