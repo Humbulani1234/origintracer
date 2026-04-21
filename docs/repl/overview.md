@@ -1,13 +1,13 @@
 # REPL Overview
 
 The OriginTracer REPL connects directly to a running agent via Unix domain
-socket. All queries run against the live engine in the worker process —
+socket. All queries run against the live engine in the worker process - 
 no HTTP, no serialisation round-trip, no restart required.
 
 ## Starting the REPL
 
 ```bash
-python -m origintracer.repl
+python -m origintracer.repl.repl
 ```
 
 The REPL auto-discovers `/tmp/origintracer-{pid}.sock` and connects. If

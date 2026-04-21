@@ -1,4 +1,4 @@
-# asyncio Probe — BCC Installation
+# asyncio Probe - BCC Installation
 
 BCC is a system-level tool and cannot be installed inside a virtualenv with
 `pip`. It must be installed at the OS level and imported from there.
@@ -7,7 +7,6 @@ BCC is a system-level tool and cannot be installed inside a virtualenv with
 
 - Linux kernel 4.9 or higher (5.x / 6.x are fine)
 - `CAP_BPF` or root
-- `apt`-based distro (Ubuntu / Debian)
 
 Check your kernel version:
 
@@ -105,8 +104,8 @@ sudo /path/to/your/venv/bin/gunicorn \
 ## Checklist
 
 - [ ] `uname -r` → kernel >= 4.9
-- [ ] `apt install linux-headers-$(uname -r)` → headers present
-- [ ] `apt install python3-bpfcc` → BCC installed at OS level
-- [ ] `.pth` file written into venv → BCC visible inside venv
-- [ ] `sudo python -c "from bcc import BPF"` → compile test passes
-- [ ] gunicorn running as sudo → kprobes can attach
+- [ ] `apt install linux-headers-$(uname -r)` --> headers present
+- [ ] `apt install python3-bpfcc` --> BCC installed at OS level
+- [ ] `.pth` file written into venv --> BCC visible inside venv
+- [ ] `sudo python -c "from bcc import BPF"` --> compile test passes
+- [ ] gunicorn running as sudo --> kprobes can attach

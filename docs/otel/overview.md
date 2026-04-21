@@ -5,7 +5,7 @@
     Native probe mode is more capable and recommended where possible.
 
 Makes OriginTracer an optional OpenTelemetry `SpanExporter`. When active,
-OTel is the source of truth for spans — OriginTracer's native probes are
+OTel is the source of truth for spans - OriginTracer's native probes are
 disabled and the engine receives `NormalizedEvent` objects translated from
 OTel spans instead.
 
@@ -31,9 +31,9 @@ when you need the full picture.
 
 ```
 OTel SDK (in Django)
-    └── OriginTracerSpanExporter          ← this file
-            └── span_to_event()           converts OTel Span → NormalizedEvent
-                    └── engine.process()  feeds the OriginTracer graph
+    └── OriginTracerSpanExporter # this file
+            └── span_to_event() # converts OTel Span --> NormalizedEvent
+                    └── engine.process() # feeds the OriginTracer graph
 ```
 
 The engine, graph, causal rules, REPL, and React UI are unchanged.
@@ -43,7 +43,7 @@ Only the event source changes from native probes to OTel spans.
 
 ```python
 # settings.py
-ORIGINTRACER_OTEL_MODE = True   # disables native probes
+ORIGINTRACER_OTEL_MODE = True # disables native probes
 
 # apps.py
 from opentelemetry import trace
@@ -60,7 +60,7 @@ class MyAppConfig(AppConfig):
     def ready(self):
         import origintracer
 
-        # init OriginTracer in OTel mode — skips native probe startup
+        # init OriginTracer in OTel mode - skips native probe startup
         origintracer.init(otel_mode=True)
 
         # set up OTel with OriginTracer as the exporter
@@ -89,12 +89,12 @@ REPL and React UI work as normal.
 | OTel field | NormalizedEvent field | Notes |
 |---|---|---|
 | `span.name` | `name` | Overridden by `http.route` or `db.statement` if present |
-| `span.kind` | `probe` | `server` → `request`, `client` → `call`, `internal` → `function` |
+| `span.kind` | `probe` | `server` --> `request`, `client` --> `call`, `internal` --> `function` |
 | `span.context.trace_id` | `trace_id` | Hex string |
 | `span.context.span_id` | `span_id` | |
 | `span.parent.span_id` | `parent_span_id` | |
-| `span.attributes["http.route"]` | `name` | HTTP spans — preferred over `span.name` |
-| `span.attributes["db.statement"]` | `name` | DB spans — preferred over `span.name` |
+| `span.attributes["http.route"]` | `name` | HTTP spans - preferred over `span.name` |
+| `span.attributes["db.statement"]` | `name` | DB spans - preferred over `span.name` |
 | `span.attributes["peer.service"]` | `service` | |
 | `span.start_time` / `end_time` | `wall_time`, `duration_ns` | |
 | `span.status.status_code` | `metadata["status_code"]` | |

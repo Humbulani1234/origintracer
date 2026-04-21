@@ -32,17 +32,17 @@ The query bar accepts the same DSL as the REPL. See the
 
 The UI has two primary views:
 
-**Graph view** — renders the RuntimeGraph as a node-edge diagram. Node size
+**Graph view** - renders the RuntimeGraph as a node-edge diagram. Node size
 reflects `call_count`. Edge labels show call frequency and average latency.
 
-**Trace view** — activated by `TRACE` or `\stitch <id>`. Renders the
+**Trace view** - activated by `TRACE` or `\stitch <id>`. Renders the
 critical path for a single trace as a waterfall.
 
 # React UI — Installation
 
 ## Prerequisites
 
-Node.js 18 or higher — [nodejs.org](https://nodejs.org) (LTS version).
+Node.js 18 or higher - [nodejs.org](https://nodejs.org) (LTS version).
 
 ## Install
 
@@ -87,7 +87,7 @@ For production point this at your deployed backend URL.
 The UI sends `Authorization: Bearer <key>` on every request. Set the key in:
 
 ```bash
-VITE_API_KEY=sk_dev_yyy
+VITE_API_KEY=sk_dev_yyy # just for development
 ```
 
 Keys are validated against `ORIGINTRACER_API_KEYS` on the backend. See

@@ -44,9 +44,9 @@ All of the following must be true:
 
 ```python
 {
-    "deployment_timestamp": float,   # unix timestamp of the deployment marker
-    "new_sync_edges":       list,    # up to 10 new edge keys e.g. "django::A→django::B:calls"
-    "slow_nodes":           list,    # node IDs of slow nodes in new edges
+    "deployment_timestamp": float, # unix timestamp of the deployment marker
+    "new_sync_edges": list, # up to 10 new edge keys e.g. "django::A→django::B:calls"
+    "slow_nodes": list, # node IDs of slow nodes in new edges
 }
 ```
 
@@ -56,7 +56,7 @@ The two thresholds are currently hardcoded:
 
 - **120s baseline window** - increase if your deployments take longer to
   stabilise before traffic is representative
-- **200ms latency threshold** — lower this for latency-sensitive services,
+- **200ms latency threshold** - lower this for latency-sensitive services,
   raise it to reduce noise in slower backends
 
 ## Example output
@@ -91,7 +91,7 @@ hot path. While one coroutine blocks, all others starve.
 
 asyncio is cooperative. If one coroutine holds the loop for >10ms, every
 other coroutine waiting to run is delayed by at least that much. Under load
-this compounds — a single blocking call on a hot endpoint can make the entire
+this compounds - a single blocking call on a hot endpoint can make the entire
 application feel slow even though only one code path is at fault.
 
 Common causes:
@@ -109,7 +109,7 @@ Common causes:
 
 !!! note
     The predicate threshold is **3ms** at the node level. The rule description
-    states 10ms because that is the user-facing threshold — ticks must average
+    states 10ms because that is the user-facing threshold - ticks must average
     above 10ms across the observation window to be meaningful. The 3ms node
     threshold filters out momentary spikes.
 
@@ -119,9 +119,9 @@ Common causes:
 {
     "stalled_ticks": [
         {
-            "node":   str,    # always "asyncio::loop.tick"
-            "avg_ms": float,  # average tick duration in milliseconds
-            "count":  int,    # number of ticks observed
+            "node": str, # always "asyncio::loop.tick"
+            "avg_ms": float, # average tick duration in milliseconds
+            "count": int, # number of ticks observed
         }
         # up to 5 entries
     ]
@@ -140,7 +140,7 @@ and n.avg_duration_ns > 3_000_000   # 3ms — change to taste
 
 ## What to do when this fires
 
-1. Check `stalled_ticks[0].avg_ms` — anything above 50ms is severe
+1. Check `stalled_ticks[0].avg_ms` - anything above 50ms is severe
 2. Profile the hot path with `py-spy` or `austin` to find the blocking call
 3. Wrap CPU-heavy work in `asyncio.run_in_executor()`
 4. Replace synchronous clients (`requests`, `psycopg2`) with async equivalents
