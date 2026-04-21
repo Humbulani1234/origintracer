@@ -1,35 +1,9 @@
 # Installation
 
-## Requirements
-
-- Python 3.11, 3.12, or 3.13
-- Django 4.2+ (for Django probe)
-- No other required dependencies
-
-## Install
-
 ```bash
-pip install stacktracer
-```
-
-## Optional dependencies
-
-| Package | Purpose |
-|---|---|
-| `msgpack` | Binary event serialisation — 3x smaller than JSON |
-| `psycopg2-binary` | PostgreSQL storage backend |
-| `httpx` | Uploader (sending snapshots to FastAPI backend) |
-| `bcc` | nginx kprobe mode (Linux only, requires root) |
-
-```bash
-# recommended minimum
-pip install stacktracer msgpack httpx
-```
-
-## Verify
-
-```bash
-python -c "import stacktracer; print(stacktracer.__version__)"
+git clone https://github.com/Humbulani1234/origintracer.git
+cd origintracer 
+pip install -e .
 ```
 
 ---
@@ -45,11 +19,20 @@ The fastest path to a working graph.
 ```python
 # settings.py
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware",  # ← first
+    "origintracer.probes.django_probe.TracerMiddleware", # first
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     # ...
 ]
+```
+
+## 3. Add config file
+
+```yaml
+# origintracer.yaml - place in the project root
+probes:
+  - django
+  - asyncio
 ```
 
 ## 2. Initialise in AppConfig
@@ -62,29 +45,20 @@ class MyAppConfig(AppConfig):
     name = "myapp"
 
     def ready(self):
-        import stacktracer
-        stacktracer.init(debug=True)
+        import origintracer
+        origintracer.init(debug=True, onfig=BASE_DIR / "origintracer.yaml")
 ```
 
 `debug=True` enables verbose logging so you can confirm events are flowing.
 
-## 3. Add config file
-
-```yaml
-# stacktracer.yaml — place in the project root
-probes:
-  - django
-  - asyncio
-  - gunicorn
-  - uvicorn
-```
-
 ## 4. Run the REPL
+
+Send requests to your views using the provided `load_test` and `burst_test` scripts and explore the results with the REPL.
 
 In a second terminal while your app is running:
 
 ```bash
-python -m stacktracer.scripts.repl
+python -m origintracer.repl.repl
 ```
 
 Send a few requests to your app, then:
@@ -107,12 +81,12 @@ You should see the graph building in real time.
 
 ```python
 MIDDLEWARE = [
-    "stacktracer.probes.django_probe.TracerMiddleware",
+    "origintracer.probes.django_probe.TracerMiddleware",
     # ... rest of middleware
 ]
 
-# optional — switch to OTel bridge mode
-STACKTRACER_OTEL_MODE = False
+# optional - switch to OTel bridge mode [experimental]
+ORIGINTRACER_OTEL_MODE = False
 ```
 
 ### apps.py
@@ -126,9 +100,9 @@ class WorkerConfig(AppConfig):
     name = "worker"
 
     def ready(self):
-        import stacktracer
+        import origintracer
 
-        otel_mode = getattr(settings, "STACKTRACER_OTEL_MODE", False)
+        otel_mode = getattr(settings, "ORIGINTRACER_OTEL_MODE", False)
 
         if otel_mode:
             self._init_otel()
@@ -136,26 +110,26 @@ class WorkerConfig(AppConfig):
             self._init_native()
 
     def _init_native(self):
-        import stacktracer
-        stacktracer.init(debug=True)
-        stacktracer.mark_deployment(
+        import origintracer
+        origintracer.init(debug=True)
+        origintracer.mark_deployment(
             os.getenv("GIT_SHA", "dev")
         )
 
     def _init_otel(self):
-        import stacktracer
+        import origintracer
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.instrumentation.django import DjangoInstrumentor
         from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
-        from stacktracer.bridge.otel_bridge import StackTracerSpanExporter
+        from stacktracer.bridge.otel_bridge import OriginTracerSpanExporter
 
-        stacktracer.init(otel_mode=True, debug=True)
+        stacktracer.init(otel_mode=True, debug=True, onfig=BASE_DIR / "origintracer.yaml")
 
         provider = TracerProvider()
         provider.add_span_processor(
-            BatchSpanProcessor(StackTracerSpanExporter())
+            BatchSpanProcessor(OriginTracerSpanExporter())
         )
         trace.set_tracer_provider(provider)
 
@@ -163,14 +137,12 @@ class WorkerConfig(AppConfig):
         Psycopg2Instrumentor().instrument()
 ```
 
-### stacktracer.yaml
+### origintracer.yaml
 
 ```yaml
 probes:
   - django
   - asyncio
-  - gunicorn
-  - uvicorn
 ```
 
 ### gunicorn.conf.py
@@ -221,7 +193,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 |---|---|
 | Gunicorn worker | `AppConfig.ready()` |
 | Celery ForkPoolWorker | `celery_probe._on_worker_fork` (worker_process_init signal) |
-| `config/celery.py` | **Never** — causes duplicate engine bug |
+| `config/celery.py` | **Never** - causes duplicate engine bug |
 
 ## celery config
 
@@ -235,14 +207,14 @@ app = Celery("config")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
-# DO NOT call stacktracer.init() here
+# DO NOT call origintracer.init() here
 # ForkPoolWorker init is handled by celery_probe._on_worker_fork
 ```
 
-## stacktracer.yaml for Celery worker
+## origintracer.yaml for Celery worker
 
 ```yaml
-# stacktracer.yaml in the celery application directory
+# origintracer.yaml in the celery application directory
 probes:
   - celery
   - django
@@ -259,7 +231,7 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 
 # Terminal 2 — Celery
 DJANGO_SETTINGS_MODULE=config.settings \
-STACKTRACER_CONFIG=/path/to/celery/stacktracer.yaml \
+ORIGINTRACER_CONFIG=/path/to/celery/origintracer.yaml \
 celery -A config worker --loglevel=info --concurrency=1
 ```
 
@@ -268,7 +240,7 @@ celery -A config worker --loglevel=info --concurrency=1
 Use the `dispatch` helper from `celery_probe` instead of calling `.delay()` directly. It passes `trace_id` through task kwargs so the causal edge from the Django view to the Celery task is reconstructed:
 
 ```python
-from stacktracer.probes.celery_probe import dispatch
+from origintracer.probes.celery_probe import dispatch
 
 # instead of: my_task.delay(arg1, arg2)
 dispatch(my_task, get_trace_id(), arg1, arg2)
@@ -280,10 +252,10 @@ In the REPL, `\stitch <trace_id>` joins the Django and Celery graphs into one ti
 
 # Configuration
 
-## stacktracer.yaml
+## origintracer.yaml
 
 ```yaml
-# stacktracer.yaml — place in project root or set STACKTRACER_CONFIG env var
+# origintracer.yaml - place in project root or set ORIGINTRACER_CONFIG env var
 
 probes:
   - django
@@ -294,17 +266,17 @@ probes:
   # - redis
   # - nginx
 
-sample_rate: 1.0          # 1.0 = trace all requests, 0.1 = 10%
+sample_rate: 1.0 # 1.0 = trace all requests, 0.1 = 10%
 
 normalize:
-  enabled: true           # normalise /api/users/123/ → /api/users/{id}/
+  enabled: true # normalise /api/users/123/ --> /api/users/{id}/
 
 compactor:
   enabled: true
-  interval_s: 60          # compact graph every 60s
+  interval_s: 60 # compact graph every 60s
 
 semantic:
-  labels:                 # human-readable aliases for node ids
+  labels: # human-readable aliases for node ids
     auth: "django::/api/auth/"
     users: "django::/api/users/"
 ```
@@ -313,20 +285,20 @@ semantic:
 
 | Variable | Description |
 |---|---|
-| `STACKTRACER_CONFIG` | Path to stacktracer.yaml |
-| `STACKTRACER_API_KEY` | API key for sending snapshots to backend |
-| `STACKTRACER_ENDPOINT` | Backend URL e.g. `http://localhost:7123` |
+| `ORIGINTRACER_CONFIG` | Path to origintracer.yaml |
+| `ORIGINTRACER_API_KEY` | API key for sending snapshots to backend |
+| `ORIGINTRACER_ENDPOINT` | Backend URL e.g. `http://localhost:8001` |
 
 ## init() kwargs
 
 ```python
-stacktracer.init(
-    config      = "stacktracer.yaml",   # path to config file
-    api_key     = "sk_...",             # overrides STACKTRACER_API_KEY
-    endpoint    = "http://...",         # overrides STACKTRACER_ENDPOINT
-    debug       = False,                # verbose logging
-    otel_mode   = False,                # use OTel bridge instead of probes
-    sample_rate = 1.0,                  # fraction of requests to trace
+origintracer.init(
+    config = "stacktracer.yaml", # path to config file
+    api_key = "sk_...", # overrides ORIGINTRACER_API_KEY
+    endpoint = "http://...", # overrides ORIGINTRACER_ENDPOINT
+    debug = False, # verbose logging
+    otel_mode = False, # use OTel bridge instead of probes
+    sample_rate = 1.0, # fraction of requests to trace
 )
 ```
 

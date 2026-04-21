@@ -1,20 +1,22 @@
 # Probes Overview
 
-Probes are the observation layer. Each probe instruments one framework or library using its official, documented extension points — no monkey patching of internal classes, no fragile bytecode manipulation.
+Probes are the observation layer. Each probe instruments one framework or library using documented extension points.
 
 ## How probes work
+
 
 ```mermaid
 graph LR
     A[Framework hook fires] --> B[Probe callback]
-    B --> C[NormalizedEvent.now()]
-    C --> D[emit() / emit_direct()]
+    B --> C[NormalizedEvent.now]
+    C --> D[emit]
     D --> E[EventBuffer]
-    E -->|drain thread| F[Engine.process()]
+    E -->|drain thread| F[Engine.process]
     F --> G[RuntimeGraph]
 ```
 
 Probes call `emit()` for per-request events (goes through the buffer) and `emit_direct()` for lifecycle events (bypasses the buffer, processes immediately).
+
 
 ## Extension points used
 
@@ -28,17 +30,15 @@ Probes call `emit()` for per-request events (goes through the buffer) and `emit_
 | nginx | kprobe + Lua UDP | Kernel-level |
 | Redis | `TracedRedis` subclass | Stable |
 
-## Built-in probes (free)
+## Built-in probes
 
-Four probes ship with the open-source package:
+Two probes ship with the open-source package:
 
-- `django` — full probe
-- `asyncio` — `create_task` wrapper + loop tick counter
-- `gunicorn` — structural fork events only
-- `uvicorn` — full ASGI middleware
+- `django` - full probe
+- `asyncio` - `create_task` wrapper + loop tick counter
 
-## Paid probe libraries
+## Advanced probe libraries
 
-The full probe set — nginx, Celery, Redis, database kprobe — ships with the corresponding book chapters at [stacktracer.dev](https://stacktracer.dev).
+The full probe set - nginx, Celery, Redis, database kprobe - ships with the corresponding book chapters at [OriginTracer](https://origintracer.app).
 
 ---
