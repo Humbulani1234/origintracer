@@ -1,80 +1,40 @@
 """
-NOTE: In development - must be thoroughly tested.
+NOTE:
+    In development — must be thoroughly tested.
 
-Makes OriginTracer an optional OpenTelemetry SpanExporter.
+Overview
+--------
+Makes OriginTracer an optional OpenTelemetry `SpanExporter`.
 
-When this bridge is active, OTel is the source of truth for spans.
-OriginTracer's own probes are disabled and the engine receives
-NormalizedEvents translated from OTel spans instead.
+When this bridge is active:
+- OpenTelemetry becomes the source of truth for spans
+- OriginTracer probes are disabled
+- The engine receives `NormalizedEvent` objects translated from OTel spans
 
-What is lost when using OTel mode:
-    - asyncio internals (Task.__step, loop tick, ready queue depth)
-    - kernel-level timing (kprobe on accept4, epoll_wait)
-    - gunicorn worker lifecycle events
-    - nginx correlation
-    OTel does not go that deep. These are OriginTracer-only observations.
-    OTel mode gives you the graph and causal rules. Native probe mode
-    gives you the graph + kernel internals + asyncio internals.
+---
 
-Architecture:
-    OTel SDK (in Django)
-        >> OriginTracerSpanExporter (this file)
-        >> span_to_event() converts OTel Span >> NormalizedEvent
-        >> engine.process(event) feeds the OriginTracer graph
+What is lost in OTel mode
+------------------------
+- asyncio internals (`Task.__step`, loop tick, ready queue depth)
+- kernel-level timing (kprobe on `accept4`, `epoll_wait`)
+- gunicorn worker lifecycle events
+- nginx correlation
 
-    The engine, graph, causal rules, REPL, and React UI are unchanged.
-    Only the event source changes from native probes to OTel spans.
+!!! warning
+    OTel does not go this deep. These are **OriginTracer-only observations**.
 
-Usage - Django:
+- **OTel mode** --> graph + causal rules
+- **Native probe mode** --> graph + kernel internals + asyncio internals
 
-    # settings.py
-    ORIGINTRACER_OTEL_MODE = True # disables native probes
+---
 
-    # apps.py
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.instrumentation.django import DjangoInstrumentor
-    from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
-    from opentelemetry.instrumentation.redis import RedisInstrumentor
-    from origintracer.bridge.otel_bridge import OriginTracerSpanExporter
-
-    class MyAppConfig(AppConfig):
-        name = "myapp"
-
-        def ready(self):
-            import origintracer
-
-            # init OriginTracer in OTel mode - skips probe startup
-            origintracer.init(otel_mode=True)
-
-            # set up OTel with OriginTracer as the exporter
-            provider = TracerProvider()
-            provider.add_span_processor(
-                BatchSpanProcessor(OriginTracerSpanExporter())
-            )
-            trace.set_tracer_provider(provider)
-
-            # instrument Django, DB, Redis
-            DjangoInstrumentor().instrument()
-            Psycopg2Instrumentor().instrument()
-            RedisInstrumentor().instrument()
-
-    This is the complete integration. OTel instruments your code,
-    spans flow to OriginTracerSpanExporter, OriginTracer builds the
-    causal graph, REPL and React UI work as normal.
-
-OTel span >> NormalizedEvent mapping:
-    span.name >> name
-    span.kind >> probe (server=request, client=call, internal=function)
-    span.context.trace_id >> trace_id (hex string)
-    span.context.span_id >> span_id
-    span.parent.span_id >> parent_span_id
-    span.attributes["http.route"] >> name (for HTTP spans)
-    span.attributes["db.statement"] >> name (for DB spans)
-    span.attributes["peer.service"] >> service
-    span.start_time/end_time >> wall_time, duration_ns
-    span.status.status_code >> metadata["status_code"]
+Architecture
+------------
+```text
+OTel SDK (Django)
+    --> OriginTracerSpanExporter
+    --> span_to_event()
+    --> engine.process(event)
 """
 
 from __future__ import annotations
@@ -247,9 +207,21 @@ def span_to_event(span: "ReadableSpan") -> Optional[object]:
 
 class OriginTracerSpanExporter:
     """
+    OriginTracerSpanExporter
+    =======================
+
     OpenTelemetry SpanExporter that feeds spans into OriginTracer's engine.
 
+    Overview
+    --------
+    This exporter converts OpenTelemetry spans into NormalizedEvents
+    and forwards them to the OriginTracer engine.
+
+    Installation
+    ------------
     Install as a span processor in your OTel setup:
+
+    .. code-block:: python
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from origintracer.bridge.otel_bridge import OriginTracerSpanExporter
@@ -258,8 +230,10 @@ class OriginTracerSpanExporter:
             BatchSpanProcessor(OriginTracerSpanExporter())
         )
 
-    Use BatchSpanProcessor not SimpleSpanProcessor — batch export runs
-    in a background thread and does not block request handling.
+    Notes
+    -----
+    - Use ``BatchSpanProcessor`` instead of ``SimpleSpanProcessor``.
+    - Batch export runs in a background thread and does not block request handling.
     """
 
     def export(self, spans: Sequence["ReadableSpan"]) -> object:
