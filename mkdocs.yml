@@ -1,0 +1,130 @@
+site_name: OriginTracer
+site_description: Probe-based async runtime observability.
+site_url: https://origintracer.app/
+repo_url: https://github.com/Humbulani1234/origintracer
+repo_name: origintracer
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: custom
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: custom
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - stylesheets/header.js
+  
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Django Integration: getting-started/django.md
+    - Celery Integration: getting-started/celery.md
+  - Probes:
+    - Overview: probes/overview.md
+    - Django Probe: probes/django.md
+    - asyncio Probe: probes/asyncio/installation.md
+    - asyncio Probe: probes/asyncio/architecture.md
+    - Writing Your Own Probe: probes/custom.md
+  - Causal Rules:
+    - Overview: rules/overview.md
+    - Built-in Rules: rules/django_rules.md
+    - Writing Rules: rules/django_rules.md
+  - REPL:
+    - Overview: repl/overview.md
+  - React UI:
+    - Overview: ui/overview.md
+  - FastAPI Backend:
+    - Overview: backend/overview.md
+    - Storage Backends: backend/storage.md
+  - OTel Bridge:
+    - Overview: otel/overview.md
+  - Architecture:
+    - Design Principles: architecture/design.md
+  - API Reference:
+    - origintracer: api/origintracer.md
+    - core.engine: api/engine.md
+    - core.runtime_graph: api/runtime_graph.md
+    - core.event_schema: api/event_schema.md
+    - core.causal: api/causal.md
+    - core.temporal: api/temporal.md
+    - core.active_requests: api/tracker.md
+    - sdk.emitter: api/emitter.md
+    - sdk.base_probe: api/base_probe.md
+    - bridge.otel_bridge: api/otel_bridge.md
+    - core.kprobe_bridge: api/kprobe_bridge.md
+  - Development:
+    - Running Tests: development/tests.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            show_category_heading: true
+            members_order: source
+            docstring_style: numpy
+            show_signature_annotations: true
+            separate_signature: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-username/stack-tracer
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
