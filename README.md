@@ -3,7 +3,7 @@
 
 <h3>
 
-[Website](https://origintracer.app/)
+[Website](https://origintracer.app/)|[Documentation](https://origintracer.app/docs/)
 
 </h3>
 
@@ -26,7 +26,7 @@ OriginTracer instruments your full production stack - **nginx --> gunicorn --> a
 It combines:
 - Deep, source-grounded "traced book" chapters that teach framework and kernel internals via real pivot points.
 - Ready-to-run **rule libraries** that turn that knowledge into automatic detectors.
- Ready-to-run **probe libraries** that emit events of interest from your application.
+- Ready-to-run **probe libraries** that emit events of interest from your application.
 - A clean, open-source engine that stays non-blocking and efficient.
 
 The result: actionable insight into async behavior, cross-process flows, and hidden latency sources that traditional tracing often misses.
@@ -39,7 +39,7 @@ Most observability tools show you *what* happened (spans, metrics, logs). Origin
 
 - **Causal graph** with deduplication and compaction (stable even under high load)
 - **Automatic causal rules** (N+1 queries, asyncio loop starvation, worker imbalance, retry amplification, etc.)
-- **Cross-process stitching** — merge timelines across gunicorn workers, Celery, and nginx
+- **Cross-process stitching** - merge timelines across gunicorn workers, Celery, and nginx
 - **Native deep probes** (including eBPF/kprobes for nginx and asyncio) *or* OpenTelemetry bridge mode (experimental)
 - **Zero blocking** of the request/response cycle via async draining and fire-and-forget buffers
 - **Extensible by design** - anyone can add custom probes and rules
