@@ -1,4 +1,4 @@
-# React UI — Overview
+# React UI - Overview
 
 Minimal terminal-aesthetic dashboard that mirrors the REPL in a browser.
 Connects to the FastAPI backend and renders the live RuntimeGraph.
@@ -26,7 +26,7 @@ Type REPL-style commands and press Enter or click Run:
 | `\stitch <id>` | Fetch and reconstruct a trace from the backend |
 
 The query bar accepts the same DSL as the REPL. See the
-[Command Reference](../repl/commands.md) for the full list.
+[Command Reference](../repl/overview.md) for the full list.
 
 ## Views
 

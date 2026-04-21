@@ -5,7 +5,7 @@
       members:
       - get_bridge
 
-::: origintracer.core.kprob_bridge.KprobeBridge
+::: origintracer.core.kprobe_bridge.KprobeBridge
 	options:
       members:
       	- start
