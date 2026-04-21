@@ -6,7 +6,7 @@ Rules are plain Python predicates evaluated against the `RuntimeGraph`. Each rul
 
 ### Loop starvation
 
-Fires when asyncio loop ticks average over 10ms. A blocking operation — CPU work, synchronous I/O, missing await — is starving other coroutines.
+Fires when asyncio loop ticks average over 10ms. A blocking operation - CPU work, synchronous I/O, missing await - is starving other coroutines.
 
 ```python
 # fires when:
@@ -58,13 +58,13 @@ Or filter by tag:
 
 # Writing Custom Rules
 
-Drop a `*_rules.py` file anywhere in your project. StackTracer discovers it automatically at startup.
+Drop a `*_rules.py` file anywhere in your project. OriginTracer discovers it automatically at startup.
 
 ## Minimal example
 
 ```python
-# myapp/stacktracer/rules/payment_rules.py
-from stacktracer.core.causal import CausalRule
+# myapp/origintracer/rules/payment_rules.py
+from origintracer.core.causal import CausalRule
 
 
 def _slow_payment(graph, temporal):
@@ -87,11 +87,11 @@ def _slow_payment(graph, temporal):
 
 def register(registry):
     registry.register(CausalRule(
-        name        = "slow_payment_gateway",
-        description = "Payment gateway averaging over 2s — check Paystack status.",
-        predicate   = _slow_payment,
-        confidence  = 0.85,
-        tags        = ["payment", "latency"],
+        name = "slow_payment_gateway",
+        description = "Payment gateway averaging over 2s -  check Paystack status.",
+        predicate = _slow_payment,
+        confidence = 0.85,
+        tags = ["payment", "latency"],
     ))
 ```
 
@@ -99,14 +99,14 @@ def register(registry):
 
 ```python
 CausalRule(
-    name        = "rule_name",          # unique identifier
-    description = "Human explanation",  # shown in REPL output
-    predicate   = my_fn,                # (graph, temporal) → (bool, dict)
-    confidence  = 0.85,                 # 0.0–1.0
-    tags        = ["latency"],          # for CAUSAL <tag> filtering
+    name = "rule_name", # unique identifier
+    description = "Readable explanation", # shown in REPL output
+    predicate = my_fn, # (graph, temporal, tracker) --> (bool, dict)
+    confidence = 0.85, # 0.0–1.0
+    tags = ["latency"], # for CAUSAL <tag> filtering
 )
 ```
 
-The predicate receives the live `RuntimeGraph` and `TemporalStore`. It must never raise — exceptions are caught and logged with `confidence=0.0`.
+The predicate receives the live `RuntimeGraph` and `TemporalStore`. It must never raise - exceptions are caught and logged with `confidence=0.0`.
 
 ---

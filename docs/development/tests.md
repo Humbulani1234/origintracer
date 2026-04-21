@@ -9,19 +9,19 @@ pip install -e ".[dev]"
 ## Run all tests
 
 ```bash
-pytest stacktracer/tests/ -x -q
+pytest origintracer/tests/ -x -q
 ```
 
 ## Run a specific file
 
 ```bash
-pytest stacktracer/tests/test_core_causal.py -x -q
+pytest origintracer/tests/test_core_causal.py -x -q
 ```
 
 ## Run tests matching a pattern
 
 ```bash
-pytest stacktracer/tests/ -k "test_n_plus_one" -v
+pytest origintracer/tests/ -k "test_n_plus_one" -v
 ```
 
 ---
@@ -49,8 +49,8 @@ pre-commit run --all-files
 
 CI runs on every push and pull request to `main`. Two jobs run in parallel:
 
-- `lint` — black check + ruff on Python 3.12
-- `test` — pytest on Python 3.11 and 3.12
+- `lint` - black check + ruff on Python 3.12
+- `test` - pytest on Python 3.11 and 3.12
 
 Workflow file: `.github/workflows/ci.yml`
 
@@ -61,21 +61,21 @@ Workflow file: `.github/workflows/ci.yml`
 ## Code style
 
 ```bash
-black stacktracer/          # format
-ruff check --fix stacktracer/  # lint
+black origintracer/ # format
+ruff check --fix origintracer/ # lint
 ```
 
-Line length: 100. Google-style docstrings on all public functions and classes.
+Line length: 65.
 
 ## Adding a new probe
 
-1. Create `stacktracer/probes/myservice_probe.py`
+1. Create `origintracer/probes/myservice_probe.py`
 2. Subclass `BaseProbe` and implement `start()` and `stop()`
 3. Register probe types with `ProbeTypes.register_many({...})`
 4. Use `emit()` for per-request events, `emit_direct()` for lifecycle events
 5. Add probe name to `config/defaults.yaml` under `builtin_probes`
 6. Add `_add_structural_edges` case to `RuntimeGraph` if the probe creates infrastructure topology
-7. Write a test in `stacktracer/tests/test_probe_myservice.py`
+7. Write a test in `origintracer/tests/test_probe_myservice.py`
 
 ## Adding a causal rule
 
@@ -83,17 +83,3 @@ Line length: 100. Google-style docstrings on all public functions and classes.
 2. Wrap in `CausalRule`
 3. Register via `build_default_registry()` or as a user rule file
 4. Write a test with a mock graph that triggers the rule
-
-## Building the docs
-
-```bash
-pip install mkdocs mkdocs-material mkdocstrings[python]
-mkdocs serve          # live preview at http://localhost:8000
-mkdocs build          # build to site/
-```
-
-Deploy to GitHub Pages:
-
-```bash
-mkdocs gh-deploy
-```

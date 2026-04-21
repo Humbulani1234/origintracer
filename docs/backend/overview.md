@@ -1,4 +1,4 @@
-# FastAPI Backend — Overview
+# FastAPI Backend - Overview
 
 The FastAPI backend is the persistence, query, and UI surface for OriginTracer.
 
@@ -11,7 +11,7 @@ deserialises them, and serves all queries from the deserialised graph.
 ```
 Agent process                        FastAPI backend
 ─────────────────────────────────    ──────────────────────────────
-RuntimeGraph (live, in-memory)  ──►  POST /api/v1/graph/snapshot
+RuntimeGraph (live, in-memory)  ──>  POST /api/v1/graph/snapshot
                                           │
                                           ▼
                                      deserialise + store
@@ -20,7 +20,7 @@ RuntimeGraph (live, in-memory)  ──►  POST /api/v1/graph/snapshot
                                      serve GET queries
 ```
 
-The backend does not rebuild a graph from raw events — that is the agent's
+The backend does not rebuild a graph from raw events - that is the agent's
 responsibility. On startup, the latest snapshot is loaded from the storage
 backend so queries work immediately after a FastAPI restart without waiting
 for the next snapshot interval.
@@ -69,7 +69,7 @@ Keys are configured via `ORIGINTRACER_API_KEYS`.
 Receive a serialised `RuntimeGraph` from the agent. Called automatically
 by the agent at every `snapshot_interval`. Not intended for manual use.
 
-**Body:** `application/msgpack` or `application/json` — serialised graph bytes.
+**Body:** `application/msgpack` or `application/json` - serialised graph bytes.
 
 ---
 
@@ -188,7 +188,7 @@ and the causal rule `new_sync_call_after_deployment`.
 
 ### `GET /api/v1/status`
 
-Snapshot metadata and system info — node count, edge count, uptime,
+Snapshot metadata and system info - node count, edge count, uptime,
 last snapshot timestamp.
 
 ---

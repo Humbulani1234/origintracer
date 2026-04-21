@@ -43,9 +43,9 @@ Everything else is installed automatically when `origintracer.init()` is called.
 
 `TracerMiddleware` resolves `trace_id` in this order (first wins):
 
-1. `X-Request-ID` HTTP header — for distributed tracing from an upstream proxy
-2. Existing `trace_id` in context — for nested or chained calls
-3. Fresh `uuid4()` — generated if none of the above are present
+1. `X-Request-ID` HTTP header - for distributed tracing from an upstream proxy
+2. Existing `trace_id` in context - for nested or chained calls
+3. Fresh `uuid4()` - generated if none of the above are present
 
 ## KprobeBridge Integration
 
@@ -65,14 +65,14 @@ bridge.register_trace(
 
 Both the event loop TID and the handler thread TID are registered. On
 request completion both are unregistered. If `KprobeBridge` is unavailable
-(no `CAP_BPF`), this step is silently skipped — all Python-side observations
+(no `CAP_BPF`), this step is silently skipped - all Python-side observations
 still function normally.
 
 ## Database Queries
 
 The DB wrapper is installed via the `connection_created` signal rather than
 iterating `connections.all()` at startup. This avoids the empty connections
-problem — Django has not opened any DB connections yet when
+problem - Django has not opened any DB connections yet when
 `AppConfig.ready()` fires. The wrapper attaches automatically the first time
 each connection is opened.
 
@@ -80,19 +80,19 @@ Each `django.db.query` event includes:
 
 ```python
 {
-    "name":       str,   # SQL text, truncated to 200 chars
+    "name": str, # SQL text, truncated to 200 chars
     "duration_ns": int,
-    "db_alias":   str,   # e.g. "default"
-    "success":    bool,
-    "row_count":  int,   # on success
-    "error":      str,   # on failure, truncated to 200 chars
+    "db_alias": str, # e.g. "default"
+    "success": bool,
+    "row_count": int, # on success
+    "error": str, # on failure, truncated to 200 chars
 }
 ```
 
 ## Class-Based Views
 
 `View.dispatch()` is the single entry point for all CBVs. One patch captures
-every CBV automatically — `AsyncView`, `SlowView`, `DetailView` etc. — without
+every CBV automatically - `AsyncView`, `SlowView`, `DetailView` etc. — without
 needing to instrument each one individually.
 
 !!! note
@@ -109,5 +109,5 @@ The probe is removed cleanly on `origintracer.stop()`:
 - The DB execute wrapper is removed from all open connections
 - The `got_request_exception` signal handler is disconnected
 
-Calling `stop()` and `start()` again is safe — the probe guards against
+Calling `stop()` and `start()` again is safe - the probe guards against
 double-installation with a module-level `_patched` flag.
