@@ -5,7 +5,7 @@
       members:
         - now
 
-::: origintracer.core.event_schema.ProbeRegistry
+::: origintracer.core.event_schema.ProbeTypeRegistry
   options:
       members:
         - register
