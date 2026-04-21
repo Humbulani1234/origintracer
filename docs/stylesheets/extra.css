@@ -1,15 +1,15 @@
-/* StackTracer docs — amber accent on dark/light */
+/* OriginTracer docs */
 :root {
-  --md-primary-fg-color:        #0d0d0d;
+  --md-primary-fg-color: #0d0d0d;
   --md-primary-fg-color--light: #e8a020;
-  --md-primary-fg-color--dark:  #0d0d0d;
-  --md-accent-fg-color:         #e8a020;
+  --md-primary-fg-color--dark: #0d0d0d;
+  --md-accent-fg-color: #e8a020;
 }
 
 [data-md-color-scheme="slate"] {
-  --md-default-bg-color:        #0d0d0d;
-  --md-default-fg-color:        #e0ddd5;
-  --md-code-bg-color:           #1a1a1a;
+  --md-default-bg-color: #0d0d0d;
+  --md-default-fg-color: #e0ddd5;
+  --md-code-bg-color: #1a1a1a;
 }
 
 /* Amber inline code */
@@ -26,6 +26,6 @@ code { color: #e8a020; }
 }
 
 /* This targets the site name in the header */
-.md-header__topic:first-child .md-ellipsis {
+/*.md-header__topic:first-child .md-ellipsis {
   color: #e8a020;
-}
+}*/

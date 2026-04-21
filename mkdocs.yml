@@ -46,15 +46,11 @@ nav:
   - Home: index.md
   - Getting Started:
     - Installation: getting-started/installation.md
-    - Quick Start: getting-started/quickstart.md
-    - Django Integration: getting-started/django.md
-    - Celery Integration: getting-started/celery.md
   - Probes:
     - Overview: probes/overview.md
     - Django Probe: probes/django.md
-    - asyncio Probe: probes/asyncio/installation.md
-    - asyncio Probe: probes/asyncio/architecture.md
-    - Writing Your Own Probe: probes/custom.md
+    - asyncio Probe Installation: probes/asyncio/installation.md
+    - asyncio Probe Architecture: probes/asyncio/architecture.md
   - Causal Rules:
     - Overview: rules/overview.md
     - Built-in Django Rules: rules/django_rules.md
