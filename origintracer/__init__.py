@@ -1,16 +1,3 @@
-"""
-Minimal usage, most settings come from defaults:
-
-    import origintracer
-    origintracer.init(api_key="test-key-123")
-    MIDDLEWARE = ["origintracer.probes.django_probe.TracerMiddleware", ...]
-
-Config merge order:
-    1. Package defaults - origintracer/config/defaults.yaml
-    2. User yaml file - searched from cwd upward, or explicit config= path
-    3. init() kwargs - highest priority, overrides everything
-"""
-
 from __future__ import annotations
 
 import importlib
