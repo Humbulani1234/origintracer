@@ -1,5 +1,5 @@
 """
-Pattern-based causal matching over the RuntimeGraph.
+Pattern-based causal matching over the ``RuntimeGraph``.
 
 This is a rule engine, not probabilistic causal inference.
 Rules are human-encoded failure patterns derived from real incidents.
