@@ -13,10 +13,6 @@
 ![License](https://img.shields.io/badge/license-MIT-red?style=flat-square)
 ![eBPF](https://img.shields.io/badge/Kernel-eBPF_Powered-blueviolet?style=flat-square)
 
-
-![WSL2](https://img.shields.io/badge/WSL2-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
-
 </div>
 
 **Live causal graph for async services.**
