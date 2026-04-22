@@ -40,18 +40,6 @@ _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
 _local_server: Optional[LocalQueryServer] = None
 
-
-# Used for probes that construct structural topology of the system
-def _register_post_init_callback(fn: Callable) -> None:
-    """
-    Register a function to call once after init() completes.
-    """
-    if _engine is not None:
-        fn()
-    else:
-        _post_init_callbacks.append(fn)
-
-
 # ----------- Raw config loading and merging ---------------
 
 
@@ -123,8 +111,6 @@ def _load_user_config(path: Optional[str]) -> Dict[str, Any]:
     if path is None:
         return {}
     try:
-        import yaml
-
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         logger.info("User config loaded from %s", path)
@@ -318,9 +304,7 @@ def _build_resolved_config(
 # ---------------- Component initialisation ---------------
 
 
-def _init_normalizer(cfg: ResolvedConfig) -> Any:
-    from .core.graph_normalizer import GraphNormalizer
-
+def _init_normalizer(cfg: ResolvedConfig) -> GraphNormalizer:
     normalizer = GraphNormalizer(
         enable_builtins=True,
         max_name_length=200,
@@ -341,9 +325,7 @@ def _init_normalizer(cfg: ResolvedConfig) -> Any:
     return normalizer
 
 
-def _init_compactor(cfg: ResolvedConfig) -> Any:
-    from .core.graph_compactor import GraphCompactor
-
+def _init_compactor(cfg: ResolvedConfig) -> GraphCompactor:
     c = cfg.compactor
     return GraphCompactor(
         max_nodes=c.get("max_nodes", 5_000),
@@ -353,15 +335,13 @@ def _init_compactor(cfg: ResolvedConfig) -> Any:
     )
 
 
-def _init_semantic(cfg: ResolvedConfig) -> Any:
+def _init_semantic(cfg: ResolvedConfig) -> SemanticLayer:
     from .core.semantic import load_from_dict
 
     return load_from_dict(cfg.semantic)
 
 
-def _init_tracker(cfg: ResolvedConfig) -> Any:
-    from .core.active_requests import ActiveRequestTracker
-
+def _init_tracker(cfg: ResolvedConfig) -> ActiveRequestTracker:
     ar = cfg.active_requests
     return ActiveRequestTracker(
         ttl_s=ar.get("ttl_s", 30.0),
@@ -400,9 +380,7 @@ def _init_probes(
 ) -> list:
     """
     1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
-
     2. Discover user probes from <app_root>/origintracer/probes/*_probe.py.
-
     3. Start probes named in cfg.probes (user origintracer.yaml takes precedence
        over defaults.yaml probes list via _deep_merge).
     """
@@ -419,7 +397,7 @@ def _init_probes(
                 exc,
             )
 
-    # User probes — auto-discovered from app directory
+    # User probes - auto-discovered from app directory
     _discover_user_probes(app_root)
 
     # Start probes named in cfg.probes
@@ -490,9 +468,7 @@ def _init_rules(
 ) -> Type[PatternRegistry]:
     """
     1. Import builtin rules modules listed in defaults.yaml under builtin_rules.
-
     2. Discover user probes from <app_root>/origintracer/rules/*_rule.py.
-
     3. Discover rules named in cfg.rules (user origintracer.yaml takes precedence
     """
     # 1. Builtins - import triggers PatternRegistry.register(...)
@@ -521,9 +497,6 @@ def _discover_user_rules(app_root: str) -> None:
     Auto-discover *_rules.py files from <app_root>/origintracer/rules/.
     Each file must expose register(registry) which adds CausalRule instances.
     """
-    import importlib.util
-    import traceback
-
     rules_dir = os.path.join(app_root, "rules")
     if not os.path.isdir(rules_dir):
         return
@@ -567,8 +540,6 @@ def _discover_user_rules(app_root: str) -> None:
 
 def _init_local_server(engine: Any) -> Any:
     try:
-        from .core.local_server import LocalQueryServer
-
         server = LocalQueryServer(engine)
         server.start()
         return server
@@ -580,15 +551,13 @@ def _init_local_server(engine: Any) -> Any:
 
 
 def _init_uploader(
-    cfg: ResolvedConfig, engine: Any
-) -> Optional[Any]:
+    cfg: ResolvedConfig, engine: Engine
+) -> Optional[Uploader]:
     global _uploader
     if not cfg.api_key:
         logger.debug("Uploader: no api_key - skipping")
         return None
     try:
-        from origintracer.sdk.uploader import Uploader
-
         uploader = Uploader(
             endpoint=cfg.endpoint,
             api_key=cfg.api_key,
@@ -774,8 +743,19 @@ def get_config() -> "ResolvedConfig":
     return _config
 
 
-def get_engine() -> Any:
+def get_engine() -> Optional[Engine]:
     return _engine
+
+
+# Used for probes that construct structural topology of the system
+def _register_post_init_callback(fn: Callable) -> None:
+    """
+    Register a function to call once after init() completes.
+    """
+    if _engine is not None:
+        fn()
+    else:
+        _post_init_callbacks.append(fn)
 
 
 def _make_signal_handler(signum):

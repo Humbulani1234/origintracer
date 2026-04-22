@@ -1,6 +1,5 @@
 """
-NOTE:
-    In development — must be thoroughly tested.
+**NOTE**: In development - experimental.
 
 Overview
 --------
@@ -20,9 +19,6 @@ What is lost in OTel mode
 - gunicorn worker lifecycle events
 - nginx correlation
 
-!!! warning
-    OTel does not go this deep. These are **OriginTracer-only observations**.
-
 - **OTel mode** --> graph + causal rules
 - **Native probe mode** --> graph + kernel internals + asyncio internals
 
@@ -35,6 +31,7 @@ OTel SDK (Django)
     --> OriginTracerSpanExporter
     --> span_to_event()
     --> engine.process(event)
+```
 """
 
 from __future__ import annotations
@@ -48,6 +45,8 @@ logger = logging.getLogger("origintracer.bridge.otel")
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.trace import ReadableSpan
+
+    from .core.event_schema import NormalizedEvent
 
 
 # Probe type mapping from OTel SpanKind
@@ -129,7 +128,9 @@ def _span_id_hex(span_id: int) -> str:
     return format(span_id, "016x")
 
 
-def span_to_event(span: "ReadableSpan") -> Optional[object]:
+def span_to_event(
+    span: "ReadableSpan",
+) -> Optional[NormalizedEvent]:
     """
     Convert one OTel ReadableSpan to a NormalizedEvent.
     Returns None if the span should be skipped (e.g. internal OTel noise).
@@ -221,7 +222,7 @@ class OriginTracerSpanExporter:
     ------------
     Install as a span processor in your OTel setup:
 
-    .. code-block:: python
+    ```python
 
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from origintracer.bridge.otel_bridge import OriginTracerSpanExporter
@@ -229,6 +230,7 @@ class OriginTracerSpanExporter:
         provider.add_span_processor(
             BatchSpanProcessor(OriginTracerSpanExporter())
         )
+    ```
 
     Notes
     -----
@@ -248,7 +250,7 @@ class OriginTracerSpanExporter:
 
         if engine is None:
             logger.debug(
-                "OTel bridge: engine not ready — dropping %d spans",
+                "OTel bridge: engine not ready - dropping %d spans",
                 len(spans),
             )
             return SpanExportResult.SUCCESS
@@ -274,11 +276,15 @@ class OriginTracerSpanExporter:
         return SpanExportResult.SUCCESS
 
     def shutdown(self) -> None:
-        """Called by OTel SDK on process exit. Nothing to do - engine shutdown is handled by origintracer.shutdown()."""
+        """
+        Called by OTel SDK on process exit. Nothing to do - engine shutdown is handled by origintracer.shutdown().
+        """
         pass
 
     def force_flush(self, timeout_millis: int = 30_000) -> bool:
-        """Called by BatchSpanProcessor on shutdown. Nothing to flush — engine handles its own buffer."""
+        """
+        Called by BatchSpanProcessor on shutdown. Nothing to flush - engine handles its own buffer.
+        """
         return True
 
 
@@ -287,10 +293,12 @@ def extract_trace_id_from_traceparent(
 ) -> Optional[str]:
     """
     Extract the trace_id from a W3C traceparent header.
-    traceparent format: 00-{trace_id}-{span_id}-{flags}
-    Example: 00-4a3ce96-00f067aa902b7-01
 
-    Use this in TracerMiddleware to share trace_id with OTel spans:
+        traceparent format: ``00-{trace_id}-{span_id}-{flags}``
+        Example: ``00-4a3ce96-00f067aa902b7-01``
+
+    Use this in TracerMiddleware to share trace_id with OTel spans
+    ::
 
         traceparent = request.META.get("HTTP_TRACEPARENT", "")
         if traceparent:
