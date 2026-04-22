@@ -176,6 +176,8 @@ def query(sock_path: str, query_str: str) -> dict:
     Send one query to OriginTracer. Opens and closes a fresh connection
     per call. Returns the full parsed response dict.
     """
+    if sys.platform != "linux":
+        raise RuntimeError("Unix sockets not supported")
     msg = (
         json.dumps(
             {"id": str(uuid.uuid4())[:8], "query": query_str}
