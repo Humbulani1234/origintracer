@@ -40,7 +40,7 @@ _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
 _local_server: Optional[LocalQueryServer] = None
 
-# ----------- Raw config loading and merging ---------------
+# ----------- Config handling ---------------
 
 
 def _load_package_defaults() -> Dict[str, Any]:
