@@ -18,7 +18,7 @@ from typing import (
 if TYPE_CHECKING:
     from .event_schema import NormalizedEvent
 
-logger = logging.getLogger("core.runtime_graph")
+logger = logging.getLogger("origintracer.runtime_graph")
 
 
 @dataclass
@@ -70,7 +70,7 @@ class RuntimeGraph:
     the minimum needed for causal reasoning.
 
     Node ID convention: ``<service>::<name>``
-    Edge key convention: ``<source> >> <target>:<type>``
+    Edge key convention: ``<source> --> <target>:<type>``
     """
 
     def __init__(self) -> None:
@@ -146,8 +146,8 @@ class RuntimeGraph:
         parent_event: Optional[NormalizedEvent] = None,
     ) -> None:
         """
-        Translate one NormalizedEvent into graph mutations.
-        If parent_event is provided, an edge is drawn from parent → this event.
+        Translate one `NormalizedEvent` into graph mutations.
+        If parent_event is provided, an edge is drawn from parent to this event.
         """
         name = event.name
         node_id = self._node_id(event.service, name)
@@ -155,7 +155,7 @@ class RuntimeGraph:
             event.service
         )  # e.g. "asyncio", "django", "syscall"
         duration = event.duration_ns
-        # 2. Fallback (with a quiet "fix this" note for yourself)
+        # move duration_ns outside metadata
         if duration is None and event.metadata:
             duration = event.metadata.get("duration_ns")
             if duration is not None:
@@ -184,7 +184,7 @@ class RuntimeGraph:
                     duration_ns=event.duration_ns,
                 )
 
-        # Probe-specific structural edges — topology, not request flow
+        # Probe-specific structural edges - topology, not request flow
         self._add_structural_edges(node_id, event)
 
     def _add_structural_edges(
@@ -278,19 +278,25 @@ class RuntimeGraph:
         return None
 
     def neighbors(self, node_id: str) -> List[GraphEdge]:
-        """Downstream: what does this node call?"""
+        """
+        Downstream: what does this node call?
+        """
         with self._lock:
             return list(self._adj.get(node_id, []))
 
     def callers(self, node_id: str) -> List[GraphEdge]:
-        """Upstream: what calls this node? (reverse edges)"""
+        """
+        Upstream: what calls this node? (reverse edges)
+        """
         with self._lock:
             return list(self._rev.get(node_id, []))
 
     def reachable_from(
         self, node_id: str, max_depth: int = 20
     ) -> Set[str]:
-        """BFS downstream — all nodes reachable from node_id."""
+        """
+        BFS downstream - all nodes reachable from node_id.
+        """
         visited: Set[str] = set()
         queue: deque = deque([(node_id, 0)])
         with self._lock:
@@ -306,7 +312,9 @@ class RuntimeGraph:
     def reachable_to(
         self, node_id: str, max_depth: int = 20
     ) -> Set[str]:
-        """BFS upstream — all nodes that can reach this node."""
+        """
+        BFS upstream - all nodes that can reach this node.
+        """
         visited: Set[str] = set()
         queue: deque = deque([(node_id, 0)])
         with self._lock:
@@ -330,7 +338,9 @@ class RuntimeGraph:
     def hottest_nodes(
         self, top_n: int = 10, by: str = "call_count"
     ) -> List[GraphNode]:
-        """Return the N most-called (or slowest) nodes."""
+        """
+        Return the N most-called (or slowest) nodes.
+        """
         with self._lock:
             nodes = list(self._nodes.values())
         if by == "duration":

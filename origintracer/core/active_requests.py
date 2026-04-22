@@ -48,35 +48,57 @@ class RequestSpan:
 class ActiveRequestTracker:
     """
     Tracks in-flight requests in a bounded dict with TTL eviction.
-    It is a 30-second window of active trace_ids that enables comparing
-    current request latency against stored historical averages.
 
-    What this tracks:
-        {trace_id: RequestSpan}
-        RequestSpan: service, pattern (normalized name), start_time, last_event
+    Maintains a 30-second window of active ``trace_id`` entries, enabling
+    causal rules to compare current request latency against stored historical
+    averages.
 
-    Lifecycle:
-        start() >> called when a traced request enters (TracerMiddleware,
-                   Celery task_prerun, etc.)
-        event() >> called on every NormalizedEvent to update last_event
-        complete() >> called when request exits, returns RequestSpan with
-                      duration
-        TTL >> entries not completed within 30s are evicted automatically
+    Attributes
+    ----------
+    active : dict[str, RequestSpan]
+        Live requests keyed by ``trace_id``. Each ``RequestSpan`` holds
+        ``service``, ``pattern`` (normalised name), ``start_time``, and
+        ``last_event``.
 
-    Integration with causal rules:
-        The _request_duration_anomaly rule (in causal.py) reads:
-            tracker.recent_completions(pattern, window_s=60)
-        and compares the completion durations against the RuntimeGraph
-        node's avg_duration_ns to detect live divergence.
+    Lifecycle
+    ---------
+    .. list-table::
+       :widths: 25 75
 
-    Usage:
+       * - ``start()``
+         - Called when a traced request enters — ``TracerMiddleware``,
+           Celery ``task_prerun``, etc.
+       * - ``event()``
+         - Called on every ``NormalizedEvent`` to update ``last_event``.
+       * - ``complete()``
+         - Called when the request exits. Returns the ``RequestSpan``
+           with ``duration_ms`` set.
+       * - TTL eviction
+         - Entries not completed within 30s are evicted automatically.
+
+    Causal Rule Integration
+    -----------------------
+    The ``request_duration_anomaly`` rule reads::
+
+        tracker.recent_completions(pattern, window_s=60)
+
+    and compares completion durations against the ``RuntimeGraph`` node's
+    ``avg_duration_ns`` to detect live latency divergence.
+
+    Usage
+    -----
+    ::
+
         tracker = ActiveRequestTracker()
-        # In TracerMiddleware/Celery probe:
+
+        # In TracerMiddleware or Celery probe:
         tracker.start(trace_id="abc-123", service="django",
-                    pattern="/api/users/{id}/")
+                      pattern="/api/users/{id}/")
+
         # In Engine.process():
         tracker.event(trace_id="abc-123", probe="django.db.query")
-        # In TracerMiddleware exit/task_postrun:
+
+        # In TracerMiddleware exit or task_postrun:
         span = tracker.complete(trace_id="abc-123")
     """
 
@@ -120,7 +142,7 @@ class ActiveRequestTracker:
     ) -> RequestSpan:
         """
         Register a new in-flight request.
-        Called by TracerMiddleware._begin(), Celery _on_task_start(), etc.
+        Called by ``TracerMiddleware._begin()``, Celery ``_on_task_start()``, etc.
         If the tracker is at capacity, the oldest entry is evicted to make room.
         This is a last-resort safety valve - normal eviction is TTL-based.
         """
@@ -145,7 +167,7 @@ class ActiveRequestTracker:
     def event(self, trace_id: str, probe: str) -> None:
         """
         Update last_event timestamp and append to probe_sequence.
-        Called by Engine.process() for every NormalizedEvent.
+        Called by ``Engine.process()`` for every ``NormalizedEvent``.
         """
         with self._lock:
             span = self._active.get(trace_id)
@@ -160,7 +182,7 @@ class ActiveRequestTracker:
         """
         Mark a request as complete and move it to the completions buffer.
         Returns the completed span, or None if trace_id was not tracked.
-        Called by TracerMiddleware exit, Celery _on_task_end(), etc.
+        Called by ``TracerMiddleware exit``, Celery ``_on_task_end()``, etc.
         """
         with self._lock:
             span = self._active.pop(trace_id, None)
