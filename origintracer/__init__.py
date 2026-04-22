@@ -653,7 +653,7 @@ def init(
         Override ActiveRequestTracker settings. Merges key-by-key.
         Keys: ``ttl_s``, ``max_size``
     """
-    global _config, _engine, _active_probes, _active_rules
+    global _config, _engine, _active_probes, _active_rules, _local_server
 
     setup_file_logging(debug)
 
@@ -775,7 +775,7 @@ def _make_signal_handler(signum):
 
 
 def shutdown() -> None:
-    global _active_probes, _engine, _uploader, _config, _local_server
+    global _active_probes, _engine, _uploader, _config, _local_server, _active_rules, _post_init_callbacks
 
     for probe in _active_probes:
         try:
@@ -805,8 +805,8 @@ def shutdown() -> None:
         _engine = None
 
     _config = None
-    _post_init_callbacks: List[Callable] = []
-    _active_rules: None
+    _post_init_callbacks = []
+    _active_rules = None
     logger.info("OriginTracer shut down")
 
 
