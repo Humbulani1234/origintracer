@@ -142,7 +142,7 @@ class ActiveRequestTracker:
     ) -> RequestSpan:
         """
         Register a new in-flight request.
-        Called by TracerMiddleware._begin(), Celery _on_task_start(), etc.
+        Called by ``TracerMiddleware._begin()``, Celery ``_on_task_start()``, etc.
         If the tracker is at capacity, the oldest entry is evicted to make room.
         This is a last-resort safety valve - normal eviction is TTL-based.
         """
@@ -167,7 +167,7 @@ class ActiveRequestTracker:
     def event(self, trace_id: str, probe: str) -> None:
         """
         Update last_event timestamp and append to probe_sequence.
-        Called by Engine.process() for every NormalizedEvent.
+        Called by ``Engine.process()`` for every ``NormalizedEvent``.
         """
         with self._lock:
             span = self._active.get(trace_id)
@@ -182,7 +182,7 @@ class ActiveRequestTracker:
         """
         Mark a request as complete and move it to the completions buffer.
         Returns the completed span, or None if trace_id was not tracked.
-        Called by TracerMiddleware exit, Celery _on_task_end(), etc.
+        Called by ``TracerMiddleware exit``, Celery ``_on_task_end()``, etc.
         """
         with self._lock:
             span = self._active.pop(trace_id, None)
