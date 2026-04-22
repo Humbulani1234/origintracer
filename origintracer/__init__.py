@@ -191,7 +191,7 @@ def _extend_normalize(
     return base
 
 
-# ----------------- ResolvedConfig ----------------------------
+# ----------------- ResolvedConfig initialisation -------------------------
 
 
 @dataclass
