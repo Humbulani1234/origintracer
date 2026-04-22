@@ -40,7 +40,7 @@ _uploader: Optional[Uploader] = None
 _post_init_callbacks: List[Callable] = []
 _local_server: Optional[LocalQueryServer] = None
 
-# ----------- Config handling ---------------
+# ----------- Config handling ------------------
 
 
 def _load_package_defaults() -> Dict[str, Any]:
@@ -743,7 +743,12 @@ def get_config() -> "ResolvedConfig":
     return _config
 
 
-def get_engine() -> Optional[Engine]:
+def get_engine() -> Engine:
+    if _engine is None:
+        raise RuntimeError(
+            "OriginTracer engine is not initialised. "
+            "Call origintracer.init() before using probes."
+        )
     return _engine
 
 
