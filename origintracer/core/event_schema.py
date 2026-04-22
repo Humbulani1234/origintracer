@@ -14,7 +14,7 @@ class ProbeTypeRegistry:
     Users register their own types from their application code.
     Third-party libraries register their types when installed.
 
-    The NormalizedEvent.probe field is typed as str - any string
+    The `NormalizedEvent.probe` field is typed as str - any string
     is accepted at runtime regardless of registration. Registration
     makes known types visible, not mandatory.
     """
@@ -27,7 +27,8 @@ class ProbeTypeRegistry:
     ) -> str:
         """
         Register a probe type string.
-        Returns the string so it can be used as a constant:
+        Returns the string so it can be used as a constant::
+
             MY_PROBE = ProbeTypes.register("myapp.thing.start", "Thing started")
         """
         self._types[probe_type] = description
@@ -109,7 +110,7 @@ ProbeTypes.register_many(
 @dataclass
 class NormalizedEvent:
     """
-    The NormalizedEvent is the only data interface between probes and the engine.
+    The `NormalizedEvent` is the only data interface between probes and the engine.
     Probe-specific fields do not cross this boundary to the engine.
 
     Attributes
@@ -137,7 +138,7 @@ class NormalizedEvent:
     tid : int, optional
         OS thread ID.
     metadata : dict, optional
-        Probe-specific payload — anything that doesn't fit the fields above.
+        Probe-specific payload - anything that doesn't fit the fields above.
     """
 
     probe: str  # ProbeType

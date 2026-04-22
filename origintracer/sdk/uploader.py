@@ -162,7 +162,7 @@ class Uploader:
         The thread wakes every ``snapshot_interval`` seconds and performs
         two uploads:
 
-        **Events** — drains the event buffer and posts to
+        **Events** - drains the event buffer and posts to
         ``POST /api/v1/events``. Best-effort: failures are silently discarded.
         Probe events are not critical path.
 

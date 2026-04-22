@@ -1,11 +1,24 @@
 """
-The emitter is the interface between probes and the Engine.
-Probes do not import Engine directly - they call emit().
+The interface between probes and the engine.
 
-This design allows the Engine be swapped.
+Probes never import ``Engine`` directly - they call ``emit()``. This
+keeps probes decoupled from the engine implementation and allows the
+engine to be swapped without touching any probe code.
 
-Flow:
-    Probe >> emit(event) >> EventBuffer >> Engine.process(event)
+Flow
+----
+::
+
+    Probe
+      └── emit(event)
+            └── EventBuffer (thread-safe bounded deque)
+                    └── Engine.process(event)
+
+See Also
+--------
+``emit_direct()`` : Bypasses the buffer for lifecycle events that must
+    appear in the graph immediately at startup before any requests arrive
+    e.g. ``gunicorn.worker.fork``, ``celery.worker.fork``.
 """
 
 from __future__ import annotations
