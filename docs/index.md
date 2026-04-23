@@ -40,7 +40,8 @@ cd origintracer
 pip install -e .
 ```
 
-Place your django project in the `applications` directory.
+Place your django project in the `applications` directory. This directory
+already has a complete OriginTracer configured `Django` example application. The following steps detail how it was configured and the steps to follow for your application.
 
 ```python
 # settings.py - TracerMiddleware must be first

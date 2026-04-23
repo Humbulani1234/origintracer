@@ -10,7 +10,7 @@ pip install -e .
 
 # Quick Start
 
-The fastest path to a working graph.
+The fastest path to a working graph. Place your django project in the `applications` directory, and follow the following steps.
 
 ## 1. Add middleware
 
@@ -74,6 +74,9 @@ You should see the graph building in real time.
 ---
 
 # Django Integration
+
+Navigate to the `applications/django` directory for this specific application.
+This is a fully OriginTracer already configured `Django` example application. The following steps detail how it was configured and the steps to follow for your application.
 
 ## Complete setup
 
@@ -186,6 +189,9 @@ gunicorn -c gunicorn.conf.py config.asgi:application \
 ---
 
 # Celery Integration
+
+Navigate to the `applications/celery` directory for this specific application.
+This is a fully OriginTracer already configured `Django/Celery` example application. The following steps detail how it was configured and the steps to follow for your application.
 
 ## One init per process
 
