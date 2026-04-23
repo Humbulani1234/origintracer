@@ -122,22 +122,22 @@ BPF_HASH(trace_context, u32, struct trace_entry_t, 65536);
 // value1/value2 interpretation depends on event_type - document in probe.
 
 struct kernel_event_t {
-    u64  timestamp_ns;
-    u32  pid;
-    u32  tid;
+    u64 timestamp_ns;
+    u32 pid;
+    u32 tid;
     char trace_id[36];
     char service[32];
     char event_type[32];
-    s64  value1; // primary numeric payload (fd, n_events, bytes, ...)
-    s64  value2; // secondary payload (e.g. fd for sendmsg)
-    u64  duration_ns;
-    u32  saddr; // source IP (network byte order) - 0 if unused
-    u32  daddr; // dest IP (network byte order) - 0 if unused
-    u16  sport;
-    u16  dport;
-    u16  _pad;
-    u32  client_ip; // populated by accept probes - 0 otherwise
-    u16  client_port;
+    s64 value1; // primary numeric payload (fd, n_events, bytes, ...)
+    s64 value2; // secondary payload (e.g. fd for sendmsg)
+    u64 duration_ns;
+    u32 saddr; // source IP (network byte order) - 0 if unused
+    u32 daddr; // dest IP (network byte order) - 0 if unused
+    u16 sport;
+    u16 dport;
+    u16 _pad;
+    u32 client_ip; // populated by accept probes - 0 otherwise
+    u16 client_port;
 };
 
 // Probes call kernel_events.perf_submit(...)

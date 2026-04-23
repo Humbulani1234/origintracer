@@ -223,7 +223,7 @@ class MsgpackSerializer(GraphSerializer):
             )
 
         payload = graph_to_dict(graph)
-        return msgpack.packb(payload, use_bin_type=True)
+        return msgpack.packb(payload, use_bin_type=True)  # type: ignore[arg-type]
 
     def deserialize(self, data: bytes) -> Any:
         try:
@@ -328,7 +328,7 @@ class ProtobufSerializer(GraphSerializer):
     @staticmethod
     def _import_pb2():
         try:
-            from origintracer.core import origintracer_pb2
+            from origintracer.core import origintracer_pb2  # type: ignore[arg-type]
 
             return origintracer_pb2
         except ImportError:

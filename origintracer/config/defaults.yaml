@@ -1,21 +1,17 @@
 # Package-shipped defaults.
 # Override in your project's origintracer.yaml.
 
-# This file represents the full production stack:
-#   nginx --> gunicorn (UvicornWorker) --> uvicorn --> Django --> postgres/redis
-
 # ---------------- Probe activation ---------------------------
 
 # builtin_probes: Python module paths to import at init() time.
-#   All built-in probes are listed here.
- 
+# All built-in probes are listed here. 
 builtin_probes:
   - ".probes.asyncio_probe"
   - ".probes.django_probe"
 
 
 # probes: Names of probes to actually start.
-#   User origintracer.yaml replaces this list.
+# User origintracer.yaml replaces this list.
 probes:
   - django
   - asyncio
@@ -23,7 +19,6 @@ probes:
 # ---------------- Rules activation ---------------------------
 
 # builtin_rules: Python module paths to import at init() time.
- 
 builtin_rules:
   - ".rules.asyncio_rules"
   - ".rules.django_rules"
@@ -40,22 +35,17 @@ buffer_size: 10000
  
 # ----- Snapshot and flush intervals -------------------------
 
-snapshot_interval: 15.0 # seconds between temporal graph snapshots
-flush_interval: 10 # seconds between uploader batch flushes
+# seconds between temporal graph snapshots
+snapshot_interval: 15.0
+# seconds between uploader batch flushes
+flush_interval: 10
 endpoint: http://localhost:8001
-
-# ------- Sampling ------------------------------------------
-
-snapshot_interval: 15.0 # seconds between temporal graph snapshots
-flush_interval: 10 # seconds between uploader batch flushes
-buffer_size: 10000 # EventBuffer max size before drop
 
 # ----- Semantic aliases ----------------------------------------
 
 # Human labels mapped to graph nodes/services for DSL queries:
 #   SHOW latency WHERE system = "api"
 #   BLAME WHERE system = "db"
-
 # Users add their own labels in origintracer.yaml semantic section.
 # Labels with the same name as a default are overridden by user config.
 semantic:
@@ -136,7 +126,6 @@ semantic:
 # Applied after built-in patterns (UUID, numeric ID, memory address, SQL).
 # Built-in patterns always run - these add to them.
 # Format: service (or "*" for all), pattern (regex), replacement.
-
 normalize:
   - service: django
     pattern: "/api/v\\d+/"
@@ -156,13 +145,19 @@ normalize:
 # ------------------ Graph compactor ----------------------------------
 
 compactor:
-  max_nodes: 5000 # hard cap on RuntimeGraph node count
-  evict_to_ratio: 0.80 # evict to 80% of max_nodes when cap hit
-  node_ttl_s: 3600.0 # evict nodes not seen for 1 hour
-  min_call_count: 5 # never TTL-evict nodes called >= 5 times
+  # hard cap on RuntimeGraph node count
+  max_nodes: 5000
+  # evict to 80% of max_nodes when cap hit
+  evict_to_ratio: 0.80
+  # evict nodes not seen for 1 hour
+  node_ttl_s: 3600.0
+  # never TTL-evict nodes called >= 5 times
+  min_call_count: 5
 
 # --------- Active request tracker ----------------------------------
 
 active_requests:
-  ttl_s: 30.0 # evict in-flight entries after 30s (safety valve)
-  max_size: 10000 # hard cap - FIFO eviction at cap
+  # evict in-flight entries after 30s (safety valve)
+  ttl_s: 30.0
+  # hard cap - FIFO eviction at cap
+  max_size: 10000

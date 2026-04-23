@@ -41,7 +41,7 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fastapi import (
     Depends,
@@ -55,7 +55,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from origintracer.storage.base import InMemoryRepository
+from origintracer.storage.base import (
+    InMemoryRepository,
+    PGEventRepository,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,7 +128,9 @@ _graphs_lock = threading.Lock()
 # Storage repository - set in _init_repository() at startup.
 # Implements insert_event(), insert_snapshot(), get_latest_snapshot(),
 # query_events(), insert_marker().
-_repository: Optional[Any] = None
+_repository: Optional[
+    Union[InMemoryRepository, PGEventRepository]
+] = None
 
 # API key:customer_id mapping - for development
 _valid_api_keys: Dict[str, str] = {}
@@ -162,12 +167,8 @@ def _init_repository() -> None:
         try:
             import psycopg2
 
-            from origintracer.storage.base import (
-                PGEventRepository,
-            )
-
             conn = psycopg2.connect(db_dsn)
-            _repository = PGEventRepository(conn)
+            _repository = PGEventRepository(conn)  # type: ignore[union-attr]
             logger.info(
                 "Storage: PostgreSQL (%s)", db_dsn.split("@")[-1]
             )
