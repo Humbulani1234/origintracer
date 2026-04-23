@@ -70,6 +70,7 @@ pip install -e .
 ## Quick Start - Django application
 
 Navigate to the `applications/django` directory for this specific application.
+This is a fully OriginTracer already configured `Django` example application. The following steps detail how it was configured and the steps to follow for your application.
 
 **1. Add middleware** (must be first in `settings.py`):
 

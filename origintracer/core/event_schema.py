@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Optional
 
 
 class ProbeTypeRegistry:
@@ -14,7 +14,7 @@ class ProbeTypeRegistry:
     Users register their own types from their application code.
     Third-party libraries register their types when installed.
 
-    The `NormalizedEvent.probe` field is typed as str - any string
+    The ``NormalizedEvent.probe`` field is typed as str - any string
     is accepted at runtime regardless of registration. Registration
     makes known types visible, not mandatory.
     """

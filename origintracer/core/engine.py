@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Type
 from ..query.parser import execute, parse
 from ..sdk.base_probe import BaseProbe
 from .active_requests import ActiveRequestTracker
-from .causal import CausalMatch, CausalRule, PatternRegistry
+from .causal import CausalMatch, PatternRegistry
 from .event_schema import NormalizedEvent, ProbeTypes
 from .graph_compactor import GraphCompactor
 from .graph_normalizer import GraphNormalizer
