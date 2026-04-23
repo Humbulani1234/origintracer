@@ -8,18 +8,15 @@ import signal
 import sys
 import traceback
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Type
 
 import yaml
 
 from origintracer.utils.logging import setup_file_logging
 
-from .context.vars import get_trace_id
 from .core.active_requests import ActiveRequestTracker
 from .core.causal import PatternRegistry
 from .core.engine import Engine
-from .core.event_schema import NormalizedEvent
 from .core.graph_compactor import GraphCompactor
 from .core.graph_normalizer import GraphNormalizer
 from .core.local_server import LocalQueryServer
@@ -601,7 +598,7 @@ def init(
     """
     Initialise OriginTracer.
 
-    Config merge order (last wins):
+    Config merge order:
 
     1. ``origintracer/config/defaults.yaml`` - package defaults, never edited
     2. ``origintracer.yaml`` - user app config, takes precedence
@@ -620,9 +617,9 @@ def init(
 
     Parameters
     ----------
-    api_key : str, optional
+    api_key : str
         API key for remote upload to OriginTracer backend.
-    endpoint : str, optional
+    endpoint : str
         Backend URL. Default: ``http://localhost:8001``
     config : str, optional
         Explicit path to user ``origintracer.yaml``.
@@ -639,9 +636,9 @@ def init(
         Seconds between uploader event batch flushes. Default: ``10``
     debug : bool, optional
         If ``True``, enables OriginTracer even when ``DJANGO_DEBUG=True``.
-        Default: ``False`` — auto-disables in Django debug environments.
+        Default: ``False`` - auto-disables in Django debug environments.
     repository : object, optional
-        Pre-built storage backend (``PGEventRepository``, ``ClickHouseRepository``).
+        Pre-built storage backend (``PGEventRepository``, ``InMemoryRepository``).
         Overrides the remote uploader as the event sink.
     normalize : list[dict], optional
         Additional normalization rules beyond built-in patterns and yaml rules.
@@ -682,7 +679,7 @@ def init(
     )
 
     if not _config.enabled:
-        logger.info("OriginTracer disabled — not initialising")
+        logger.info("OriginTracer disabled - not initialising")
         return
 
     # 3. Initialise components

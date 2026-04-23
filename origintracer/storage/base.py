@@ -204,6 +204,7 @@ class PGEventRepository(BaseRepository):
             cur.execute(_PG_CREATE_SNAPSHOTS)
             cur.execute(_PG_CREATE_MARKERS)
             cur.execute(_PG_CREATE_GRAPH_DIFFS)
+            cur.execute(_PG_CREATE_CAUSAL_RULES)
         self._conn.commit()
 
     def insert_event(self, event: NormalizedEvent) -> None:
@@ -410,25 +411,53 @@ class PGEventRepository(BaseRepository):
 
     def save_causal_matches(
         self, customer_id, matches, timestamp
-    ):
-        self._conn.execute(
-            """
-            INSERT INTO causal_matches (customer_id, timestamp, label, matches)
-            VALUES (%s, %s, %s, %s)
-        """,
-            (customer_id, timestamp, label, json.dumps(matches)),
-        )
+    ) -> None:
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO causal_matches (customer_id, timestamp, matches)
+                    VALUES (%s, %s, %s, %s)
+                """,
+                    (
+                        customer_id,
+                        timestamp,
+                        timestamp,
+                        json.dumps(matches),
+                    ),
+                )
+            self._conn.commit()
+        except Exception as exc:
+            logger.warning(
+                "PG save_causal_matches failed: %s", exc
+            )
+            self._safe_rollback()
 
-    def get_causal_history(self, customer_id, limit=50):
-        rows = self._conn.execute(
-            """
-            SELECT timestamp, label, matches FROM causal_matches
-            WHERE customer_id = %s
-            ORDER BY timestamp DESC LIMIT %s
-        """,
-            (customer_id, limit),
-        )
-        return [dict(r) for r in rows]
+    def get_causal_history(
+        self, customer_id, limit=50
+    ) -> List[Dict]:
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT customer_id, timestamp, matches
+                    FROM causal_matches
+                    WHERE customer_id = %s
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                    """,
+                    (customer_id, limit),
+                )
+                rows = cur.fetchall()
+
+            if not rows:
+                return []
+
+            return [dict(r) for r in rows]
+
+        except Exception as exc:
+            logger.error("PG get_latest_history failed: %s", exc)
+            return []
 
     def close(self) -> None:
         try:
@@ -552,11 +581,11 @@ class InMemoryRepository(BaseRepository):
                 return d
         return None
 
-    def get_diffs(self, customer_id: str) -> List[GraphDiff]:
+    def get_diffs(self, customer_id: str) -> List[Dict]:
         return list(self._diffs.get(customer_id, []))
 
     def save_causal_matches(
-        self, customer_id, matches, timestamp, label=None
+        self, customer_id, matches, timestamp
     ):
         self._causal_history.append(
             {
