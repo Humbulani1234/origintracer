@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ class GraphDiff:
 
     timestamp: float
     label: Optional[str]  # e.g. "deployment:abc123"
+    worker_pid: str
 
     added_node_ids: Set[str] = field(default_factory=set)
     removed_node_ids: Set[str] = field(default_factory=set)
@@ -50,6 +52,7 @@ class GraphDiff:
             "removed_nodes": list(self.removed_node_ids),
             "added_edges": list(self.added_edge_keys),
             "removed_edges": list(self.removed_edge_keys),
+            "worker_pid": self.worker_pid,
         }
 
 
@@ -86,12 +89,16 @@ class TemporalStore:
         current_edges: Set[str] = graph_snapshot.get(
             "edge_keys", set()
         )
+        worker_pid: str = graph_snapshot.get(
+            "worker_pid"
+        ) or str(os.getpid())
 
         with self._lock:
             diff = GraphDiff(
                 timestamp=graph_snapshot.get(
                     "timestamp", time.time()
                 ),
+                worker_pid=worker_pid,
                 label=label,
                 added_node_ids=current_nodes
                 - self._prev_node_ids,
@@ -123,6 +130,7 @@ class TemporalStore:
             self._diffs.append(
                 GraphDiff(
                     timestamp=time.time(),
+                    worker_pid=str(os.getpid()),
                     label=label,
                     edge_baseline=frozenset(
                         self._prev_edge_keys
@@ -141,6 +149,7 @@ class TemporalStore:
             "removed_edges": list(last.removed_edge_keys),
             "timestamp": last.timestamp,
             "label": last.label,
+            "worker_pid": last.worker_pid,
         }
 
     def changes_since(self, since: float) -> List[GraphDiff]:
