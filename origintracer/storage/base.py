@@ -651,7 +651,9 @@ class InMemoryRepository(BaseRepository):
         customer_id: str,
         worker_pid: str,
     ) -> List[Dict]:
-        return list(self._diffs[customer_id].get(worker_pid, []))
+        return list(
+            self._diffs.get(customer_id, {}).get(worker_pid, [])
+        )
 
     def save_causal_matches(
         self, customer_id, worker_pid: str, matches, timestamp
