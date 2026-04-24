@@ -25,7 +25,7 @@ class GraphDiff:
 
     timestamp: float
     label: Optional[str]  # e.g. "deployment:abc123"
-    worker_pid: str
+    worker_pid: Optional[str]
 
     added_node_ids: Set[str] = field(default_factory=set)
     removed_node_ids: Set[str] = field(default_factory=set)

@@ -608,13 +608,14 @@ async def causal_history(
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ):
-    global _active_pid
     customer_id = _authenticate(authorization)
     with _active_pid_lock:
-        worker_pid: str = _active_pid["customer_id"]
-    customer_id = _authenticate(authorization)
-    with _active_pid_lock:
-        worker_pid: str = _active_pid["customer_id"]
+        worker_pid = _active_pid.get(customer_id)
+    if not worker_pid:
+        raise HTTPException(
+            status_code=400,
+            detail="No active worker for this customer. Send a deployment marker first.",
+        )
     return {
         "data": repository.get_causal_history(
             customer_id, worker_pid, limit
@@ -643,7 +644,7 @@ async def causal(
     )
 
     with _active_pid_lock:
-        worker_pid: str = _active_pid[customer_id]
+        worker_pid = _active_pid[customer_id]
     temporal = TemporalStore()
     raw_diffs = repository.get_diffs(customer_id, worker_pid)
 
@@ -722,7 +723,15 @@ async def diff(
     """
     customer_id = _authenticate(authorization)
     with _active_pid_lock:
-        worker_pid: str = _active_pid[customer_id]
+        worker_pid = _active_pid.get(customer_id)
+        if not worker_pid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No active worker for customer '{customer_id}'. "
+                    "The agent must send a deployment marker or snapshot first."
+                ),
+            )
     results = repository.get_label_diff(
         customer_id, worker_pid, since
     )
@@ -748,7 +757,15 @@ async def get_trace(
 
     customer_id = _authenticate(authorization)
     with _active_pid_lock:
-        worker_pid: str = _active_pid[customer_id]
+        worker_pid = _active_pid.get(customer_id)
+        if not worker_pid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No active worker for customer '{customer_id}'. "
+                    "The agent must send a deployment marker or snapshot first."
+                ),
+            )
     # pull events from repository instead of _event_log
     if repository is None:
         raise HTTPException(
@@ -818,10 +835,14 @@ async def mark_deployment_endpoint(
     repository: Any = Depends(get_repository),
 ) -> Dict:
     customer_id = _authenticate(authorization)
+    if not (worker_pid := body.worker_pid):
+        raise HTTPException(
+            status_code=400, detail="worker_pid is required"
+        )
     # populate active pid
     with _active_pid_lock:
         if customer_id not in _active_pid:
-            _active_pid[customer_id] = body.worker_pid
+            _active_pid[customer_id] = worker_pid
     if repository is not None:
         repository.insert_deployment_marker(
             customer_id, body.worker_pid, body.label
