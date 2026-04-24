@@ -69,6 +69,7 @@ logger = logging.getLogger("origintracer.fastapi")
 
 class DeploymentRequest(BaseModel):
     label: Optional[str] = None
+    worker_pid: str
 
 
 class GraphDiffRequest(BaseModel):
@@ -817,11 +818,13 @@ async def mark_deployment_endpoint(
     repository: Any = Depends(get_repository),
 ) -> Dict:
     customer_id = _authenticate(authorization)
+    # populate active pid
     with _active_pid_lock:
-        worker_pid: str = _active_pid[customer_id]
+        if customer_id not in _active_pid:
+            _active_pid[customer_id] = body.worker_pid
     if repository is not None:
         repository.insert_deployment_marker(
-            customer_id, worker_pid, body.label
+            customer_id, body.worker_pid, body.label
         )
 
     logger.info(
