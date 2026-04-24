@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
@@ -62,6 +63,7 @@ def graph_to_dict(graph: Any) -> Dict:
             "schema_version": "1.0",
             "serialized_at": time.time(),
             "graph_last_updated": graph.last_updated,
+            "worker_pid": graph.worker_pid,
             "nodes": nodes,
             "edges": edges,
         }
@@ -106,6 +108,9 @@ def dict_to_graph(data: Dict) -> Any:
 
         graph.last_updated = data.get(
             "graph_last_updated", time.time()
+        )
+        graph.worker_pid = data.get("worker_pid") or str(
+            os.getpid()
         )
 
     logger.info(
