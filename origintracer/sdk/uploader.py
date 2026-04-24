@@ -242,7 +242,11 @@ class Uploader:
         batch = self._event_buffer.drain(self._max_batch)
         if not batch:
             return
-        payload = {"events": batch, "count": len(batch)}
+        payload = {
+            "events": batch,
+            "count": len(batch),
+            "worker_pid": str(os.getpid()),
+        }
 
         try:
             body, content_type = _serialize_events(payload)
@@ -406,7 +410,11 @@ class Uploader:
         try:
             httpx.post(
                 f"{self._endpoint}/api/v1/deployment",
-                json={"label": label, "worker_pid": os.getpid()},
+                json={
+                    "label": label,
+                    "customer_id": "local_dev",
+                    "worker_pid": str(os.getpid()),
+                },
                 headers={
                     "Authorization": f"Bearer {self._api_key}"
                 },
