@@ -4,6 +4,8 @@ import uuid
 
 import pytest
 
+from backend import main
+from backend.main import _active_pid, _active_pid_lock
 from origintracer.core.active_requests import (
     ActiveRequestTracker,
 )
@@ -163,3 +165,28 @@ def require_rule(request):
             pytest.skip(
                 f"Rule '{rule_name}' not registered - user rule not loaded"
             )
+
+
+TEST_CUSTOMER = "dev_customer"
+TEST_WORKER_PID = "12345"
+
+
+@pytest.fixture()
+def reset_global_state():
+    """Reset all global state before every test."""
+    with main._active_pid_lock:
+        main._active_pid.clear()
+    with main._graphs_lock:
+        main._graphs.clear()
+    yield
+    with main._active_pid_lock:
+        main._active_pid.clear()
+    with main._graphs_lock:
+        main._graphs.clear()
+
+
+@pytest.fixture
+def prepopulate_pid():
+    """Pre-populate _active_pid for tests that need it already set."""
+    with _active_pid_lock:
+        _active_pid[TEST_CUSTOMER] = TEST_WORKER_PID

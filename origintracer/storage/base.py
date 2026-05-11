@@ -27,6 +27,8 @@ class BaseRepository(ABC):
     def query_events(
         self,
         *,
+        customer_id: str,
+        worker_pid: str,
         trace_id: Optional[str] = None,
         probe: Optional[str] = None,
         service: Optional[str] = None,
@@ -42,6 +44,7 @@ class BaseRepository(ABC):
     def insert_snapshot(
         self,
         customer_id: str,
+        worker_pid: str,
         data: bytes,
         content_type: str = "application/msgpack",
         node_count: int = 0,
@@ -59,6 +62,7 @@ class BaseRepository(ABC):
     def get_latest_snapshot(
         self,
         customer_id: str,
+        worker_pid: str,
     ) -> Optional[Dict[str, Any]]:
         """
         Return the latest snapshot for this customer, or None.
@@ -76,7 +80,7 @@ class BaseRepository(ABC):
 
     @abstractmethod
     def insert_deployment_marker(
-        self, customer_id: str, label: str
+        self, customer_id: str, worker_pid: str, label: str
     ) -> None:
         """
         Store a deployment marker with the current timestamp.
@@ -85,7 +89,7 @@ class BaseRepository(ABC):
 
     @abstractmethod
     def insert_graph_diff(
-        self, customer_id: str, diff: Dict
+        self, customer_id: str, worker_pid: str, diff: Dict
     ) -> None:
         """
         Store one graph diff snapshot from the agent.
@@ -96,6 +100,7 @@ class BaseRepository(ABC):
     def save_causal_matches(
         self,
         customer_id: str,
+        worker_pid: str,
         matches: List[Dict],
         timestamp: float,
     ) -> None:
@@ -108,6 +113,7 @@ class BaseRepository(ABC):
     def get_causal_history(
         self,
         customer_id: str,
+        worker_pid: str,
         limit: int = 50,
     ) -> List[Dict]:
         """
@@ -119,7 +125,8 @@ class BaseRepository(ABC):
 _PG_CREATE_EVENTS = """
 CREATE TABLE IF NOT EXISTS st_events (
     id BIGSERIAL PRIMARY KEY,
-    customer_id TEXT NOT NULL DEFAULT 'default',
+    customer_id TEXT NOT NULL,
+    worker_pid TEXT TEXT NOT NULL,
     trace_id TEXT NOT NULL,
     span_id TEXT,
     parent_span_id TEXT,
@@ -128,12 +135,11 @@ CREATE TABLE IF NOT EXISTS st_events (
     name TEXT NOT NULL,
     wall_time DOUBLE PRECISION NOT NULL,
     duration_ns BIGINT,
-    pid INT,
     tid INT,
     metadata JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_st_events_trace ON st_events (trace_id);
-CREATE INDEX IF NOT EXISTS idx_st_events_customer ON st_events (customer_id, wall_time DESC);
+CREATE INDEX IF NOT EXISTS idx_st_events_customer ON st_events (customer_id, worker_pid, wall_time DESC);
 CREATE INDEX IF NOT EXISTS idx_st_events_service ON st_events (service);
 CREATE INDEX IF NOT EXISTS idx_st_events_probe ON st_events (probe);
 """
@@ -142,6 +148,7 @@ _PG_CREATE_SNAPSHOTS = """
 CREATE TABLE IF NOT EXISTS st_snapshots (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL,
+    worker_pid TEXT NOT NULL,
     received_at DOUBLE PRECISION NOT NULL,
     content_type TEXT NOT NULL DEFAULT 'application/msgpack',
     node_count INT,
@@ -149,25 +156,27 @@ CREATE TABLE IF NOT EXISTS st_snapshots (
     data BYTEA NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_st_snapshots_customer
-    ON st_snapshots (customer_id, received_at DESC);
+    ON st_snapshots (customer_id, worker_pid, received_at DESC);
 """
 
 _PG_CREATE_MARKERS = """
 CREATE TABLE IF NOT EXISTS st_markers (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL,
+    worker_pid TEXT NOT NULL,
     label TEXT NOT NULL,
     created_at DOUBLE PRECISION NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_st_markers_customer
-    ON st_markers (customer_id, created_at DESC);
+    ON st_markers (customer_id, worker_pid, created_at DESC);
 """
 
 
 _PG_CREATE_GRAPH_DIFFS = """
 CREATE TABLE graph_diffs (
     id SERIAL PRIMARY KEY,
-    customer_id VARCHAR(100) NOT NULL,
+    customer_id TEXT NOT NULL,
+    worker_pid TEXT NOT NULL,
     snapshot_time TIMESTAMPTZ DEFAULT NOW(),
     added_nodes JSONB,
     removed_nodes JSONB,
@@ -175,17 +184,20 @@ CREATE TABLE graph_diffs (
     removed_edges JSONB,
     label VARCHAR(200) -- populated when a deployment marker exists
 );
+CREATE INDEX IF NOT EXISTS idx_st_markers_customer
+    ON st_markers (customer_id, worker_pid, snapshot_time);
 """
 
 _PG_CREATE_CAUSAL_RULES = """
 CREATE TABLE causal_matches (
     id SERIAL PRIMARY KEY,
     customer_id VARCHAR(255) NOT NULL,
+    worker_pid TEXT NOT NULL,
     timestamp DOUBLE PRECISION NOT NULL,
     matches JSONB NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_causal_customer ON causal_matches(customer_id, timestamp DESC);
+CREATE INDEX idx_causal_customer ON causal_matches(customer_id, worker_pid, timestamp DESC);
 """
 
 
@@ -209,19 +221,20 @@ class PGEventRepository(BaseRepository):
 
     def insert_event(self, event: NormalizedEvent) -> None:
         try:
+            customer_id = event.metadata["customer_id"]
+            worker_pid = str(event.metadata["worker_pid"])
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO st_events
-                        (customer_id, trace_id, span_id, parent_span_id,
+                        (customer_id, worker_pid, trace_id, span_id, parent_span_id,
                          probe, service, name, wall_time,
-                         duration_ns, pid, tid, metadata)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                         duration_ns, tid, metadata)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
-                        event.metadata.get(
-                            "customer_id", "default"
-                        ),
+                        customer_id,
+                        worker_pid,
                         event.trace_id,
                         event.span_id,
                         event.parent_span_id,
@@ -230,12 +243,16 @@ class PGEventRepository(BaseRepository):
                         event.name,
                         event.wall_time,
                         event.duration_ns,
-                        event.pid,
                         event.tid,
                         json.dumps(event.metadata),
                     ),
                 )
             self._conn.commit()
+        except KeyError as exc:
+            logger.warning(
+                "Missing required metadata field: %s", exc
+            )
+            self._safe_rollback()
         except Exception as exc:
             logger.warning("PG insert_event failed: %s", exc)
             self._safe_rollback()
@@ -243,14 +260,19 @@ class PGEventRepository(BaseRepository):
     def query_events(
         self,
         *,
+        customer_id: str,
+        worker_pid: str,
         trace_id: Optional[str] = None,
         probe: Optional[str] = None,
         service: Optional[str] = None,
         since: Optional[float] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        conditions: List[str] = []
-        params: List[Any] = []
+        conditions: List[str] = [
+            "customer_id = %s",
+            "pid = %s",
+        ]
+        params: List[Any] = [customer_id, worker_pid]
 
         if trace_id:
             conditions.append("trace_id = %s")
@@ -265,25 +287,22 @@ class PGEventRepository(BaseRepository):
             conditions.append("wall_time >= %s")
             params.append(since)
 
-        where = (
-            ("WHERE " + " AND ".join(conditions))
-            if conditions
-            else ""
-        )
         params.append(limit)
 
         sql = f"""
             SELECT trace_id, span_id, parent_span_id, probe, service, name,
-                   wall_time, duration_ns, pid, tid, metadata
-            FROM   st_events
-            {where}
-            ORDER  BY wall_time DESC
-            LIMIT  %s
+                wall_time, duration_ns, pid, tid, metadata
+            FROM st_events
+            WHERE {" AND ".join(conditions)}
+            ORDER BY wall_time DESC
+            LIMIT %s
         """
+
         try:
             with self._conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
+
             cols = [
                 "trace_id",
                 "span_id",
@@ -297,7 +316,9 @@ class PGEventRepository(BaseRepository):
                 "tid",
                 "metadata",
             ]
+
             return [dict(zip(cols, r)) for r in rows]
+
         except Exception as exc:
             logger.error("PG query_events failed: %s", exc)
             return []
@@ -305,6 +326,7 @@ class PGEventRepository(BaseRepository):
     def insert_snapshot(
         self,
         customer_id: str,
+        worker_pid: str,
         data: bytes,
         content_type: str = "application/msgpack",
         node_count: int = 0,
@@ -315,12 +337,13 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     INSERT INTO st_snapshots
-                        (customer_id, received_at, content_type,
+                        (customer_id, worker_pid, received_at, content_type,
                          node_count, edge_count, data)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         customer_id,
+                        worker_pid,
                         time.time(),
                         content_type,
                         node_count,
@@ -336,18 +359,19 @@ class PGEventRepository(BaseRepository):
     def get_latest_snapshot(
         self,
         customer_id: str,
+        worker_pid: str,
     ) -> Optional[Dict[str, Any]]:
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT data, content_type, received_at
-                    FROM   st_snapshots
-                    WHERE  customer_id = %s
-                    ORDER  BY received_at DESC
-                    LIMIT  1
+                    FROM st_snapshots
+                    WHERE  customer_id = %s AND worker_pid = %s
+                    ORDER BY received_at DESC
+                    LIMIT 1
                     """,
-                    (customer_id,),
+                    (customer_id, worker_pid),
                 )
                 row = cur.fetchone()
             if row is None:
@@ -366,13 +390,13 @@ class PGEventRepository(BaseRepository):
             return None
 
     def insert_graph_diff(
-        self, customer_id: str, diff: Dict
+        self, customer_id: str, worker_pid: str, diff: Dict
     ) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO graph_diffs
-                (customer_id, added_nodes, removed_nodes, added_edges, removed_edges, label)
-                VALUES (%s, %s, %s, %s, %s, %s)""",
+                (customer_id, worker_pid, added_nodes, removed_nodes, added_edges, removed_edges, label)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                 (
                     customer_id,
                     json.dumps(
@@ -393,16 +417,21 @@ class PGEventRepository(BaseRepository):
         self._conn.commit()
 
     def insert_marker(
-        self, customer_id: str, label: str
+        self, customer_id: str, worker_pid: str, label: str
     ) -> None:
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_markers (customer_id, label, created_at)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO st_markers (customer_id, worker_pid, label, created_at)
+                    VALUES (%s, %s, %s, %s)
                     """,
-                    (customer_id, label, time.time()),
+                    (
+                        customer_id,
+                        worker_pid,
+                        label,
+                        time.time(),
+                    ),
                 )
             self._conn.commit()
         except Exception as exc:
@@ -410,17 +439,18 @@ class PGEventRepository(BaseRepository):
             self._safe_rollback()
 
     def save_causal_matches(
-        self, customer_id, matches, timestamp
+        self, customer_id, worker_pid: str, matches, timestamp
     ) -> None:
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO causal_matches (customer_id, timestamp, matches)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO causal_matches (customer_id, worker_pid, timestamp, matches)
+                    VALUES (%s, %s, %s, %s, %s)
                 """,
                     (
                         customer_id,
+                        worker_pid,
                         timestamp,
                         timestamp,
                         json.dumps(matches),
@@ -434,7 +464,7 @@ class PGEventRepository(BaseRepository):
             self._safe_rollback()
 
     def get_causal_history(
-        self, customer_id, limit=50
+        self, customer_id, worker_pid: str, limit=50
     ) -> List[Dict]:
         try:
             with self._conn.cursor() as cur:
@@ -442,11 +472,11 @@ class PGEventRepository(BaseRepository):
                     """
                     SELECT customer_id, timestamp, matches
                     FROM causal_matches
-                    WHERE customer_id = %s
+                    WHERE customer_id = %s AND worker_pid = %s
                     ORDER BY timestamp DESC
                     LIMIT %s
                     """,
-                    (customer_id, limit),
+                    (customer_id, worker_pid, limit),
                 )
                 rows = cur.fetchall()
 
@@ -482,35 +512,58 @@ class InMemoryRepository(BaseRepository):
         self, max_events: int = 100_000, max_diffs: int = 500
     ) -> None:
         # Events, global rolling buffer
-        self._events: deque = deque(maxlen=max_events)
+        self._events: Dict[str, Dict[str, deque]] = defaultdict(
+            lambda: defaultdict(lambda: deque(maxlen=max_events))
+        )
         # Snapshots, usually one-per-customer
-        self._snapshots: Dict[str, Dict] = {}
+        self._snapshots: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: defaultdict(lambda: {})
+        )
         # Markers, using defaultdict(list)
-        self._markers: Dict[str, List[Dict]] = defaultdict(list)
+        self._markers: Dict[str, Dict[str, list]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         # Diffs, using defaultdict with a lambda to create deques automatically
         # This keeps exactly the last 500 diffs per customer with zero
         # manual work.
-        self._diffs: Dict[str, deque] = defaultdict(
-            lambda: deque(maxlen=max_diffs)
+        self._diffs: Dict[str, Dict[str, deque]] = defaultdict(
+            lambda: defaultdict(lambda: deque(maxlen=max_diffs))
         )
         # For rules that matched - anti-patterns
         self._causal_history: List[Dict] = []
 
     def insert_event(self, event: NormalizedEvent) -> None:
         # deque handles the maxlen=100_000 internally
-        self._events.append(event.to_dict())
+        customer_id = event.metadata["customer_id"]
+        worker_pid = str(event.metadata["worker_pid"])
+        if not customer_id or not worker_pid:
+            raise ValueError(
+                "Missing customer_id or pid in event metadata"
+            )
+        self._events[customer_id][worker_pid].append(
+            event.to_dict()
+        )
 
     def query_events(
         self,
         *,
+        customer_id: str,
+        worker_pid: str,
         trace_id: Optional[str] = None,
         probe: Optional[str] = None,
         service: Optional[str] = None,
         since: Optional[float] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        results = []
-        for e in reversed(self._events):
+        results: List[Dict[str, Any]] = []
+
+        pid_deque = self._events.get(customer_id, {}).get(
+            worker_pid
+        )
+        if not pid_deque:
+            return results
+
+        for e in reversed(pid_deque):
             if trace_id and e.get("trace_id") != trace_id:
                 continue
             if probe and e.get("probe") != probe:
@@ -519,20 +572,26 @@ class InMemoryRepository(BaseRepository):
                 continue
             if since and e.get("wall_time", 0) < since:
                 continue
+
             results.append(e)
+
             if len(results) >= limit:
-                break
+                return results
+
         return results
 
     def insert_snapshot(
         self,
         customer_id: str,
+        worker_pid: str,
         data: bytes,
         content_type: str = "application/msgpack",
         node_count: int = 0,
         edge_count: int = 0,
     ) -> None:
-        self._snapshots[customer_id] = {
+        self._snapshots.setdefault(customer_id, {})[
+            worker_pid
+        ] = {
             "data": data,
             "content_type": content_type,
             "received_at": time.time(),
@@ -543,12 +602,15 @@ class InMemoryRepository(BaseRepository):
     def get_latest_snapshot(
         self,
         customer_id: str,
+        worker_pid: str,
     ) -> Optional[Dict[str, Any]]:
         """
         Retrieves the most recent full graph snapshot for a customer.
         Returns None if no snapshot exists.
         """
-        entry = self._snapshots.get(customer_id)
+        entry = self._snapshots.get(customer_id, {}).get(
+            worker_pid
+        )
 
         if entry is None:
             return None
@@ -562,34 +624,44 @@ class InMemoryRepository(BaseRepository):
         }
 
     def insert_deployment_marker(
-        self, customer_id: str, label: str
+        self, customer_id: str, worker_pid: str, label: str
     ) -> None:
-        self._markers[customer_id].append(
+        self._markers[customer_id][worker_pid].append(
             {"label": label, "created_at": time.time()}
         )
 
     def insert_graph_diff(
-        self, customer_id: str, diff: Dict
+        self, customer_id: str, worker_pid: str, diff: Dict
     ) -> None:
-        self._diffs[customer_id].append(diff)
+        self._diffs[customer_id][worker_pid].append(diff)
 
     def get_label_diff(
-        self, customer_id: str, label: Optional[str]
+        self,
+        customer_id: str,
+        worker_pid: str,
+        label: Optional[str],
     ) -> Optional[Dict]:
-        for d in reversed(self._diffs[customer_id]):
+        for d in reversed(self._diffs[customer_id][worker_pid]):
             if d.get("label") == label:
                 return d
         return None
 
-    def get_diffs(self, customer_id: str) -> List[Dict]:
-        return list(self._diffs.get(customer_id, []))
+    def get_diffs(
+        self,
+        customer_id: str,
+        worker_pid: str,
+    ) -> List[Dict]:
+        return list(
+            self._diffs.get(customer_id, {}).get(worker_pid, [])
+        )
 
     def save_causal_matches(
-        self, customer_id, matches, timestamp
+        self, customer_id, worker_pid: str, matches, timestamp
     ):
         self._causal_history.append(
             {
                 "customer_id": customer_id,
+                "worker_pid": worker_pid,
                 "timestamp": timestamp,
                 "matches": matches,
             }
@@ -598,15 +670,21 @@ class InMemoryRepository(BaseRepository):
         if len(self._causal_history) > 200:
             self._causal_history = self._causal_history[-200:]
 
-    def get_causal_history(self, customer_id, limit=50):
+    def get_causal_history(
+        self, customer_id, worker_pid: str, limit=50
+    ):
         return [
             e
             for e in reversed(self._causal_history)
-            if e["customer_id"] == customer_id
+            if e["customer_id"]["worker_pid"] == customer_id
         ][:limit]
 
     def close(self) -> None:
         pass
 
-    def __len__(self) -> int:
-        return len(self._events)
+    def __len__(self):
+        return sum(
+            len(events)
+            for customer in self._events.values()
+            for events in customer.values()
+        )
