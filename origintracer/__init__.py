@@ -31,7 +31,6 @@ from .sdk.uploader import Uploader
 
 logger = logging.getLogger("origintracer.initialisation")
 
-# Package-level variables
 _config: Optional["ResolvedConfig"] = None
 _engine: Optional[Engine] = None
 _active_rules: Optional[Type[PatternRegistry]] = None
