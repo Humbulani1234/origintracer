@@ -26,6 +26,10 @@ from origintracer.rules.django_rules import (
     DB_HOTSPOT,
     N_PLUS_ONE,
 )
+from origintracer.rules.langgraph_rules import (
+    AGENT_LATENCY_HOTSPOT,
+    LOOP_RUNAWAY,
+)
 
 
 def fresh(tracker):
@@ -557,6 +561,106 @@ class TestNPlusOne:
     def test_confidence_is_high(self):
         """N_PLUS_ONE confidence must be >= 0.85 — it's a near-certain bug."""
         assert N_PLUS_ONE.confidence >= 0.85
+
+
+class TestLangGraphRules:
+    """LangGraph rules operate on synthetic aggregate graph observations."""
+
+    def test_loop_runaway_finds_llm_below_nearest_graph_root(
+        self,
+    ):
+        """Wrapper depth must not hide repeated model work from its owner."""
+        graph = RuntimeGraph()
+        graph.upsert_node(
+            "langgraph::research_graph",
+            "langgraph",
+            "langgraph",
+            metadata={
+                "langgraph_kind": "chain",
+                "is_langgraph_root": True,
+            },
+        )
+        graph.upsert_node(
+            "langgraph::research_agent",
+            "langgraph",
+            "langgraph",
+            metadata={
+                "langgraph_kind": "chain",
+                "is_langgraph_root": False,
+            },
+        )
+        for _ in range(8):
+            graph.upsert_node(
+                "langgraph::chat_model",
+                "langgraph",
+                "langgraph",
+                duration_ns=2_000_000,
+                metadata={"langgraph_kind": "llm"},
+            )
+        graph.upsert_edge(
+            "langgraph::research_graph",
+            "langgraph::research_agent",
+            "calls",
+        )
+        graph.upsert_edge(
+            "langgraph::research_agent",
+            "langgraph::chat_model",
+            "calls",
+        )
+
+        matched, evidence = LOOP_RUNAWAY.predicate(
+            graph,
+            TemporalStore(),
+        )
+
+        assert matched is True
+        assert (
+            evidence["runaway_loops"][0]["root_invocation"]
+            == "langgraph::research_graph"
+        )
+        assert evidence["runaway_loops"][0]["ratio"] == 8.0
+
+    def test_latency_hotspot_counts_leaf_work_without_chain_duration(
+        self,
+    ):
+        """Inclusive chain time must not dilute the LLM/tool comparison."""
+        graph = RuntimeGraph()
+        graph.upsert_node(
+            "langgraph::graph",
+            "langgraph",
+            "langgraph",
+            duration_ns=10_000_000_000,
+            metadata={
+                "langgraph_kind": "chain",
+                "is_langgraph_root": True,
+            },
+        )
+        graph.upsert_node(
+            "langgraph::model",
+            "langgraph",
+            "langgraph",
+            duration_ns=80_000_000,
+            metadata={"langgraph_kind": "llm"},
+        )
+        graph.upsert_node(
+            "langgraph::search",
+            "langgraph",
+            "langgraph",
+            duration_ns=20_000_000,
+            metadata={"langgraph_kind": "tool"},
+        )
+
+        matched, evidence = AGENT_LATENCY_HOTSPOT.predicate(
+            graph,
+            TemporalStore(),
+        )
+
+        assert matched is True
+        hotspots = evidence["latency_hotspots"]
+        assert [item["node"] for item in hotspots] == [
+            "langgraph::model"
+        ]
+        assert hotspots[0]["pct_of_total_leaf_time"] == 80.0
 
 
 @pytest.mark.requires_rule("worker_imbalance")

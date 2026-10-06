@@ -32,6 +32,58 @@ class TestRuntimeGraph:
         assert n.call_count == 2
         assert n.total_duration_ns == 2000
 
+    def test_node_id_exposes_canonical_identity(self):
+        """Callers can derive IDs without depending on graph internals."""
+        assert self.g.node_id("django", "OrderView.get") == (
+            "django::OrderView.get"
+        )
+
+    def test_update_node_observation_does_not_recount_call(self):
+        """A terminal lifecycle observation enriches one existing call."""
+        self.g.upsert_node(
+            "svc::work",
+            "function",
+            "svc",
+            duration_ns=5_000,
+            metadata={"probe": "operation.enter"},
+        )
+
+        node = self.g.update_node_observation(
+            "svc::work",
+            duration_delta_ns=7_000,
+            metadata={
+                "last_probe": "operation.exit",
+                "success": True,
+            },
+        )
+
+        assert node is not None
+        assert node.call_count == 1
+        assert node.total_duration_ns == 12_000
+        assert node.metadata["probe"] == "operation.enter"
+        assert node.metadata["last_probe"] == "operation.exit"
+        assert node.metadata["success"] is True
+
+    def test_adjust_edge_duration_does_not_recount_call(self):
+        """A late duration correction preserves the relationship count."""
+        self.g.upsert_edge(
+            "svc::parent",
+            "svc::child",
+            "calls",
+            duration_ns=5_000,
+        )
+
+        edge = self.g.adjust_edge_duration(
+            "svc::parent",
+            "svc::child",
+            "calls",
+            7_000,
+        )
+
+        assert edge is not None
+        assert edge.call_count == 1
+        assert edge.total_duration_ns == 12_000
+
     def test_avg_duration_computed_correctly(self):
         self.g.upsert_node(
             "svc::fn", "function", "svc", duration_ns=1000

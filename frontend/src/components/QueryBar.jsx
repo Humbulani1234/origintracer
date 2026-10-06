@@ -16,7 +16,7 @@ export default function QueryBar({ onRun, loading }) {
         value={val}
         onChange={e => setVal(e.target.value)}
         onKeyDown={e => e.key === "Enter" && run()}
-        placeholder="SHOW nodes · SHOW edges  · \stitch <trace_id>"
+        placeholder="SHOW nodes · SHOW llm_content · SHOW tool_content · TRACE <id>"
         style={{ flex:1, background:"none", border:"none", outline:"none",
           fontFamily:"monospace", fontSize:11, color:"var(--text)",
           caretColor:"var(--amber)" }}
