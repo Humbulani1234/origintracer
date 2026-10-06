@@ -429,7 +429,7 @@ def _app_root_from_config(config_path: Optional[str]) -> str:
 
 def _discover_user_probes(app_root: str) -> None:
     """
-    Auto-discover *_probe.py files from <app_root>/origintracer/probes/.
+    Auto-discover *_probe.py files from <app_root>/probes/.
     Importing registers the BaseProbe subclass with ProbeRegistry as a
     side-effect of class definition.
     """

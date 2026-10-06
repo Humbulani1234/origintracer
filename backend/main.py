@@ -38,8 +38,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -53,7 +55,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from origintracer.storage.base import InMemoryRepository
 
@@ -278,21 +280,59 @@ def require_graph(customer_id: str) -> Any:
 # Unix socket client
 _SOCKET_PREFIX = "/tmp/origintracer-"
 _SOCKET_SUFFIX = ".sock"
+_SOCKET_TIMEOUT_S = 10.0
+_MAX_WORKER_QUERY_CHARS = 60_000
+_MAX_WORKER_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+class WorkerQueryRequest(BaseModel):
+    """One DSL query to execute against a selected live worker."""
+
+    query: str = Field(
+        min_length=1, max_length=_MAX_WORKER_QUERY_CHARS
+    )
+
+
+class WorkerUnavailableError(RuntimeError):
+    """Raised when a selected worker socket is no longer available."""
+
+
+class WorkerProtocolError(RuntimeError):
+    """Raised when a worker returns an invalid or unsafe response."""
+
+
+def _pid_from_socket_path(path: str) -> str:
+    """Extract the PID encoded by an OriginTracer socket path."""
+    return path.removeprefix(_SOCKET_PREFIX).removesuffix(
+        _SOCKET_SUFFIX
+    )
+
+
+def _socket_path_for_pid(pid: int) -> str:
+    """Construct the only socket path a client-supplied PID may select."""
+    return f"{_SOCKET_PREFIX}{pid}{_SOCKET_SUFFIX}"
 
 
 def discover_sockets() -> list[str]:
+    """
+    Return sockets whose PID still identifies a live local process.
+
+    Stale paths are removed. A permission failure from ``kill(pid, 0)`` still
+    proves that the process exists; the later socket connection determines
+    whether FastAPI can communicate with it.
+    """
     import glob
 
     live = []
     for path in sorted(
         glob.glob(f"{_SOCKET_PREFIX}*{_SOCKET_SUFFIX}")
     ):
-        pid = path.replace(_SOCKET_PREFIX, "").replace(
-            _SOCKET_SUFFIX, ""
-        )
+        pid = _pid_from_socket_path(path)
         try:
             # Check if the process is actually alive
             os.kill(int(pid), 0)
+            live.append(path)
+        except PermissionError:
             live.append(path)
         except (ProcessLookupError, ValueError):
             # Process is dead - remove the stale socket
@@ -303,17 +343,137 @@ def discover_sockets() -> list[str]:
     return live
 
 
+def query_worker_socket(pid: int, query: str) -> dict:
+    """
+    Execute a DSL query against one live OriginTracer process.
+
+    The PID is resolved exclusively through ``discover_sockets``; callers never
+    supply a filesystem path. A fresh Unix-socket connection is used for every
+    request, matching the REPL client and the local server's one-request-per-
+    connection protocol. Responses are bounded to prevent an unhealthy worker
+    from consuming unlimited backend memory.
+    """
+    socket_path = _socket_path_for_pid(pid)
+    if socket_path not in set(discover_sockets()):
+        raise WorkerUnavailableError(
+            f"OriginTracer worker {pid} is not available"
+        )
+
+    request_id = uuid.uuid4().hex[:12]
+    request_bytes = (
+        json.dumps({"id": request_id, "query": query}).encode(
+            "utf-8"
+        )
+        + b"\n"
+    )
+
+    try:
+        with socket.socket(
+            socket.AF_UNIX, socket.SOCK_STREAM
+        ) as client:
+            client.settimeout(_SOCKET_TIMEOUT_S)
+            client.connect(socket_path)
+            client.sendall(request_bytes)
+
+            response_bytes = bytearray()
+            while b"\n" not in response_bytes:
+                chunk = client.recv(65_536)
+                if not chunk:
+                    break
+                response_bytes.extend(chunk)
+                if (
+                    len(response_bytes)
+                    > _MAX_WORKER_RESPONSE_BYTES
+                ):
+                    raise WorkerProtocolError(
+                        "Worker response exceeded the configured limit"
+                    )
+    except socket.timeout as exc:
+        raise WorkerUnavailableError(
+            f"OriginTracer worker {pid} timed out"
+        ) from exc
+    except (ConnectionRefusedError, FileNotFoundError) as exc:
+        raise WorkerUnavailableError(
+            f"OriginTracer worker {pid} stopped or restarted"
+        ) from exc
+    except OSError as exc:
+        raise WorkerUnavailableError(
+            f"Could not connect to OriginTracer worker {pid}: {exc}"
+        ) from exc
+
+    if not response_bytes or b"\n" not in response_bytes:
+        raise WorkerProtocolError(
+            f"OriginTracer worker {pid} returned an incomplete response"
+        )
+
+    try:
+        response = json.loads(
+            bytes(response_bytes)
+            .split(b"\n", 1)[0]
+            .decode("utf-8")
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise WorkerProtocolError(
+            f"OriginTracer worker {pid} returned invalid JSON"
+        ) from exc
+
+    if not isinstance(response, dict):
+        raise WorkerProtocolError(
+            f"OriginTracer worker {pid} returned a non-object response"
+        )
+    response_id = response.get("id")
+    if response_id and response_id != request_id:
+        raise WorkerProtocolError(
+            f"OriginTracer worker {pid} returned a mismatched response"
+        )
+    return response
+
+
 @app.get("/api/v1/workers")
 def get_workers(authorization: Optional[str] = Header(None)):
+    """List live local processes that expose an OriginTracer query socket."""
     _authenticate(authorization)
     sockets = discover_sockets()
     workers = []
     for path in sockets:
-        pid = path.replace(_SOCKET_PREFIX, "").replace(
-            _SOCKET_SUFFIX, ""
-        )
+        pid = _pid_from_socket_path(path)
         workers.append({"pid": pid, "socket": path})
     return {"data": workers}
+
+
+@app.post("/api/v1/workers/{pid}/query")
+def query_worker(
+    pid: int,
+    body: WorkerQueryRequest,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Proxy one authenticated DSL query to the selected live process."""
+    _authenticate(authorization)
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(
+            status_code=400,
+            detail="Worker query cannot be blank",
+        )
+
+    try:
+        result = query_worker_socket(pid, query)
+    except WorkerUnavailableError as exc:
+        raise HTTPException(
+            status_code=404, detail=str(exc)
+        ) from exc
+    except WorkerProtocolError as exc:
+        raise HTTPException(
+            status_code=502, detail=str(exc)
+        ) from exc
+
+    return {
+        **result,
+        "worker": {
+            "pid": str(pid),
+            "socket": _socket_path_for_pid(pid),
+        },
+    }
 
 
 def get_repository() -> Any:

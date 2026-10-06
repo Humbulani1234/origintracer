@@ -1,20 +1,18 @@
-"""
-Integration tests for Engine - the component that wires together
-RuntimeGraph, TemporalStore, PatternRegistry, SemanticLayer, and
-ActiveRequestTracker.
+"""Integration and lineage tests for the production Engine.
 
-These tests exercise the Engine as it would operate at runtime:
-feeding it realistic event sequences and asserting on the resulting
-graph structure, causal matches, and temporal diffs.
-
-Engine.process() is called directly.
+The suite verifies how Engine coordinates the graph, temporal store, causal
+registry, semantic layer, tracker, and compactor. Lineage cases cover explicit
+parentage, concurrent fan-out, out-of-order delivery, lifecycle observations,
+and sequential traces whose events do not provide parent span IDs.
 """
 
 from __future__ import annotations
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from origintracer.core.engine import Engine
+from origintracer.core.event_schema import NormalizedEvent
 from origintracer.core.graph_compactor import (
     GraphCompactor,
 )
@@ -126,9 +124,8 @@ class TestEngineGraphBuilding:
         self, engine, trace_id
     ):
         """
-        After the NormalizedEvent.now() fix, duration_ns must be on the
-        dataclass field - not in event.metadata. The engine reads
-        event.duration_ns; if it's in metadata the node avg stays None.
+        ``NormalizedEvent.now()`` places duration on the dedicated dataclass
+        field rather than in metadata, allowing the engine to aggregate it.
         """
         e = evt(
             service="django",
@@ -389,8 +386,8 @@ class TestEngineCompactorIntegration:
         trace_ids not updated within _trace_ttl_s must be removed from
         _last_event_per_trace by _evict_stale_traces().
 
-        Verifies the fix for the unbounded dict growth bug:
-        at 100 req/s without eviction the dict accumulates 360k entries/hour.
+        Bounded retention prevents a long-running process from accumulating one
+        cursor entry for every trace it has observed.
         """
         engine = Engine(snapshot_interval_s=9999)
         engine._trace_ttl_s = 0.05  # 50ms TTL so the test does not need to sleep long
@@ -428,3 +425,261 @@ class TestEngineCompactorIntegration:
             k.startswith("old-trace") is False
             for k in engine._last_event_per_trace
         )
+
+
+def event(
+    *,
+    name: str,
+    trace_id: str = "trace",
+    span_id: str,
+    parent_span_id: str | None = None,
+    probe: str = "operation.enter",
+    duration_ns: int | None = None,
+    **metadata,
+) -> NormalizedEvent:
+    """Create a synthetic observation with explicit, deterministic lineage."""
+    return NormalizedEvent(
+        probe=probe,
+        service="worker",
+        name=name,
+        trace_id=trace_id,
+        span_id=span_id,
+        parent_span_id=parent_span_id,
+        duration_ns=duration_ns,
+        metadata=metadata,
+    )
+
+
+def edge_targets(engine: Engine, node_id: str) -> set[str]:
+    """Return direct call targets for one aggregate node."""
+    return {
+        edge.target
+        for edge in engine.graph.neighbors(node_id)
+        if edge.edge_type == "calls"
+    }
+
+
+def test_parallel_children_remain_direct_siblings(
+    engine: Engine,
+) -> None:
+    """Concurrent fan-out must not create arrival-order edges between siblings."""
+    engine.process(event(name="root", span_id="root"))
+
+    children = [
+        event(
+            name=f"branch-{index}",
+            span_id=f"child-{index}",
+            parent_span_id="root",
+        )
+        for index in range(20)
+    ]
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(engine.process, children))
+
+    expected = {f"worker::branch-{index}" for index in range(20)}
+    assert edge_targets(engine, "worker::root") == expected
+    for child_id in expected:
+        assert edge_targets(engine, child_id) == set()
+
+
+def test_explicit_children_do_not_advance_sequential_cursor(
+    engine: Engine,
+) -> None:
+    """A parallel branch must not parent a later unparented event."""
+    engine.process(event(name="root", span_id="root"))
+    engine.process(
+        event(
+            name="branch",
+            span_id="branch",
+            parent_span_id="root",
+        )
+    )
+    engine.process(
+        event(name="unparented-follow-up", span_id="follow-up")
+    )
+
+    assert edge_targets(engine, "worker::root") == {
+        "worker::branch",
+        "worker::unparented-follow-up",
+    }
+    assert edge_targets(engine, "worker::branch") == set()
+
+
+def test_child_before_parent_is_reconciled_once(
+    engine: Engine,
+) -> None:
+    """Late parent arrival creates one edge without recounting the child span."""
+    engine.process(
+        event(
+            name="child",
+            span_id="child",
+            parent_span_id="parent",
+        )
+    )
+    engine.process(
+        event(
+            name="child",
+            span_id="child",
+            parent_span_id="parent",
+            probe="operation.exit",
+            duration_ns=25_000,
+            success=True,
+        )
+    )
+
+    assert engine.status()["pending_lineage"] == 1
+    engine.process(event(name="parent", span_id="parent"))
+
+    child = engine.graph.get_node("worker::child")
+    assert child is not None
+    assert child.call_count == 1
+    assert child.total_duration_ns == 25_000
+    assert edge_targets(engine, "worker::parent") == {
+        "worker::child"
+    }
+    edge = engine.graph.neighbors("worker::parent")[0]
+    assert edge.call_count == 1
+    assert edge.total_duration_ns == 25_000
+    assert engine.status()["pending_lineage"] == 0
+
+
+def test_span_ids_are_scoped_by_trace(engine: Engine) -> None:
+    """Identical span IDs in independent traces must never cross-link."""
+    engine.process(
+        event(
+            name="parent-a", trace_id="trace-a", span_id="shared"
+        )
+    )
+    engine.process(
+        event(
+            name="parent-b", trace_id="trace-b", span_id="shared"
+        )
+    )
+    engine.process(
+        event(
+            name="child-a",
+            trace_id="trace-a",
+            span_id="child",
+            parent_span_id="shared",
+        )
+    )
+
+    assert edge_targets(engine, "worker::parent-a") == {
+        "worker::child-a"
+    }
+    assert edge_targets(engine, "worker::parent-b") == set()
+
+
+def test_lifecycle_observations_count_one_logical_operation(
+    engine: Engine,
+) -> None:
+    """A terminal observation enriches its span instead of adding a call."""
+    engine.process(event(name="parent", span_id="parent"))
+    engine.process(
+        event(
+            name="work",
+            span_id="work",
+            parent_span_id="parent",
+            operation_kind="task",
+        )
+    )
+    engine.process(
+        event(
+            name="work",
+            span_id="work",
+            parent_span_id="parent",
+            probe="operation.exit",
+            duration_ns=80_000,
+            operation_kind="task",
+            success=True,
+        )
+    )
+
+    node = engine.graph.get_node("worker::work")
+    assert node is not None
+    assert node.call_count == 1
+    assert node.total_duration_ns == 80_000
+    assert node.metadata["probe"] == "operation.enter"
+    assert node.metadata["last_probe"] == "operation.exit"
+    assert node.metadata["operation_kind"] == "task"
+    assert node.metadata["success"] is True
+    edge = engine.graph.neighbors("worker::parent")[0]
+    assert edge.call_count == 1
+    assert edge.total_duration_ns == 80_000
+    assert edge_targets(engine, "worker::work") == set()
+
+
+def test_lineage_free_events_form_sequential_path(
+    engine: Engine,
+) -> None:
+    """Events without parent IDs form an arrival-order path."""
+    engine.process(event(name="first", span_id="first"))
+    engine.process(event(name="second", span_id="second"))
+    engine.process(event(name="third", span_id="third"))
+
+    assert edge_targets(engine, "worker::first") == {
+        "worker::second"
+    }
+    assert edge_targets(engine, "worker::second") == {
+        "worker::third"
+    }
+
+
+def test_explicit_parent_ignores_trace_cursor(
+    engine: Engine,
+) -> None:
+    """Explicit lineage wins even when another branch arrived most recently."""
+    engine.process(event(name="root", span_id="root"))
+    engine.process(event(name="decoy", span_id="decoy"))
+    engine.process(
+        event(
+            name="child",
+            span_id="child",
+            parent_span_id="root",
+        )
+    )
+
+    assert edge_targets(engine, "worker::root") == {
+        "worker::decoy",
+        "worker::child",
+    }
+    assert edge_targets(engine, "worker::decoy") == set()
+
+
+def test_every_event_registers_trace_scoped_lineage(
+    engine: Engine,
+) -> None:
+    """An unparented event remains available as a later explicit parent."""
+    engine.process(event(name="root", span_id="root"))
+    engine.process(
+        event(
+            name="child",
+            span_id="child",
+            parent_span_id="root",
+        )
+    )
+
+    assert engine.status()["lineage_spans"] == 2
+    assert edge_targets(engine, "worker::root") == {
+        "worker::child"
+    }
+
+
+def test_stale_lineage_is_evicted() -> None:
+    """Resolved lineage does not grow without bound over a process lifetime."""
+    instance = Engine(
+        snapshot_interval_s=9999, lineage_ttl_s=0.01
+    )
+    try:
+        instance.process(event(name="root", span_id="root"))
+        with instance._lineage_lock:
+            instance._event_by_span_id[
+                ("trace", "root")
+            ].last_seen = 0
+
+        instance._evict_stale_spans()
+
+        assert instance.status()["lineage_spans"] == 0
+    finally:
+        instance.stop()
+        instance.tracker.stop()
