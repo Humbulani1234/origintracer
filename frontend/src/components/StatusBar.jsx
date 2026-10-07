@@ -1,7 +1,13 @@
-export default function StatusBar({ nodes, edges, events, status }) {
+export default function StatusBar({
+  nodes, edges, events, status, worker, workerInventoryLoaded,
+}) {
   const customer = status?.customer_id ?? "—";
   const stored = status?.storage?.event_count ?? null;
   const snapLabel = status?.snapshot?.label ?? null;
+  const hasLiveWorker = Boolean(worker?.pid);
+  const connectionLabel = hasLiveWorker
+    ? "live"
+    : workerInventoryLoaded ? "no worker" : "discovering";
 
   return (
     <div style={{ display:"flex", gap:20, alignItems:"center", padding:"5px 14px",
@@ -9,8 +15,9 @@ export default function StatusBar({ nodes, edges, events, status }) {
       fontFamily:"monospace", fontSize:10, color:"var(--muted)" }}>
       <span>
         <span style={{ display:"inline-block", width:5, height:5, borderRadius:"50%",
-          background:"#3c9", marginRight:4, verticalAlign:"middle" }} />
-        live
+          background:hasLiveWorker ? "#3c9" : "#555",
+          marginRight:4, verticalAlign:"middle" }} />
+        {connectionLabel}
       </span>
       <span><span style={{color:"var(--amber)"}}>{nodes.length}</span> nodes</span>
       <span><span style={{color:"var(--amber)"}}>{edges.length}</span> edges</span>
@@ -21,7 +28,9 @@ export default function StatusBar({ nodes, edges, events, status }) {
       {snapLabel && (
         <span>snap: <span style={{color:"var(--amber)"}}>{snapLabel}</span></span>
       )}
-      <span style={{ marginLeft:"auto" }}>{customer}</span>
+      <span style={{ marginLeft:"auto" }}>
+        {worker?.pid ? `pid ${worker.pid}` : customer}
+      </span>
     </div>
   );
 }

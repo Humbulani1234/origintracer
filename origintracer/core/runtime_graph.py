@@ -90,7 +90,9 @@ class RuntimeGraph:
         # For the backend to select the Graph worker
         self.worker_pid: str = str(os.getpid())
 
-    def _node_id(self, service: str, name: str) -> str:
+    @staticmethod
+    def node_id(service: str, name: str) -> str:
+        """Return the canonical graph identity for a normalized operation."""
         return f"{service}::{name}"
 
     def upsert_node(
@@ -143,6 +145,74 @@ class RuntimeGraph:
             self.last_updated = time.time()
             return edge
 
+    def update_node_observation(
+        self,
+        node_id: str,
+        duration_delta_ns: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[GraphNode]:
+        """
+        Enrich an existing node without counting another invocation.
+
+        Some producers emit several lifecycle observations for one logical
+        operation. ``upsert_node`` is intentionally inappropriate for later
+        observations because it increments ``call_count``. This method updates
+        timestamps, metadata, and an optional duration correction while keeping
+        the invocation count unchanged.
+
+        The duration is a delta rather than an absolute value because one graph
+        node aggregates many logical operations. A negative correction is
+        allowed, but the aggregate duration is never permitted below zero.
+        ``None`` is returned if compaction removed the node before reconciliation.
+        """
+        with self._lock:
+            node = self._nodes.get(node_id)
+            if node is None:
+                return None
+
+            observed_at = time.time()
+            node.last_seen = observed_at
+            if duration_delta_ns is not None:
+                node.total_duration_ns = max(
+                    0,
+                    node.total_duration_ns + duration_delta_ns,
+                )
+            if metadata:
+                node.metadata.update(metadata)
+            self.last_updated = observed_at
+            return node
+
+    def adjust_edge_duration(
+        self,
+        source: str,
+        target: str,
+        edge_type: str,
+        duration_delta_ns: int,
+    ) -> Optional[GraphEdge]:
+        """
+        Correct an existing edge's duration without recounting the edge.
+
+        Lifecycle reconciliation may learn a child operation's final duration
+        after its parent edge was created. The graph owns the edge index and its
+        lock, so callers identify the relationship rather than mutating either
+        implementation detail directly. Missing or compacted edges return
+        ``None`` and are not recreated as new calls.
+        """
+        key = f"{source}→{target}:{edge_type}"
+        with self._lock:
+            edge = self._edge_index.get(key)
+            if edge is None:
+                return None
+
+            observed_at = time.time()
+            edge.total_duration_ns = max(
+                0,
+                edge.total_duration_ns + duration_delta_ns,
+            )
+            edge.last_seen = observed_at
+            self.last_updated = observed_at
+            return edge
+
     def add_from_event(
         self,
         event: NormalizedEvent,
@@ -153,7 +223,7 @@ class RuntimeGraph:
         If parent_event is provided, an edge is drawn from parent to this event.
         """
         name = event.name
-        node_id = self._node_id(event.service, name)
+        node_id = self.node_id(event.service, name)
         node_type = (
             event.service
         )  # e.g. "asyncio", "django", "syscall"
@@ -176,7 +246,7 @@ class RuntimeGraph:
 
         if parent_event:
             parent_name = parent_event.name
-            parent_id = self._node_id(
+            parent_id = self.node_id(
                 parent_event.service, parent_name
             )
             if parent_id != node_id:
@@ -197,7 +267,7 @@ class RuntimeGraph:
         meta = event.metadata
 
         if probe == "gunicorn.worker.fork":
-            master_id = self._node_id("gunicorn", "master")
+            master_id = self.node_id("gunicorn", "master")
             if master_id in self._nodes:
                 self.upsert_edge(master_id, node_id, "spawned")
 
@@ -355,7 +425,9 @@ class RuntimeGraph:
         return nodes[:top_n]
 
     def get_node(self, node_id: str) -> Optional[GraphNode]:
-        return self._nodes.get(node_id)
+        """Return a node by ID, or ``None`` when it is not present."""
+        with self._lock:
+            return self._nodes.get(node_id)
 
     def all_nodes(self) -> Iterator[GraphNode]:
         with self._lock:

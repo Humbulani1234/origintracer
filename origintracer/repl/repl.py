@@ -18,6 +18,8 @@ DSL queries:
     SHOW graph
     SHOW graph WHERE system = "worker"
     SHOW events WHERE probe = "db.query.start" LIMIT 20
+    SHOW llm_content WHERE trace_id = "..."
+    SHOW tool_content WHERE trace_id = "..."
     HOTSPOT TOP 10
     CAUSAL
     CAUSAL WHERE tags = "blocking, worker"
@@ -36,6 +38,14 @@ REPL meta-commands:
     \\reconnect - pick a different worker socket
     \\help - this message
     \\quit  or  Ctrl+C - exit
+
+``SHOW llm_content`` displays prompt and response previews only when the
+LangGraph probe was started with ``ORIGINTRACER_CAPTURE_LLM_CONTENT=1``.
+Capture is disabled by default; ordinary ``SHOW events`` output remains a
+compact lifecycle summary.
+
+``SHOW tool_content`` similarly displays tool arguments, results, and errors
+only when ``ORIGINTRACER_CAPTURE_TOOL_CONTENT=1`` was set at probe startup.
 """
 
 from __future__ import annotations
@@ -63,6 +73,26 @@ WHITE = "\033[37m"
 
 def c(text, *codes):
     return "".join(codes) + str(text) + RESET
+
+
+def readline_prompt(text, *codes):
+    """Return a coloured prompt whose ANSI escapes have zero display width.
+
+    GNU readline redraws a line for cursor movement and command history.  Its
+    ``\001``/``\002`` delimiters mark terminal control bytes as non-printing;
+    without them, the blue/bold prompt shifts the cursor when an arrow key is
+    used.  Do not use this for normal printed output: those delimiters are
+    meaningful only while readline is processing an input prompt.
+    """
+    return (
+        "\001"
+        + "".join(codes)
+        + "\002"
+        + str(text)
+        + "\001"
+        + RESET
+        + "\002"
+    )
 
 
 def header(text):
@@ -435,6 +465,27 @@ def render(result: dict) -> None:
         print()
         return
 
+    # LLM content is rendered separately so prompt/response text does not make
+    # the normal event table unreadably wide. It is only populated when the
+    # LangGraph probe's opt-in capture setting is enabled.
+    if metric == "llm_content":
+        rows = (
+            data
+            if isinstance(data, list)
+            else (data or {}).get("data", [])
+        )
+        _render_llm_content(rows)
+        return
+
+    if metric == "tool_content":
+        rows = (
+            data
+            if isinstance(data, list)
+            else (data or {}).get("data", [])
+        )
+        _render_tool_content(rows)
+        return
+
     # HOTSPOT or events and nodes
     if (
         verb == "HOTSPOT"
@@ -532,6 +583,59 @@ def _render_table(rows: list) -> None:
                 parts.append(val.ljust(widths[k]))
         print("  " + "  ".join(parts))
     print()
+
+
+def _render_llm_content(rows: list) -> None:
+    """Display captured LLM previews as readable per-event blocks."""
+    if not rows:
+        dim(
+            "No captured LLM content. Enable capture before the next run."
+        )
+        return
+    print()
+    for row in rows:
+        truncated = (
+            " (truncated)" if row.get("truncated") else ""
+        )
+        print(
+            c(
+                f"  {row.get('probe', '?')}  {row.get('name', '?')}"
+                f"  trace={str(row.get('trace_id', ''))[:16]}…{truncated}",
+                BOLD,
+                CYAN,
+            )
+        )
+        content = str(row.get("content", ""))
+        for line in content.splitlines() or [""]:
+            print(f"    {line}")
+        print()
+
+
+def _render_tool_content(rows: list) -> None:
+    """Display captured tool inputs, outputs, and errors as readable blocks."""
+    if not rows:
+        dim(
+            "No captured tool content. Enable capture before the next run."
+        )
+        return
+    print()
+    for row in rows:
+        truncated = (
+            " (truncated)" if row.get("truncated") else ""
+        )
+        kind = row.get("kind", "content")
+        print(
+            c(
+                f"  {kind}  {row.get('name', '?')}"
+                f"  trace={str(row.get('trace_id', ''))[:16]}…{truncated}",
+                BOLD,
+                CYAN,
+            )
+        )
+        content = str(row.get("content", ""))
+        for line in content.splitlines() or [""]:
+            print(f"    {line}")
+        print()
 
 
 # Meta-command handlers
@@ -886,7 +990,9 @@ def main():
 
     while True:
         try:
-            raw = input(c("› ", BOLD, BLUE)).strip()
+            raw = input(
+                readline_prompt("› ", BOLD, BLUE)
+            ).strip()
         except (KeyboardInterrupt, EOFError):
             print()
             ok("Finished.")

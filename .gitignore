@@ -45,6 +45,7 @@ Thumbs.db
 # OriginTracer specific
 *.db
 *.sqlite3
+applications/langgraph/.env.example
 
 # dependencies
 node_modules/

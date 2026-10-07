@@ -8,6 +8,7 @@
 builtin_probes:
   - ".probes.asyncio_probe"
   - ".probes.django_probe"
+  - ".probes.langgraph_probe"
 
 
 # probes: Names of probes to actually start.
@@ -22,6 +23,7 @@ probes:
 builtin_rules:
   - ".rules.asyncio_rules"
   - ".rules.django_rules"
+  - ".rules.langgraph_rules"
 
 rules:
   - new_sync_call_after_deployment
@@ -157,6 +159,8 @@ compactor:
 # --------- Active request tracker ----------------------------------
 
 active_requests:
+  ttl_s: 30.0 # evict in-flight entries after 30s (safety valve)
+  max_size: 10000 # hard cap - FIFO eviction at cap
   # evict in-flight entries after 30s (safety valve)
   ttl_s: 30.0
   # hard cap - FIFO eviction at cap
