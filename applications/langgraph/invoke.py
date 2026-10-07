@@ -1,4 +1,5 @@
-"""Send one request to the personal-assistant graph running in Agent Server.
+"""
+Send one request to the personal-assistant graph running in Agent Server.
 
 This is the example's smallest client entry point. It uses only the Python
 standard library, waits for the stateless run to finish, and prints the final

@@ -68,7 +68,7 @@ ollama pull qwen2.5:7b or any model of your choice
 Create the environment file and add the credentials required by Agent Server:
 
 ```bash
-touch .env
+touch env.example
 ```
 
 At minimum, review:
@@ -159,9 +159,8 @@ uvicorn personal_assistant.manual_server:app \
 
 These settings control different layers of concurrency. `--workers 1` starts one Uvicorn process, while `N_JOBS_PER_WORKER=1` permits only one active graph run in that process. If another request arrives, it waits for the current run to finish. This is the recommended configuration when stepping through probe callbacks with `pdb`.
 
-The `--env-file .env` option loads `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, and `ORIGINTRACER_ENDPOINT` before Uvicorn imports the graph and constructs its
-`ChatOllama` model. Without it, the manual server does not automatically read `.env` and defaults to Ollama at `http://localhost:11434` and the optional
-OriginTracer backend at `http://localhost:8001`.
+The `--env-file env.example` option loads `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, and `ORIGINTRACER_ENDPOINT` before Uvicorn imports the graph and constructs its
+`ChatOllama` model. Without it, the manual server does not automatically read `env.example` and defaults to Ollama at `http://localhost:11434` and the optional OriginTracer backend at `http://localhost:8001`.
 
 To override an address for one server session, export it before starting Uvicorn; an existing server must be restarted after changing these values:
 

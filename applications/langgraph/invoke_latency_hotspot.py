@@ -1,4 +1,5 @@
-"""Trigger the LangGraph ``agent_latency_hotspot`` causal rule.
+"""
+Trigger the LangGraph ``agent_latency_hotspot`` causal rule.
 
 The targeted graph starts two sibling tool branches concurrently. One completes
 quickly and the other waits for one second, causing the slow tool to account for
