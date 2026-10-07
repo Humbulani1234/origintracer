@@ -79,6 +79,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import sys
 import threading
 from typing import Any, Optional
 
@@ -189,9 +190,9 @@ class KprobeBridge:
             kprobe-based probes will degrade gracefully - Python-side observations
             still function normally.
         """
-        if os.name != "posix":
+        if sys.platform != "linux":
             logger.info(
-                "kprobe bridge: not on Linux — kernel probes unavailable"
+                "kprobe bridge: not on Linux - kernel probes unavailable"
             )
             return False
 

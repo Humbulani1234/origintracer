@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("stacktracer.normalizer")
 
@@ -95,14 +95,14 @@ class GraphNormalizer:
     high-cardinality (URL with user IDs, query text, coroutine repr with memory
     addresses), the graph grows without bound::
 
-        /api/users/1234/profile >> one node per user
-        /api/users/5678/profile >> another node
+        /api/users/1234/profile --> one node per user
+        /api/users/5678/profile --> another node
         ...10,000 users = 10,000 nodes for what is structurally one endpoint
 
     This module normalizes names to their structural form before graph insertion::
 
-        /api/users/1234/profile >> /api/users/{id}/profile
-        /api/users/5678/profile >> /api/users/{id}/profile (same node)
+        /api/users/1234/profile --> /api/users/{id}/profile
+        /api/users/5678/profile --> /api/users/{id}/profile (same node)
 
     The graph then has one node per endpoint pattern, with ``call_count``
     accumulating across all individual user requests. This is almost always what

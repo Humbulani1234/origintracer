@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -86,6 +87,8 @@ class RuntimeGraph:
         )  # dedup key:edge
         self._lock = RLock()
         self.last_updated: float = time.time()
+        # For the backend to select the Graph worker
+        self.worker_pid: str = str(os.getpid())
 
     @staticmethod
     def node_id(service: str, name: str) -> str:
@@ -441,6 +444,7 @@ class RuntimeGraph:
                 "timestamp": self.last_updated,
                 "node_ids": set(self._nodes.keys()),
                 "edge_keys": set(self._edge_index.keys()),
+                "worker_pid": self.worker_pid,
                 "nodes": {
                     nid: {
                         "type": n.node_type,

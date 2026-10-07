@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
 import socket
+import sys
 import threading
-import time
 from typing import Any, Optional
 
 logger = logging.getLogger("origintracer.local_server")
@@ -75,10 +76,9 @@ class LocalQueryServer:
 
     def start(self) -> None:
         # Remove stale socket file if it exists (e.g. after crash)
-        import atexit
-
+        if sys.platform == "win32":
+            raise RuntimeError("Unix sockets not supported")
         atexit.register(self._cleanup_socket)
-
         self._sock = socket.socket(
             socket.AF_UNIX, socket.SOCK_STREAM
         )

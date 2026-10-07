@@ -13,10 +13,6 @@
 ![License](https://img.shields.io/badge/license-MIT-red?style=flat-square)
 ![eBPF](https://img.shields.io/badge/Kernel-eBPF_Powered-blueviolet?style=flat-square)
 
-
-![WSL2](https://img.shields.io/badge/WSL2-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
-
 </div>
 
 **Live causal graph for async services.**
@@ -74,6 +70,7 @@ pip install -e .
 ## Quick Start - Django application
 
 Navigate to the `applications/django` directory for this specific application.
+This is a fully OriginTracer already configured `Django` example application. The following steps detail how it was configured and the steps to follow for your application.
 
 **1. Add middleware** (must be first in `settings.py`):
 

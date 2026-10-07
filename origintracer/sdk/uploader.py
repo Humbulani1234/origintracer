@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -58,7 +59,7 @@ def _serialize_events(payload: Dict) -> tuple:
 
 def _serialize_graph(graph: Any) -> tuple:
     """
-    Serialise RuntimeGraph — prefers protobuf, falls back to msgpack.
+    Serialise RuntimeGraph - prefers protobuf, falls back to msgpack.
     """
     try:
         from origintracer.core.graph_serializer import (
@@ -241,7 +242,11 @@ class Uploader:
         batch = self._event_buffer.drain(self._max_batch)
         if not batch:
             return
-        payload = {"events": batch, "count": len(batch)}
+        payload = {
+            "events": batch,
+            "count": len(batch),
+            "worker_pid": str(os.getpid()),
+        }
 
         try:
             body, content_type = _serialize_events(payload)
@@ -299,8 +304,8 @@ class Uploader:
         - All errors are logged at debug/warning level; no exceptions escape.
 
         Backend contract:
-        - POST /api/v1/graph/snapshot >> full graph replacement
-        - POST /api/v1/graph/diff >> incremental update
+        - POST /api/v1/graph/snapshot --> full graph replacement
+        - POST /api/v1/graph/diff --> incremental update
         """
         if self._engine is None:
             logger.debug(
@@ -405,7 +410,11 @@ class Uploader:
         try:
             httpx.post(
                 f"{self._endpoint}/api/v1/deployment",
-                json={"label": label},
+                json={
+                    "label": label,
+                    "customer_id": "local_dev",
+                    "worker_pid": str(os.getpid()),
+                },
                 headers={
                     "Authorization": f"Bearer {self._api_key}"
                 },
