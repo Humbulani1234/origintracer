@@ -43,7 +43,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fastapi import (
     Depends,
@@ -57,7 +57,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from origintracer.storage.base import InMemoryRepository
+from origintracer.storage.base import (
+    InMemoryRepository,
+    PGEventRepository,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +71,7 @@ logger = logging.getLogger("origintracer.fastapi")
 
 class DeploymentRequest(BaseModel):
     label: Optional[str] = None
+    worker_pid: str
 
 
 class GraphDiffRequest(BaseModel):
@@ -77,6 +81,7 @@ class GraphDiffRequest(BaseModel):
     removed_edges: Optional[list] = None
     timestamp: Optional[float] = None
     label: Optional[str] = None
+    worker_pid: Optional[str]
 
 
 def _register_causal_rules():
@@ -121,13 +126,18 @@ app.add_middleware(
 
 # One deserialised RuntimeGraph per user.
 # Populated on startup (from DB) and updated on every POST /graph/snapshot.
-_graphs: Dict[str, Any] = {}
+_graphs: Dict[str, Dict[str, Any]] = {}
 _graphs_lock = threading.Lock()
+# { customer_id: selected pid }
+_active_pid: Dict[str, str] = {}
+_active_pid_lock = threading.Lock()
 
 # Storage repository - set in _init_repository() at startup.
 # Implements insert_event(), insert_snapshot(), get_latest_snapshot(),
 # query_events(), insert_marker().
-_repository: Optional[Any] = None
+_repository: Optional[
+    Union[InMemoryRepository, PGEventRepository]
+] = None
 
 # API key:customer_id mapping - for development
 _valid_api_keys: Dict[str, str] = {}
@@ -164,12 +174,8 @@ def _init_repository() -> None:
         try:
             import psycopg2
 
-            from origintracer.storage.base import (
-                PGEventRepository,
-            )
-
             conn = psycopg2.connect(db_dsn)
-            _repository = PGEventRepository(conn)
+            _repository = PGEventRepository(conn)  # type: ignore[union-attr]
             logger.info(
                 "Storage: PostgreSQL (%s)", db_dsn.split("@")[-1]
             )
@@ -197,7 +203,11 @@ def _load_snapshots_on_startup() -> None:
     customer_ids = set(_valid_api_keys.values())
     for customer_id in customer_ids:
         try:
-            row = _repository.get_latest_snapshot(customer_id)
+            with _active_pid_lock:
+                worker_pid: str = _active_pid[customer_id]
+            row = _repository.get_latest_snapshot(
+                customer_id, worker_pid
+            )
             if row is None:
                 continue
             from origintracer.core.graph_serializer import (
@@ -252,19 +262,25 @@ def _authenticate(authorization: Optional[str]) -> str:
     return customer_id
 
 
-def get_graph(customer_id: str) -> Optional[Any]:
+def get_graph(
+    customer_id: str, worker_pid: str
+) -> Optional[Any]:
     """
     Return the latest deserialised graph for this customer, or None.
     """
     with _graphs_lock:
-        return _graphs.get(customer_id)
+        return _graphs.get(customer_id, {}).get(worker_pid)
 
 
 def require_graph(customer_id: str) -> Any:
     """
     Return graph or raise 404 - used by every query endpoint.
     """
-    graph = get_graph(customer_id)
+    if not (worker_pid := _active_pid.get(customer_id)):
+        raise HTTPException(
+            status_code=400, detail="worker_pid is required"
+        )
+    graph = get_graph(customer_id, worker_pid)
     if graph is None:
         raise HTTPException(
             status_code=404,
@@ -275,7 +291,6 @@ def require_graph(customer_id: str) -> Any:
             ),
         )
     return graph
-
 
 # Unix socket client
 _SOCKET_PREFIX = "/tmp/origintracer-"
@@ -475,6 +490,35 @@ def query_worker(
         },
     }
 
+@app.get("/api/v1/workers")
+def get_workers(authorization: Optional[str] = Header(None)):
+    customer_id = _authenticate(authorization)
+    customer_graphs = _graphs.get(customer_id, {})
+    active = _active_pid.get(customer_id)
+    workers = [
+        {
+            "pid": worker_pid,
+            "active": worker_pid == active,
+            "node_count": len(list(g.all_nodes())) if g else 0,
+        }
+        for worker_pid, g in customer_graphs.items()
+    ]
+    return {"data": workers}
+
+
+@app.post("/api/v1/workers/select")
+def select_worker(
+    body: dict, authorization: Optional[str] = Header(None)
+):
+    customer_id = _authenticate(authorization)
+    worker_pid = body.get("worker_pid")
+    if worker_pid not in _graphs.get(customer_id, {}):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Worker {worker_pid} not found",
+        )
+    _active_pid[customer_id] = worker_pid
+    return {"selected": worker_pid}
 
 def get_repository() -> Any:
     return _repository
@@ -516,18 +560,31 @@ async def receive_snapshot(
             else MsgpackSerializer()
         )
         graph = serializer.deserialize(body)
+        worker_pid = getattr(graph, "worker_pid")
+        if not worker_pid:
+            raise HTTPException(
+                status_code=400, detail="worker_pid is required"
+            )
 
         # Store in memory - immediate query serving
         with _graphs_lock:
-            _graphs[customer_id] = graph
+            _graphs.setdefault(customer_id, {})[
+                worker_pid
+            ] = graph
         # Persist to storage - survives FastAPI restarts
         repository.insert_snapshot(
             customer_id=customer_id,
+            worker_pid=worker_pid,
             data=body,
             content_type=content_type,
             node_count=len(graph._nodes),
             edge_count=len(graph._edge_index),
         )
+
+        # auto-select first work
+        if worker_pid not in _active_pid:
+            with _active_pid_lock:
+                _active_pid[customer_id] = worker_pid
 
         node_count = len(graph._nodes)
         edge_count = len(graph._edge_index)
@@ -566,11 +623,19 @@ async def receive_graph_diff(
     Receive an incremental graph diff from the OriginTracer agent
     """
     customer_id = _authenticate(authorization)
-    repository.insert_graph_diff(customer_id, body.model_dump())
+    if not (worker_pid := body.model_dump().get("worker_pid")):
+        raise HTTPException(
+            status_code=400, detail="worker_pid is required"
+        )
+
+    repository.insert_graph_diff(
+        customer_id, worker_pid, body.model_dump()
+    )
 
     logger.info(
-        "Graph diff received: customer=%s nodes=%d edges=%d bytes=%d",
+        "Graph diff received: customer=%s worker_pid=%s nodes=%d edges=%d bytes=%d",
         customer_id,
+        worker_pid,
         len(body.added_nodes or []),
         len(body.added_edges or []),
         len(
@@ -594,7 +659,7 @@ async def ingest_events(
     Receive raw probe events from the process uploader for persistence.
     Accepts msgpack (application/msgpack) or JSON (application/json).
     Stores to repository for historical trace queries.
-    Does NOT rebuild the graph - that arrives via POST /api/v1/graph/snapshot.
+    Does not rebuild the graph - that arrives via POST /api/v1/graph/snapshot.
     """
     customer_id = _authenticate(authorization)
     body = await request.body()
@@ -616,6 +681,10 @@ async def ingest_events(
             detail=f"Failed to deserialise body: {exc}",
         )
 
+    if not (worker_pid := payload.get("worker_pid")):
+        raise HTTPException(
+            status_code=400, detail="worker_pid is required"
+        )
     stored = 0
     errors = 0
     for raw in payload.get("events", []):
@@ -623,6 +692,9 @@ async def ingest_events(
             raw.setdefault("metadata", {})[
                 "customer_id"
             ] = customer_id
+            raw.setdefault("metadata", {})[
+                "worker_pid"
+            ] = worker_pid
             from origintracer.core.event_schema import (
                 NormalizedEvent,
             )
@@ -644,6 +716,12 @@ async def ingest_events(
                 "Event store error: %s | raw=%s", exc, raw
             )
 
+    # auto-select first work
+    global _active_pid
+    if worker_pid not in _active_pid:
+        with _active_pid_lock:
+            _active_pid[customer_id] = worker_pid
+
     return {"status": "ok", "stored": stored, "errors": errors}
 
 
@@ -656,8 +734,10 @@ def get_recent_events(
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ):
-    _authenticate(authorization)
-
+    global _active_pid
+    customer_id = _authenticate(authorization)
+    with _active_pid_lock:
+        worker_pid: str = _active_pid["customer_id"]
     if repository is None:
         raise HTTPException(
             status_code=503,
@@ -665,6 +745,8 @@ def get_recent_events(
         )
 
     events = repository.query_events(
+        customer_id=customer_id,
+        worker_pid=worker_pid,
         trace_id=trace_id,
         probe=probe,
         service=service,
@@ -725,8 +807,17 @@ async def causal_history(
     repository: InMemoryRepository = Depends(get_repository),
 ):
     customer_id = _authenticate(authorization)
+    with _active_pid_lock:
+        worker_pid = _active_pid.get(customer_id)
+    if not worker_pid:
+        raise HTTPException(
+            status_code=400,
+            detail="No active worker for this customer. Send a deployment marker first.",
+        )
     return {
-        "data": repository.get_causal_history(customer_id, limit)
+        "data": repository.get_causal_history(
+            customer_id, worker_pid, limit
+        )
     }
 
 
@@ -750,8 +841,10 @@ async def causal(
         TemporalStore,
     )
 
+    with _active_pid_lock:
+        worker_pid = _active_pid[customer_id]
     temporal = TemporalStore()
-    raw_diffs = repository.get_diffs(customer_id)
+    raw_diffs = repository.get_diffs(customer_id, worker_pid)
 
     for d in raw_diffs:
         temporal._diffs.append(
@@ -764,6 +857,7 @@ async def causal(
                 ),
                 timestamp=d.get("timestamp", time.time()),
                 label=d.get("label"),
+                worker_pid=d.get("worker_pid"),
             )
         )
     # rules registered once at startup in lifespan
@@ -775,6 +869,7 @@ async def causal(
     if matches:
         repository.save_causal_matches(
             customer_id=customer_id,
+            worker_pid=worker_pid,
             matches=[m.to_dict() for m in matches],
             timestamp=time.time(),
         )
@@ -825,7 +920,19 @@ async def diff(
     metadata in the graph snapshot (TODO: include diffs in snapshot payload).
     """
     customer_id = _authenticate(authorization)
-    results = repository.get_label_diff(customer_id, since)
+    with _active_pid_lock:
+        worker_pid = _active_pid.get(customer_id)
+        if not worker_pid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No active worker for customer '{customer_id}'. "
+                    "The agent must send a deployment marker or snapshot first."
+                ),
+            )
+    results = repository.get_label_diff(
+        customer_id, worker_pid, since
+    )
     if results is None:
         raise HTTPException(
             status_code=404, detail="No graph diffs available"
@@ -846,7 +953,17 @@ async def get_trace(
     """
     from origintracer.core.event_schema import ProbeTypes
 
-    _authenticate(authorization)
+    customer_id = _authenticate(authorization)
+    with _active_pid_lock:
+        worker_pid = _active_pid.get(customer_id)
+        if not worker_pid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No active worker for customer '{customer_id}'. "
+                    "The agent must send a deployment marker or snapshot first."
+                ),
+            )
     # pull events from repository instead of _event_log
     if repository is None:
         raise HTTPException(
@@ -854,7 +971,10 @@ async def get_trace(
             detail="No storage backend configured - cannot retrieve traces",
         )
     events = repository.query_events(
-        trace_id=trace_id, limit=1000
+        customer_id=customer_id,
+        worker_pid=worker_pid,
+        trace_id=trace_id,
+        limit=1000,
     )
 
     # repository returns dicts, sort by timestamp
@@ -913,9 +1033,17 @@ async def mark_deployment_endpoint(
     repository: Any = Depends(get_repository),
 ) -> Dict:
     customer_id = _authenticate(authorization)
+    if not (worker_pid := body.worker_pid):
+        raise HTTPException(
+            status_code=400, detail="worker_pid is required"
+        )
+    # populate active pid
+    with _active_pid_lock:
+        if customer_id not in _active_pid:
+            _active_pid[customer_id] = worker_pid
     if repository is not None:
         repository.insert_deployment_marker(
-            customer_id, body.label
+            customer_id, body.worker_pid, body.label
         )
 
     logger.info(
@@ -939,8 +1067,12 @@ async def status(
     Return snapshot metadata and system state for this customer.
     """
     customer_id = _authenticate(authorization)
-    graph = get_graph(customer_id)
-
+    worker_pid = _active_pid.get(customer_id)
+    graph = (
+        get_graph(customer_id, worker_pid)
+        if worker_pid
+        else None
+    )
     snapshot_info: Dict[str, Any] = {"available": False}
     if graph is not None:
         snapshot_info = {

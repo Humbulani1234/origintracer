@@ -44,9 +44,9 @@ import origintracer
 logger = logging.getLogger("origintracer.bridge.otel")
 
 if TYPE_CHECKING:
-    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.sdk.trace import ReadableSpan  # type: ignore[arg-type]
 
-    from .core.event_schema import NormalizedEvent
+    from .core.event_schema import NormalizedEvent  # type: ignore[arg-type]
 
 
 # Probe type mapping from OTel SpanKind
@@ -240,7 +240,7 @@ class OriginTracerSpanExporter:
 
     def export(self, spans: Sequence["ReadableSpan"]) -> object:
         try:
-            from opentelemetry.sdk.trace.export import (
+            from opentelemetry.sdk.trace.export import (  # type: ignore[arg-type]
                 SpanExportResult,
             )
         except ImportError:
