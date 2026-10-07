@@ -25,7 +25,9 @@ SpanKey = Tuple[str, str]
 
 @dataclass
 class _SpanState:
-    """Engine-owned state for one logical operation in one trace."""
+    """
+    Engine-owned state for one logical operation in one trace.
+    """
 
     anchor: NormalizedEvent
     last_seen: float
@@ -35,7 +37,9 @@ class _SpanState:
 
 @dataclass(frozen=True)
 class _PendingChild:
-    """A child whose declared parent has not reached the engine yet."""
+    """
+    A child whose declared parent has not reached the engine yet.
+    """
 
     span_key: SpanKey
     queued_at: float
@@ -264,7 +268,9 @@ class Engine:
 
     @staticmethod
     def _span_key(trace_id: str, span_id: str) -> SpanKey:
-        """Return the trace-scoped identity of a logical operation."""
+        """
+        Return the trace-scoped identity of a logical operation.
+        """
         return trace_id, span_id
 
     def _refresh_span_node(
@@ -334,7 +340,9 @@ class Engine:
     def _resolve_pending_children(
         self, parent_key: SpanKey, parent_state: _SpanState
     ) -> None:
-        """Attach every retained child that declared the registered parent."""
+        """
+        Attach every retained child that declared the registered parent.
+        """
         pending = self._pending_children.pop(parent_key, [])
         for item in pending:
             child_state = self._event_by_span_id.get(
@@ -348,7 +356,9 @@ class Engine:
     def _refresh_span_edge_duration(
         self, state: _SpanState, duration_delta_ns: int
     ) -> None:
-        """Apply a lifecycle duration correction without recounting the edge."""
+        """
+        Apply a lifecycle duration correction without recounting the edge.
+        """
         parent = state.parent_anchor
         if parent is None or duration_delta_ns == 0:
             return
@@ -367,7 +377,9 @@ class Engine:
     def _connect_span_edge(
         self, parent_state: _SpanState, child_state: _SpanState
     ) -> None:
-        """Create one aggregate calls edge between two resolved logical spans."""
+        """
+        Create one aggregate calls edge between two resolved logical spans.
+        """
         parent = parent_state.anchor
         child = child_state.anchor
         parent_id = self.graph.node_id(
