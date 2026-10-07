@@ -1,4 +1,5 @@
-"""Trigger the LangGraph ``loop_runaway`` causal rule.
+"""
+Trigger the LangGraph ``loop_runaway`` causal rule.
 
 The targeted graph performs nine bounded calls to the same Ollama model during
 one outer invocation. The rule fires at eight calls per owning graph invocation,
