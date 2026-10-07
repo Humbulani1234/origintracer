@@ -18,8 +18,12 @@ async function request(path, options = {}) {
     },
     ...(data ? { body: JSON.stringify(data) } : {}),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = payload?.detail || payload?.error || `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
+  return payload;
 }
 
 export const api = {
@@ -33,5 +37,9 @@ export const api = {
   graph: () => request("/api/v1/graph"),
   causal: (tags) => request(`/api/v1/causal${tags ? `?tags=${tags}` : ''}`),
   workers: () => request("/api/v1/workers"),
+  workerQuery: (pid, query) => request(
+    `/api/v1/workers/${encodeURIComponent(pid)}/query`,
+    { method: "POST", data: { query } },
+  ),
   causalHistory: (limit = 50) => request(`/api/v1/causal/history?limit=${limit}`),
 };

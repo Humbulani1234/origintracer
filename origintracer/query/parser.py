@@ -4,7 +4,7 @@ A simple but graph-aware query DSL.
 Grammar:
     QUERY := VERB METRIC [WHERE FILTERS] [LIMIT N] [AS system LABEL]
     VERB := SHOW | TRACE | BLAME | HOTSPOT | DIFF | CAUSAL
-    METRIC := latency | events | path | graph | nodes | edges |
+    METRIC := latency | events | llm_content | tool_content | path | graph | nodes | edges |
             status | active | probes | rules | semantic |
     FILTERS := FILTER [AND FILTER]*
     FILTER := FIELD OP VALUE
@@ -20,6 +20,8 @@ Examples:
     SHOW nodes WHERE service = "gunicorn"
     SHOW edges
     SHOW events WHERE probe = "django.db.query" LIMIT 20
+    SHOW llm_content WHERE trace_id = "abc123"
+    SHOW tool_content WHERE trace_id = "abc123"
     SHOW status
     SHOW active
     SHOW probes
@@ -35,7 +37,10 @@ Examples:
 
 The executor traverses the RuntimeGraph and TemporalStore, not raw DB rows,
 so queries reflect the live, structured model — not flat event logs.
-For historical queries, the executor falls back to the repository.
+For historical queries, the executor falls back to the repository. The
+``llm_content`` metric is deliberately separate from ``events`` and returns
+only prompt/response previews captured by the opt-in LangGraph probe setting.
+``tool_content`` likewise returns only opt-in tool argument/result previews.
 """
 
 from __future__ import annotations
@@ -150,7 +155,7 @@ def parse(query_str: str) -> ParsedQuery:
     if verb == "SHOW":
         if len(tokens) < 2:
             raise ValueError(
-                "SHOW requires a metric (latency | events | path | graph | changes)"
+                "SHOW requires a metric (latency | events | llm_content | tool_content | path | graph | changes)"
             )
 
         metric = tokens[1].lower()
@@ -263,6 +268,8 @@ SEMANTIC_FILTER_KEYS = {
     "system",
     "service",
     "node",
+    "probe",
+    "trace_id",
 }
 
 
@@ -286,7 +293,6 @@ def _exec_show(
         filters.get("system")
         or filters.get("service")
         or filters.get("node")
-        or filters.get("probe")
     )
 
     if semantic_candidate:
@@ -309,6 +315,12 @@ def _exec_show(
             engine, filters, node_scope, query.limit
         ),
         "events": lambda: _show_events(
+            engine, filters, query.limit
+        ),
+        "llm_content": lambda: _show_llm_content(
+            engine, filters, query.limit
+        ),
+        "tool_content": lambda: _show_tool_content(
             engine, filters, query.limit
         ),
         "path": lambda: _show_path(engine, filters),
@@ -404,6 +416,102 @@ def _show_events(
             }
             for e in events
         ],
+    }
+
+
+def _show_llm_content(
+    engine: Engine, filters: Dict, limit: int
+) -> Dict:
+    """Return explicitly captured LLM prompt/response previews only."""
+    events = getattr(engine, "_event_log", [])
+    trace_id = filters.get("trace_id")
+    probe = filters.get("probe")
+    service = filters.get("service")
+    rows = []
+    for event in events:
+        if trace_id and event.trace_id != trace_id:
+            continue
+        if probe and event.probe != probe:
+            continue
+        if service and event.service != service:
+            continue
+        metadata = getattr(event, "metadata", {}) or {}
+        if event.probe == "langgraph.llm.enter":
+            field = "prompt_preview"
+        elif event.probe == "langgraph.llm.exit":
+            field = "response_preview"
+        else:
+            continue
+        content = metadata.get(field)
+        if content is None:
+            continue
+        rows.append(
+            {
+                "probe": event.probe,
+                "name": event.name,
+                "trace_id": event.trace_id,
+                "span_id": event.span_id,
+                "content": content,
+                "truncated": bool(
+                    metadata.get(f"{field}_truncated")
+                ),
+                "ts": getattr(event, "timestamp", None),
+            }
+        )
+    return {
+        "metric": "llm_content",
+        "filters": filters,
+        "data": rows[-limit:],
+    }
+
+
+def _show_tool_content(
+    engine: Engine, filters: Dict, limit: int
+) -> Dict:
+    """Return explicitly captured tool argument, result, or error previews."""
+    events = getattr(engine, "_event_log", [])
+    trace_id = filters.get("trace_id")
+    probe = filters.get("probe")
+    service = filters.get("service")
+    rows = []
+    fields = {
+        "langgraph.tool.enter": ("tool_input_preview", "input"),
+        "langgraph.tool.exit": ("tool_output_preview", "output"),
+        "langgraph.error": ("tool_error_preview", "error"),
+    }
+    for event in events:
+        if trace_id and event.trace_id != trace_id:
+            continue
+        if probe and event.probe != probe:
+            continue
+        if service and event.service != service:
+            continue
+        field_and_kind = fields.get(event.probe)
+        if field_and_kind is None:
+            continue
+        field, kind = field_and_kind
+        metadata = getattr(event, "metadata", {}) or {}
+        content = metadata.get(field)
+        if content is None:
+            continue
+        rows.append(
+            {
+                "probe": event.probe,
+                "name": event.name,
+                "trace_id": event.trace_id,
+                "span_id": event.span_id,
+                "kind": kind,
+                "content": content,
+                "truncated": bool(
+                    metadata.get(f"{field}_truncated")
+                ),
+                "ts": getattr(event, "timestamp", None),
+            }
+        )
+    return {
+        "metric": "tool_content",
+        "filters": filters,
+        "data": rows[-limit:],
     }
 
 

@@ -1,0 +1,5 @@
+langgraph
+langchain
+langgraph-api
+uvicorn[standard]
+langchain-ollama

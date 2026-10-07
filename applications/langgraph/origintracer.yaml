@@ -1,0 +1,16 @@
+# OriginTracer configuration for the LangGraph Agent Server example.
+
+probes:
+  - langgraph
+
+rules:
+  - loop_runaway
+  - agent_latency_hotspot
+
+semantic:
+  - label: agent
+    description: LangGraph supervisors, specialists, models, and tools
+    services:
+      - langgraph
+    node_patterns:
+      - "langgraph::.*"

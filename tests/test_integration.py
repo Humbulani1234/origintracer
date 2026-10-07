@@ -790,3 +790,83 @@ class TestConfigMergePipeline:
         }
         cfg = self._merge({"normalize": []}, normalize=[my_rule])
         assert cfg.normalize == [my_rule]
+
+
+def test_parallel_lineage_through_emitter_builds_sibling_edges(
+    engine,
+):
+    """Synthetic lineage survives the public emitter-to-engine boundary."""
+    enable_sync_mode()
+    trace_id = str(uuid.uuid4())
+    observations = (
+        NormalizedEvent(
+            probe="operation.enter",
+            service="workflow",
+            name="root",
+            trace_id=trace_id,
+            span_id="root",
+        ),
+        NormalizedEvent(
+            probe="operation.enter",
+            service="workflow",
+            name="left",
+            trace_id=trace_id,
+            span_id="left",
+            parent_span_id="root",
+        ),
+        NormalizedEvent(
+            probe="operation.enter",
+            service="workflow",
+            name="right",
+            trace_id=trace_id,
+            span_id="right",
+            parent_span_id="root",
+        ),
+        NormalizedEvent(
+            probe="operation.exit",
+            service="workflow",
+            name="right",
+            trace_id=trace_id,
+            span_id="right",
+            parent_span_id="root",
+            duration_ns=20_000_000,
+        ),
+        NormalizedEvent(
+            probe="operation.exit",
+            service="workflow",
+            name="left",
+            trace_id=trace_id,
+            span_id="left",
+            parent_span_id="root",
+            duration_ns=10_000_000,
+        ),
+    )
+    for observation in observations:
+        emit(observation)
+
+    root_edges = {
+        edge.target
+        for edge in engine.graph.neighbors("workflow::root")
+        if edge.edge_type == "calls"
+    }
+    assert root_edges == {
+        "workflow::left",
+        "workflow::right",
+    }
+    assert engine.graph.neighbors("workflow::left") == []
+    assert engine.graph.neighbors("workflow::right") == []
+    assert (
+        engine.graph.get_node("workflow::root").call_count == 1
+    )
+    assert (
+        engine.graph.get_node("workflow::left").call_count == 1
+    )
+    assert (
+        engine.graph.get_node("workflow::right").call_count == 1
+    )
+    assert engine.graph.get_node(
+        "workflow::left"
+    ).total_duration_ns == (10_000_000)
+    assert engine.graph.get_node(
+        "workflow::right"
+    ).total_duration_ns == (20_000_000)

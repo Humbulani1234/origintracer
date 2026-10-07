@@ -1,15 +1,19 @@
-"""Integration and lineage tests for the production Engine.
+"""
+Integration tests for Engine - the component that wires together
+RuntimeGraph, TemporalStore, PatternRegistry, SemanticLayer, and
+ActiveRequestTracker.
 
-The suite verifies how Engine coordinates the graph, temporal store, causal
-registry, semantic layer, tracker, and compactor. Lineage cases cover explicit
-parentage, concurrent fan-out, out-of-order delivery, lifecycle observations,
-and sequential traces whose events do not provide parent span IDs.
+These tests exercise the Engine as it would operate at runtime:
+feeding it realistic event sequences and asserting on the resulting
+graph structure, causal matches, and temporal diffs.
+
+Engine.process() is called directly.
 """
 
 from __future__ import annotations
 
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
 
 from origintracer.core.engine import Engine
 from origintracer.core.event_schema import NormalizedEvent
@@ -124,8 +128,9 @@ class TestEngineGraphBuilding:
         self, engine, trace_id
     ):
         """
-        ``NormalizedEvent.now()`` places duration on the dedicated dataclass
-        field rather than in metadata, allowing the engine to aggregate it.
+        After the NormalizedEvent.now() fix, duration_ns must be on the
+        dataclass field - not in event.metadata. The engine reads
+        event.duration_ns; if it's in metadata the node avg stays None.
         """
         e = evt(
             service="django",
@@ -386,8 +391,8 @@ class TestEngineCompactorIntegration:
         trace_ids not updated within _trace_ttl_s must be removed from
         _last_event_per_trace by _evict_stale_traces().
 
-        Bounded retention prevents a long-running process from accumulating one
-        cursor entry for every trace it has observed.
+        Verifies the fix for the unbounded dict growth bug:
+        at 100 req/s without eviction the dict accumulates 360k entries/hour.
         """
         engine = Engine(snapshot_interval_s=9999)
         engine._trace_ttl_s = 0.05  # 50ms TTL so the test does not need to sleep long
@@ -427,259 +432,286 @@ class TestEngineCompactorIntegration:
         )
 
 
-def event(
-    *,
-    name: str,
-    trace_id: str = "trace",
-    span_id: str,
-    parent_span_id: str | None = None,
-    probe: str = "operation.enter",
-    duration_ns: int | None = None,
-    **metadata,
-) -> NormalizedEvent:
-    """Create a synthetic observation with explicit, deterministic lineage."""
-    return NormalizedEvent(
-        probe=probe,
-        service="worker",
-        name=name,
-        trace_id=trace_id,
-        span_id=span_id,
-        parent_span_id=parent_span_id,
-        duration_ns=duration_ns,
-        metadata=metadata,
-    )
+class TestEngineSpanBasedCausality:
+    """
+    Tests for span-based parent resolution in Engine.process() - the fix
+    for concurrent same-trace events (e.g. LangGraph's Send-based fan-out)
+    producing corrupted edges under the original trace-cursor-only model.
 
+    NormalizedEvent.now() doesn't expose span_id as a parameter (it
+    auto-generates one via default_factory), so tests needing a specific
+    span_id build the event first and override .span_id before calling
+    engine.process() - mirroring exactly what _emit_start_event() does
+    in the LangGraph probe. parent_span_id IS a .now() parameter, so
+    that's passed directly.
+    """
 
-def edge_targets(engine: Engine, node_id: str) -> set[str]:
-    """Return direct call targets for one aggregate node."""
-    return {
-        edge.target
-        for edge in engine.graph.neighbors(node_id)
-        if edge.edge_type == "calls"
-    }
+    def setup_method(self):
+        self.engine = Engine()
 
+    def _node(self, service: str, name: str):
+        return self.engine.graph._nodes.get(f"{service}::{name}")
 
-def test_parallel_children_remain_direct_siblings(
-    engine: Engine,
-) -> None:
-    """Concurrent fan-out must not create arrival-order edges between siblings."""
-    engine.process(event(name="root", span_id="root"))
-
-    children = [
-        event(
-            name=f"branch-{index}",
-            span_id=f"child-{index}",
-            parent_span_id="root",
+    def test_span_based_parent_resolution_exact_match(self):
+        """An event with parent_span_id set resolves its parent via
+        _event_by_span_id, not the trace cursor."""
+        root = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t1",
+            service="langgraph",
+            name="root",
         )
-        for index in range(20)
-    ]
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        list(executor.map(engine.process, children))
+        root.span_id = "run-root"
+        self.engine.process(root)
 
-    expected = {f"worker::branch-{index}" for index in range(20)}
-    assert edge_targets(engine, "worker::root") == expected
-    for child_id in expected:
-        assert edge_targets(engine, child_id) == set()
-
-
-def test_explicit_children_do_not_advance_sequential_cursor(
-    engine: Engine,
-) -> None:
-    """A parallel branch must not parent a later unparented event."""
-    engine.process(event(name="root", span_id="root"))
-    engine.process(
-        event(
-            name="branch",
-            span_id="branch",
-            parent_span_id="root",
-        )
-    )
-    engine.process(
-        event(name="unparented-follow-up", span_id="follow-up")
-    )
-
-    assert edge_targets(engine, "worker::root") == {
-        "worker::branch",
-        "worker::unparented-follow-up",
-    }
-    assert edge_targets(engine, "worker::branch") == set()
-
-
-def test_child_before_parent_is_reconciled_once(
-    engine: Engine,
-) -> None:
-    """Late parent arrival creates one edge without recounting the child span."""
-    engine.process(
-        event(
+        child = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t1",
+            service="langgraph",
             name="child",
-            span_id="child",
-            parent_span_id="parent",
+            parent_span_id="run-root",
         )
-    )
-    engine.process(
-        event(
+        self.engine.process(child)
+
+        edges = self.engine.graph.neighbors("langgraph::root")
+        assert len(edges) == 1
+        assert edges[0].target == "langgraph::child"
+
+    def test_span_based_lookup_ignores_trace_cursor(self):
+        """
+        Flagship regression test: 'decoy' is the most recently processed
+        event for this trace_id, but 'child' explicitly names 'root' as
+        its parent via parent_span_id. Under the OLD cursor-only model,
+        child would have been wrongly attributed to decoy - exactly the
+        corruption two interleaved Send branches produce.
+        """
+        root = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t1",
+            service="langgraph",
+            name="root",
+        )
+        root.span_id = "run-root"
+        self.engine.process(root)
+
+        decoy = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t1",
+            service="langgraph",
+            name="decoy_branch",
+        )
+        decoy.span_id = "run-decoy"
+        self.engine.process(decoy)
+
+        child = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t1",
+            service="langgraph",
             name="child",
-            span_id="child",
-            parent_span_id="parent",
-            probe="operation.exit",
-            duration_ns=25_000,
-            success=True,
+            parent_span_id="run-root",
         )
-    )
+        self.engine.process(child)
 
-    assert engine.status()["pending_lineage"] == 1
-    engine.process(event(name="parent", span_id="parent"))
+        root_targets = {
+            e.target
+            for e in self.engine.graph.neighbors(
+                "langgraph::root"
+            )
+        }
+        decoy_targets = {
+            e.target
+            for e in self.engine.graph.neighbors(
+                "langgraph::decoy_branch"
+            )
+        }
+        assert "langgraph::child" in root_targets
+        assert "langgraph::child" not in decoy_targets
 
-    child = engine.graph.get_node("worker::child")
-    assert child is not None
-    assert child.call_count == 1
-    assert child.total_duration_ns == 25_000
-    assert edge_targets(engine, "worker::parent") == {
-        "worker::child"
-    }
-    edge = engine.graph.neighbors("worker::parent")[0]
-    assert edge.call_count == 1
-    assert edge.total_duration_ns == 25_000
-    assert engine.status()["pending_lineage"] == 0
-
-
-def test_span_ids_are_scoped_by_trace(engine: Engine) -> None:
-    """Identical span IDs in independent traces must never cross-link."""
-    engine.process(
-        event(
-            name="parent-a", trace_id="trace-a", span_id="shared"
+    def test_fallback_to_trace_cursor_when_no_parent_span_id(
+        self,
+    ):
+        """Events that never set parent_span_id (every existing probe -
+        Django, nginx, gunicorn, celery) must behave exactly as before.
+        """
+        e1 = NormalizedEvent.now(
+            probe="request.entry",
+            trace_id="t2",
+            service="nginx",
+            name="upstream",
         )
-    )
-    engine.process(
-        event(
-            name="parent-b", trace_id="trace-b", span_id="shared"
+        e2 = NormalizedEvent.now(
+            probe="function.call",
+            trace_id="t2",
+            service="django",
+            name="view",
         )
-    )
-    engine.process(
-        event(
-            name="child-a",
-            trace_id="trace-a",
-            span_id="child",
-            parent_span_id="shared",
+        self.engine.process(e1)
+        self.engine.process(e2)
+
+        edges = self.engine.graph.neighbors("nginx::upstream")
+        assert len(edges) == 1
+        assert edges[0].target == "django::view"
+
+    def test_exit_event_parent_span_id_does_not_create_self_loop(
+        self,
+    ):
+        """
+        chain.exit/tool.exit sets parent_span_id back to its own start
+        event's span_id. Since start/exit share one node identity
+        (service::name), RuntimeGraph.add_from_event's parent_id !=
+        node_id guard must skip the edge - the exit event's lineage
+        shouldn't pollute the graph with a self-loop.
+        """
+        enter = NormalizedEvent.now(
+            probe="langgraph.tool.enter",
+            trace_id="t3",
+            service="langgraph",
+            name="search_tool",
         )
-    )
+        enter.span_id = "run-tool-1"
+        self.engine.process(enter)
 
-    assert edge_targets(engine, "worker::parent-a") == {
-        "worker::child-a"
-    }
-    assert edge_targets(engine, "worker::parent-b") == set()
-
-
-def test_lifecycle_observations_count_one_logical_operation(
-    engine: Engine,
-) -> None:
-    """A terminal observation enriches its span instead of adding a call."""
-    engine.process(event(name="parent", span_id="parent"))
-    engine.process(
-        event(
-            name="work",
-            span_id="work",
-            parent_span_id="parent",
-            operation_kind="task",
+        exit_ = NormalizedEvent.now(
+            probe="langgraph.tool.exit",
+            trace_id="t3",
+            service="langgraph",
+            name="search_tool",
+            parent_span_id="run-tool-1",
+            duration_ns=500_000,
         )
-    )
-    engine.process(
-        event(
-            name="work",
-            span_id="work",
-            parent_span_id="parent",
-            probe="operation.exit",
-            duration_ns=80_000,
-            operation_kind="task",
-            success=True,
+        self.engine.process(exit_)
+
+        node = self._node("langgraph", "search_tool")
+        assert (
+            node.call_count == 2
+        )  # enter + exit both touch the node
+        assert (
+            self.engine.graph.neighbors("langgraph::search_tool")
+            == []
         )
-    )
 
-    node = engine.graph.get_node("worker::work")
-    assert node is not None
-    assert node.call_count == 1
-    assert node.total_duration_ns == 80_000
-    assert node.metadata["probe"] == "operation.enter"
-    assert node.metadata["last_probe"] == "operation.exit"
-    assert node.metadata["operation_kind"] == "task"
-    assert node.metadata["success"] is True
-    edge = engine.graph.neighbors("worker::parent")[0]
-    assert edge.call_count == 1
-    assert edge.total_duration_ns == 80_000
-    assert edge_targets(engine, "worker::work") == set()
-
-
-def test_lineage_free_events_form_sequential_path(
-    engine: Engine,
-) -> None:
-    """Events without parent IDs form an arrival-order path."""
-    engine.process(event(name="first", span_id="first"))
-    engine.process(event(name="second", span_id="second"))
-    engine.process(event(name="third", span_id="third"))
-
-    assert edge_targets(engine, "worker::first") == {
-        "worker::second"
-    }
-    assert edge_targets(engine, "worker::second") == {
-        "worker::third"
-    }
-
-
-def test_explicit_parent_ignores_trace_cursor(
-    engine: Engine,
-) -> None:
-    """Explicit lineage wins even when another branch arrived most recently."""
-    engine.process(event(name="root", span_id="root"))
-    engine.process(event(name="decoy", span_id="decoy"))
-    engine.process(
-        event(
-            name="child",
-            span_id="child",
-            parent_span_id="root",
+    def test_every_processed_event_is_registered_by_span_id(
+        self,
+    ):
+        """Fallback-path events (no parent_span_id) still register their
+        own span_id, so a LATER event can reference them as a parent even
+        though they themselves resolved via the trace cursor."""
+        e1 = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t4",
+            service="langgraph",
+            name="root",
         )
-    )
+        self.engine.process(e1)
 
-    assert edge_targets(engine, "worker::root") == {
-        "worker::decoy",
-        "worker::child",
-    }
-    assert edge_targets(engine, "worker::decoy") == set()
+        with self.engine._span_lock:
+            assert e1.span_id in self.engine._event_by_span_id
 
-
-def test_every_event_registers_trace_scoped_lineage(
-    engine: Engine,
-) -> None:
-    """An unparented event remains available as a later explicit parent."""
-    engine.process(event(name="root", span_id="root"))
-    engine.process(
-        event(
-            name="child",
-            span_id="child",
-            parent_span_id="root",
+    def test_concurrent_interleaved_branches_produce_correct_edges(
+        self,
+    ):
+        """
+        Full simulation of Send-based parallel fan-out: root spawns two
+        branches whose events interleave (enter1, enter2, exit1, exit2)
+        rather than completing sequentially. Both branches must resolve
+        to root as their parent - neither may attribute to the other.
+        """
+        root = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t5",
+            service="langgraph",
+            name="route_to_agents",
         )
-    )
+        root.span_id = "run-root"
+        self.engine.process(root)
 
-    assert engine.status()["lineage_spans"] == 2
-    assert edge_targets(engine, "worker::root") == {
-        "worker::child"
-    }
+        enter1 = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t5",
+            service="langgraph",
+            name="github_agent",
+            parent_span_id="run-root",
+        )
+        enter1.span_id = "run-branch-1"
 
+        enter2 = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t5",
+            service="langgraph",
+            name="slack_agent",
+            parent_span_id="run-root",
+        )
+        enter2.span_id = "run-branch-2"
 
-def test_stale_lineage_is_evicted() -> None:
-    """Resolved lineage does not grow without bound over a process lifetime."""
-    instance = Engine(
-        snapshot_interval_s=9999, lineage_ttl_s=0.01
-    )
-    try:
-        instance.process(event(name="root", span_id="root"))
-        with instance._lineage_lock:
-            instance._event_by_span_id[
-                ("trace", "root")
-            ].last_seen = 0
+        exit1 = NormalizedEvent.now(
+            probe="langgraph.chain.exit",
+            trace_id="t5",
+            service="langgraph",
+            name="github_agent",
+            parent_span_id="run-branch-1",
+            duration_ns=1_000_000,
+        )
+        exit2 = NormalizedEvent.now(
+            probe="langgraph.chain.exit",
+            trace_id="t5",
+            service="langgraph",
+            name="slack_agent",
+            parent_span_id="run-branch-2",
+            duration_ns=2_000_000,
+        )
 
-        instance._evict_stale_spans()
+        # Interleaved arrival order - what real concurrent fan-out
+        # actually looks like once both branches start emitting.
+        for e in (enter1, enter2, exit1, exit2):
+            self.engine.process(e)
 
-        assert instance.status()["lineage_spans"] == 0
-    finally:
-        instance.stop()
-        instance.tracker.stop()
+        root_targets = {
+            e.target
+            for e in self.engine.graph.neighbors(
+                "langgraph::route_to_agents"
+            )
+        }
+        assert root_targets == {
+            "langgraph::github_agent",
+            "langgraph::slack_agent",
+        }
+        # Neither branch may point at the other - exactly the
+        # corruption the trace-cursor-only model would produce here.
+        assert (
+            self.engine.graph.neighbors(
+                "langgraph::github_agent"
+            )
+            == []
+        )
+        assert (
+            self.engine.graph.neighbors("langgraph::slack_agent")
+            == []
+        )
+
+    def test_stale_spans_evicted_after_ttl(self):
+        """Same TTL eviction pattern as _evict_stale_traces, applied to
+        _event_by_span_id - must not grow unbounded for process
+        lifetime."""
+        e = NormalizedEvent.now(
+            probe="langgraph.chain.enter",
+            trace_id="t6",
+            service="langgraph",
+            name="root",
+        )
+        self.engine.process(e)
+
+        # Backdate the registration timestamp past the TTL - same
+        # technique the GraphCompactor TTL tests use on node.last_seen.
+        with self.engine._span_lock:
+            stored_event, _ = self.engine._event_by_span_id[
+                e.span_id
+            ]
+            self.engine._event_by_span_id[e.span_id] = (
+                stored_event,
+                time.monotonic() - self.engine._trace_ttl_s - 1,
+            )
+
+        self.engine._evict_stale_spans()
+
+        with self.engine._span_lock:
+            assert e.span_id not in self.engine._event_by_span_id

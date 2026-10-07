@@ -131,6 +131,12 @@ Try:
 
 Similar to the `Django` application above. Navigate to the `applications/celery` directory for this specific application, and follow the steps.
 
+## Quick Start - LangGraph Agent Server application
+
+Similar to the `Django` and `Celery` applications above. Navigate to the `applications/langgraph` directory for this specific application, and follow the steps.
+
+The example runs a supervisor and two specialist agents through LangGraph's production Agent Server packaging path. It uses Ollama for local model inference, initializes OriginTracer through the server's FastAPI lifespan, and includes an `invoke.py` script for sending requests to the running application.
+
 ## Core Strengths
 
 - **Decoupled architecture**: Probes emit `NormalizedEvent` objects. The engine never touches probes, and probes never block application code.

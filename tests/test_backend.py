@@ -8,6 +8,11 @@ snapshot deserialization, and the startup snapshot reload path.
 
 from __future__ import annotations
 
+import json
+import os
+import socket
+import threading
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -301,6 +306,140 @@ class TestStatus:
         body = r.json()
         assert body["snapshot"]["available"] is True
         assert body["snapshot"]["nodes"] == 2
+
+
+@pytest.mark.anyio
+class TestLiveWorkerQueries:
+    """FastAPI exposes only discovered workers and proxies their DSL protocol."""
+
+    async def test_workers_returns_discovered_processes(
+        self, client, monkeypatch
+    ):
+        import backend.main as m
+
+        monkeypatch.setattr(
+            m,
+            "discover_sockets",
+            lambda: ["/tmp/origintracer-1234.sock"],
+        )
+
+        response = await client.get(
+            "/api/v1/workers", headers=AUTH
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "data": [
+                {
+                    "pid": "1234",
+                    "socket": "/tmp/origintracer-1234.sock",
+                }
+            ]
+        }
+
+    async def test_worker_query_proxies_selected_pid(
+        self, client, monkeypatch
+    ):
+        import backend.main as m
+
+        calls = []
+
+        def fake_query(pid, query):
+            calls.append((pid, query))
+            return {
+                "id": "request-1",
+                "ok": True,
+                "data": {"metric": "nodes", "data": []},
+            }
+
+        monkeypatch.setattr(m, "query_worker_socket", fake_query)
+
+        response = await client.post(
+            "/api/v1/workers/4321/query",
+            json={"query": "  SHOW NODES  "},
+            headers=AUTH,
+        )
+
+        assert response.status_code == 200
+        assert calls == [(4321, "SHOW NODES")]
+        assert response.json()["worker"] == {
+            "pid": "4321",
+            "socket": "/tmp/origintracer-4321.sock",
+        }
+
+    async def test_worker_query_reports_disappeared_process(
+        self, client, monkeypatch
+    ):
+        import backend.main as m
+
+        def unavailable(pid, query):
+            raise m.WorkerUnavailableError("worker disappeared")
+
+        monkeypatch.setattr(
+            m, "query_worker_socket", unavailable
+        )
+
+        response = await client.post(
+            "/api/v1/workers/4321/query",
+            json={"query": "SHOW STATUS"},
+            headers=AUTH,
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "worker disappeared"
+
+    async def test_worker_query_requires_authentication(
+        self, client
+    ):
+        response = await client.post(
+            "/api/v1/workers/4321/query",
+            json={"query": "SHOW STATUS"},
+        )
+        assert response.status_code == 401
+
+
+def test_worker_socket_client_uses_existing_repl_protocol(
+    tmp_path, monkeypatch
+):
+    """The backend sends and receives one newline-delimited JSON message."""
+    import backend.main as m
+
+    pid = os.getpid()
+    prefix = str(tmp_path / "origintracer-")
+    socket_path = f"{prefix}{pid}.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(socket_path)
+    server.listen(1)
+
+    def serve_once():
+        connection, _ = server.accept()
+        with connection:
+            request = b""
+            while b"\n" not in request:
+                request += connection.recv(4096)
+            message = json.loads(request.split(b"\n", 1)[0])
+            response = {
+                "id": message["id"],
+                "ok": True,
+                "data": {"verb": "STATUS", "data": {"pid": pid}},
+            }
+            connection.sendall(
+                json.dumps(response).encode() + b"\n"
+            )
+        server.close()
+
+    thread = threading.Thread(target=serve_once)
+    thread.start()
+    monkeypatch.setattr(m, "_SOCKET_PREFIX", prefix)
+    monkeypatch.setattr(
+        m, "discover_sockets", lambda: [socket_path]
+    )
+
+    result = m.query_worker_socket(pid, "SHOW STATUS")
+    thread.join(timeout=2)
+
+    assert result["ok"] is True
+    assert result["data"]["data"]["pid"] == pid
 
 
 @pytest.mark.anyio
