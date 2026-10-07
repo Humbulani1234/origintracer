@@ -24,7 +24,9 @@ DEFAULT_PROMPT = (
 
 
 def _arguments() -> argparse.Namespace:
-    """Parse the small set of options useful when invoking a deployment."""
+    """
+    Parse the small set of options useful when invoking a deployment.
+    """
     parser = argparse.ArgumentParser(
         description="Invoke the OriginTracer personal-assistant example."
     )
@@ -56,7 +58,10 @@ def _arguments() -> argparse.Namespace:
 
 
 def _final_content(result: Any) -> Any:
-    """Return the final message content when the response has agent state."""
+    """
+    Return the final message content when the response has agent
+    state.
+    """
     if not isinstance(result, dict):
         return result
     messages = result.get("messages")
@@ -76,7 +81,8 @@ def invoke_and_print(
     api_key: str | None = None,
     timeout: float = 300.0,
 ) -> int:
-    """Submit one stateless Agent Server run and print its final output.
+    """
+    Submit one stateless Agent Server run and print its final output.
 
     The dedicated rule-scenario scripts reuse this transport while retaining
     their own explicit graph IDs and inputs. Environment variables provide the
@@ -131,7 +137,10 @@ def invoke_and_print(
 
 
 def main() -> int:
-    """Submit one normal personal-assistant run and display its final output."""
+    """
+    Submit one normal personal-assistant run and display its final
+    output.
+    """
     args = _arguments()
     return invoke_and_print(
         assistant_id="personal_assistant",

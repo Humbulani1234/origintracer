@@ -10,7 +10,9 @@ from invoke import invoke_and_print
 
 
 def main() -> int:
-    """Invoke the parallel latency-hotspot scenario through Agent Server."""
+    """
+    Invoke the parallel latency-hotspot scenario through Agent Server.
+    """
     return invoke_and_print(
         assistant_id="agent_latency_hotspot_scenario",
         graph_input={"request": "compare two dependency calls"},

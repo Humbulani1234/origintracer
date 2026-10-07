@@ -1,6 +1,7 @@
-"""Minimal host-native FastAPI server for experimenting with the example graphs.
+"""
+A host-native FastAPI server for experimenting with the example graphs.
 
-This module is intentionally not a replacement for LangGraph Agent Server. It
+This module is not a replacement for LangGraph Agent Server. It
 implements only the stateless ``POST /runs/wait`` request used by the example's
 invocation scripts. Running it directly with Uvicorn keeps OriginTracer, Ollama,
 the backend, and the React worker selector in the host PID namespace.
@@ -10,8 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
-from asyncio import futures, tasks
 from contextlib import asynccontextmanager
 from contextvars import copy_context
 from typing import Any, AsyncIterator
@@ -30,7 +29,10 @@ from personal_assistant.webapp import (
 
 
 class RunRequest(BaseModel):
-    """Subset of an Agent Server stateless-run request used by this example."""
+    """
+    Subset of an Agent Server stateless-run request used by
+    this example.
+    """
 
     assistant_id: str
     input: dict[str, Any] = Field(default_factory=dict)
@@ -44,7 +46,10 @@ _GRAPHS = {
 
 
 def _max_jobs_per_worker() -> int:
-    """Read the manual server's per-process graph concurrency limit."""
+    """
+    Reads the manual server's per-process graph concurrency
+    limit.
+    """
     raw_value = os.getenv("N_JOBS_PER_WORKER", "1")
     try:
         value = int(raw_value)
@@ -59,20 +64,15 @@ def _max_jobs_per_worker() -> int:
     return value
 
 
-# import pdb
-# pdb.set_trace()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize the concurrency gate and OriginTracer for this process."""
+    """
+    Initialize the concurrency gate and OriginTracer for
+    this process.
+    """
     app.state.run_slots = asyncio.Semaphore(
         _max_jobs_per_worker()
     )
-
-    # import pdb
-    # pdb.set_trace()
-
     async with origintracer_lifespan(app):
         # Uvicorn runs lifespan and HTTP requests in separate task contexts.
         # Preserve the context in which OriginTracer installed its LangGraph
@@ -93,7 +93,10 @@ app = FastAPI(
 
 @app.post("/runs/wait")
 async def run_and_wait(run: RunRequest, request: Request) -> Any:
-    """Invoke one known graph when this worker has an execution slot."""
+    """
+    Invoke one known graph when this worker has an
+    execution slot.
+    """
     graph = _GRAPHS.get(run.assistant_id)
     if graph is None:
         raise HTTPException(

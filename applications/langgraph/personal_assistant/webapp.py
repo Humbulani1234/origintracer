@@ -20,17 +20,12 @@ _APP_ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_PATH = _APP_ROOT / "origintracer.yaml"
 
 
-# import pdb
-# pdb.set_trace()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Start OriginTracer with the server process and release it on shutdown."""
-
-    # import pdb
-    # pdb.set_trace()
-
+    """
+    Start OriginTracer with the server process and release it
+    on shutdown.
+    """
     origintracer.init(
         config=str(_CONFIG_PATH),
         endpoint=os.getenv(
@@ -49,7 +44,9 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/origintracer-example")
 def example_info() -> dict[str, str]:
-    """Identify the custom application mounted into Agent Server."""
+    """
+    Identify the custom application mounted into Agent Server.
+    """
     return {
         "application": "OriginTracer LangGraph example",
         "graph": "personal_assistant",

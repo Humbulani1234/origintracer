@@ -63,14 +63,12 @@ ollama serve
 ollama pull qwen2.5:7b or any model of your choice
 ```
 
-If another tool-calling model is already installed, set its name in `.env` instead.
-
 ## Configure the server
 
 Create the environment file and add the credentials required by Agent Server:
 
 ```bash
-cp .env.example .env
+touch .env
 ```
 
 At minimum, review:
@@ -83,14 +81,9 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 ORIGINTRACER_ENDPOINT=http://host.docker.internal:8001
 ```
 
-`LANGSMITH_API_KEY` is required by Agent Server's startup license check even
-when `LANGSMITH_TRACING=false`; the latter only disables LangSmith trace
-delivery. `OLLAMA_BASE_URL` and `ORIGINTRACER_ENDPOINT` are addresses viewed
-from inside the container. The included `docker-compose.host.yml` maps
-`host.docker.internal` to the Docker host on Linux.
+`LANGSMITH_API_KEY` is required by Agent Server's startup license check even when `LANGSMITH_TRACING=false`; the latter only disables LangSmith trace delivery. `OLLAMA_BASE_URL` and `ORIGINTRACER_ENDPOINT` are addresses viewed from inside the container. The included `docker-compose.host.yml` maps `host.docker.internal` to the Docker host on Linux.
 
-Start the OriginTracer backend on the host in a separate terminal (from the
-repository root):
+Start the OriginTracer backend on the host in a separate terminal:
 
 ```bash
 cd /path/to/origintracer
@@ -98,21 +91,17 @@ ORIGINTRACER_API_KEYS=test-key-123:local-dev \
 uvicorn backend.main:app --host 0.0.0.0 --port 8001 --log-level info
 ```
 
-If the host firewall blocks Docker bridge traffic, allow the Agent Server's
-Docker subnet to reach the backend port. For the default stack network used by
-this example:
+If the host firewall blocks Docker bridge traffic, allow the Agent Server's Docker subnet to reach the backend port, and for the default stack network used by this example:
 
 ```bash
 sudo ufw allow from 172.19.0.0/16 to any port 8001 proto tcp
 ```
 
-Ollama must likewise accept connections from the container. If it is running on
-another machine, set `OLLAMA_BASE_URL` to that machine's reachable address.
+Ollama must likewise accept connections from the container. If it is running on another machine, set `OLLAMA_BASE_URL` to that machine's reachable address.
 
 ## Run the production-shaped Agent Server
 
-Build the production image using the Agent Server release compatible with this
-example's LangGraph 1.x dependencies:
+Build the production image using the Agent Server release compatible with this example's LangGraph 1.x dependencies:
 
 ```bash
 langgraph build \
@@ -134,21 +123,17 @@ The API is exposed at `http://localhost:8123`. The `--docker-compose` override i
 backend Uvicorn process running while the stack is in use. Re-run the build command after changing application or OriginTracer source, then run the
 `langgraph up` command again.
 
-This Docker-based Agent Server performs a LangGraph Deployment license check at
-startup. It requires a valid `LANGSMITH_API_KEY` with Deployment access (or a
-`LANGGRAPH_CLOUD_LICENSE_KEY`) even when `LANGSMITH_TRACING=false`. For
-OriginTracer-only local debugging without a LangSmith key, use the manual
+This Docker-based Agent Server performs a LangGraph Deployment license check at startup. It requires a valid `LANGSMITH_API_KEY` with Deployment access (or a
+`LANGGRAPH_CLOUD_LICENSE_KEY`) even when `LANGSMITH_TRACING=false`. For OriginTracer-only local debugging without a LangSmith key, use the manual
 Uvicorn server below.
 
-Agent Server normally listens at `http://localhost:8123`. Its OpenAPI page is
-available at:
+Agent Server normally listens at `http://localhost:8123`. Its OpenAPI page is available at:
 
 ```text
 http://localhost:8123/docs
 ```
 
-The small FastAPI route supplied by this example confirms that the custom
-application was mounted and its lifespan ran:
+The small FastAPI route supplied by this example confirms that the custom application was mounted and its lifespan ran:
 
 ```bash
 curl http://localhost:8123/origintracer-example
@@ -156,10 +141,8 @@ curl http://localhost:8123/origintracer-example
 
 ## Run directly with Uvicorn
 
-For host-native experimentation without Docker or the complete Agent Server
-stack, this example includes a small FastAPI adapter. It implements only the
-stateless `/runs/wait` request used by the invocation scripts; it does not
-provide Agent Server threads, persistence, queues, streaming, or deployment
+For host-native experimentation without Docker or the complete Agent Server stack, this example includes a small FastAPI adapter. It implements only the
+stateless `/runs/wait` request used by the invocation scripts; it does not provide Agent Server threads, persistence, queues, streaming, or deployment
 features.
 
 Start it from the `applications/langgraph` directory:
@@ -174,20 +157,13 @@ uvicorn personal_assistant.manual_server:app \
     --workers 1
 ```
 
-These settings control different layers of concurrency. `--workers 1` starts
-one Uvicorn process, while `N_JOBS_PER_WORKER=1` permits only one active graph
-run in that process. If another request arrives, it waits for the current run
-to finish. This is the recommended configuration when stepping through probe
-callbacks with `pdb`.
+These settings control different layers of concurrency. `--workers 1` starts one Uvicorn process, while `N_JOBS_PER_WORKER=1` permits only one active graph run in that process. If another request arrives, it waits for the current run to finish. This is the recommended configuration when stepping through probe callbacks with `pdb`.
 
-The `--env-file .env` option loads `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, and
-`ORIGINTRACER_ENDPOINT` before Uvicorn imports the graph and constructs its
-`ChatOllama` model. Without it, the manual server does not automatically read
-`.env` and defaults to Ollama at `http://localhost:11434` and the optional
+The `--env-file .env` option loads `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, and `ORIGINTRACER_ENDPOINT` before Uvicorn imports the graph and constructs its
+`ChatOllama` model. Without it, the manual server does not automatically read `.env` and defaults to Ollama at `http://localhost:11434` and the optional
 OriginTracer backend at `http://localhost:8001`.
 
-To override an address for one server session, export it before starting
-Uvicorn; an existing server must be restarted after changing these values:
+To override an address for one server session, export it before starting Uvicorn; an existing server must be restarted after changing these values:
 
 ```bash
 export OLLAMA_BASE_URL=http://localhost:11434
@@ -208,8 +184,7 @@ For observing the relationship between an HTTP request and its LangGraph callbac
 `uvicorn.request.receive` and `uvicorn.request.complete` events around the
 LangGraph events, while leaving the normal `manual_server:app` path unchanged.
 
-This requires an application-local `probes/uvicorn_probe.py` module and both
-probes to be enabled in `origintracer.yaml`:
+This requires an application-local `probes/uvicorn_probe.py` module and both probes to be enabled in `origintracer.yaml`:
 
 ```yaml
 probes:

@@ -2,8 +2,8 @@
 
 The supervisor delegates calendar and email work to two specialist agents. Each
 specialist is exposed as a tool, which gives the supervisor freedom to request
-independent work concurrently. The tools are deliberately harmless stubs: they
-demonstrate an agent topology without creating real events or sending email.
+independent work concurrently. The tools are stubs: they demonstrate an agent
+topology without creating real events or sending email.
 
 ``supervisor_agent`` is a compiled LangGraph graph. Agent Server imports it once
 at process startup through the entry in ``langgraph.json`` and reuses it for
@@ -29,7 +29,10 @@ def create_calendar_event(
     attendees: list[str],
     location: str = "",
 ) -> str:
-    """Create a calendar event using ISO-formatted start and end datetimes."""
+    """
+    Create a calendar event using ISO-formatted start and end
+    datetimes.
+    """
     return (
         f"Event created: {title} from {start_time} to {end_time} "
         f"with {len(attendees)} attendees"
@@ -43,7 +46,10 @@ def send_email(
     body: str,
     cc: list[str] | None = None,
 ) -> str:
-    """Send an email to the supplied addresses using the generated content."""
+    """
+    Send an email to the supplied addresses using the generated
+    content.
+    """
     copied = f"; cc: {', '.join(cc)}" if cc else ""
     return f"Email sent to {', '.join(to)}; subject: {subject}{copied}"
 
@@ -54,7 +60,9 @@ def get_available_time_slots(
     date: str,
     duration_minutes: int,
 ) -> list[str]:
-    """Return available times for attendees on an ISO-formatted date."""
+    """
+    Return available times for attendees on an ISO-formatted date.
+    """
     return ["09:00", "14:00", "16:00"]
 
 
@@ -95,7 +103,10 @@ email_agent = create_agent(
 
 @tool
 def schedule_event(request: str) -> str:
-    """Schedule or check a calendar event from a natural-language request."""
+    """
+    Schedule or check a calendar event from a natural-language
+    request.
+    """
     result = calendar_agent.invoke(
         {"messages": [{"role": "user", "content": request}]}
     )
@@ -104,7 +115,9 @@ def schedule_event(request: str) -> str:
 
 @tool
 def manage_email(request: str) -> str:
-    """Compose and send an email from a natural-language request."""
+    """
+    Compose and send an email from a natural-language request.
+    """
     result = email_agent.invoke(
         {"messages": [{"role": "user", "content": request}]}
     )
