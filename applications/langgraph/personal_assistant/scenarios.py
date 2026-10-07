@@ -18,7 +18,9 @@ from personal_assistant.graph import model
 
 
 class LoopState(TypedDict, total=False):
-    """State retained while the bounded model loop advances."""
+    """
+    State retained while the bounded model loop advances.
+    """
 
     iteration: int
     last_response: str
@@ -28,7 +30,10 @@ _LOOP_ITERATIONS = 9
 
 
 def _call_model_again(state: LoopState) -> LoopState:
-    """Make one short model call and advance the deliberate loop counter."""
+    """
+    Make one short model call and advance the deliberate loop
+    counter.
+    """
     response = model.invoke(
         "Reply with the single word OK and no additional explanation."
     )
@@ -39,7 +44,9 @@ def _call_model_again(state: LoopState) -> LoopState:
 
 
 def _continue_loop(state: LoopState) -> str:
-    """Stop after crossing the loop_runaway rule's eight-call threshold."""
+    """
+    Stop after crossing the loop_runaway rule's eight-call threshold.
+    """
     return (
         "again"
         if state["iteration"] < _LOOP_ITERATIONS
@@ -61,7 +68,10 @@ loop_runaway_scenario = _loop_builder.compile(
 
 
 class LatencyState(TypedDict, total=False):
-    """Independent result fields written by the two parallel tool branches."""
+    """
+    Independent result fields written by the two parallel tool
+    branches.
+    """
 
     request: str
     fast_result: str
@@ -70,20 +80,27 @@ class LatencyState(TypedDict, total=False):
 
 @tool
 def fast_dependency(request: str) -> str:
-    """Represent a healthy low-latency dependency."""
+    """
+    Represent a healthy low-latency dependency.
+    """
     time.sleep(0.01)
     return f"Fast result for: {request}"
 
 
 @tool
 def slow_dependency(request: str) -> str:
-    """Represent a dependency whose latency dominates the agent's leaf work."""
+    """
+    Represent a dependency whose latency dominates the agent's
+    leaf work.
+    """
     time.sleep(1.0)
     return f"Slow result for: {request}"
 
 
 def _run_fast_dependency(state: LatencyState) -> LatencyState:
-    """Execute the fast side of the parallel fan-out."""
+    """
+    Execute the fast side of the parallel fan-out.
+    """
     result = fast_dependency.invoke(
         {
             "request": state.get(
@@ -95,7 +112,9 @@ def _run_fast_dependency(state: LatencyState) -> LatencyState:
 
 
 def _run_slow_dependency(state: LatencyState) -> LatencyState:
-    """Execute the deliberately slow side of the parallel fan-out."""
+    """
+    Execute the deliberately slow side of the parallel fan-out.
+    """
     result = slow_dependency.invoke(
         {
             "request": state.get(

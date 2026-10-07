@@ -10,7 +10,9 @@ from invoke import invoke_and_print
 
 
 def main() -> int:
-    """Invoke the bounded model-loop scenario through Agent Server."""
+    """
+    Invoke the bounded model-loop scenario through Agent Server.
+    """
     return invoke_and_print(
         assistant_id="loop_runaway_scenario",
         graph_input={"iteration": 0},
