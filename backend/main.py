@@ -301,7 +301,9 @@ _MAX_WORKER_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 class WorkerQueryRequest(BaseModel):
-    """One DSL query to execute against a selected live worker."""
+    """
+    One DSL query to execute against a selected live worker.
+    """
 
     query: str = Field(
         min_length=1, max_length=_MAX_WORKER_QUERY_CHARS
@@ -309,22 +311,30 @@ class WorkerQueryRequest(BaseModel):
 
 
 class WorkerUnavailableError(RuntimeError):
-    """Raised when a selected worker socket is no longer available."""
+    """
+    Raised when a selected worker socket is no longer available.
+    """
 
 
 class WorkerProtocolError(RuntimeError):
-    """Raised when a worker returns an invalid or unsafe response."""
+    """
+    Raised when a worker returns an invalid or unsafe response.
+    """
 
 
 def _pid_from_socket_path(path: str) -> str:
-    """Extract the PID encoded by an OriginTracer socket path."""
+    """
+    Extract the PID encoded by an OriginTracer socket path.
+    """
     return path.removeprefix(_SOCKET_PREFIX).removesuffix(
         _SOCKET_SUFFIX
     )
 
 
 def _socket_path_for_pid(pid: int) -> str:
-    """Construct the only socket path a client-supplied PID may select."""
+    """
+    Construct the only socket path a client-supplied PID may select.
+    """
     return f"{_SOCKET_PREFIX}{pid}{_SOCKET_SUFFIX}"
 
 

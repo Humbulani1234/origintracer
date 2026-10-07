@@ -103,7 +103,9 @@ _DEFAULT_CONTENT_LIMIT = 4000
 
 
 def _content_capture_enabled() -> bool:
-    """Return whether opt-in LLM prompt/response capture is enabled."""
+    """
+    Return whether opt-in LLM prompt/response capture is enabled.
+    """
     return os.getenv(_CONTENT_ENV, "").strip().lower() not in {
         "",
         "0",
