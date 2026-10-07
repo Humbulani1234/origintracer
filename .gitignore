@@ -26,6 +26,7 @@ build/
 *.egg-info/
 *.egg
 .eggs/
+applications/langgraph/.langgraph_api
 
 # Testing
 .pytest_cache/
