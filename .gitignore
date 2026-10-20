@@ -1,5 +1,6 @@
 origintracer.code-workspace
 origintracer.sublime-workspace
+origintracer.sublime-project
 /env
 logs/
 *.log
