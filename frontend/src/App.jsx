@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import NodeTable from "./components/NodeTable";
 import EdgeTable from "./components/EdgeTable";
 import TraceTimeline from "./components/TraceTimeline";
@@ -10,11 +10,54 @@ import GraphView from "./components/GraphView";
 import CausalView from "./components/CausalView";
 import StatusView from "./components/StatusView";
 import CausalHistory from "./components/CausalHistory";
+import ContentView from "./components/ContentView";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { api } from "./api/client";
 
-const VIEWS = ["nodes", "edges", "trace", "events", "diff",
-  "status", "graph", "causal", "history"];
+const VIEWS = [
+  "nodes",
+  "edges",
+  "trace",
+  "events",
+  "diff",
+  "status",
+  "graph",
+  "causal",
+  "history",
+  "llm_content",
+  "tool_content",
+];
+
+function workerResult(response) {
+  if (!response?.ok) {
+    throw new Error(response?.error || "Worker query failed");
+  }
+  if (response.data?.error) {
+    throw new Error(response.data.error);
+  }
+  return response.data;
+}
+
+function normalizeWorkerNodes(nodes = []) {
+  return nodes.map((node) => ({
+    ...node,
+    node_type: node.node_type ?? node.type,
+    avg_duration_ns:
+      node.avg_duration_ns ??
+      (node.avg_ms == null ? null : node.avg_ms * 1_000_000),
+  }));
+}
+
+function normalizeWorkerDiff(diff) {
+  if (!diff) return null;
+  return {
+    ...diff,
+    added_nodes: diff.added_nodes ?? [],
+    removed_nodes: diff.removed_nodes ?? [],
+    added_edges: diff.added_edges ?? diff.new_edges ?? [],
+    removed_edges: diff.removed_edges ?? [],
+  };
+}
 
 export default function App() {
   const [view, setView] = useState("nodes");
@@ -33,72 +76,213 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [backendError, setBackendError] = useState(null);
   const [workers, setWorkers] = useState([]);
+  const [workerInventoryLoaded, setWorkerInventoryLoaded] = useState(false);
+  const [selectedWorkerPid, setSelectedWorkerPid] = useState(null);
   const [causalHistory, setCausalHistory] = useState([]);
-
+  const [llmContent, setLlmContent] = useState([]);
+  const [toolContent, setToolContent] = useState([]);
 
   const refresh = useCallback(async () => {
     try {
-      const [n, e, ev, s, d, g, ca, ws, ch] = await Promise.all
-      ([
-        api.nodes(),
-        api.edges(),
-        api.events(),
-        api.status(),
-        api.diff(),
-        api.graph(),
-        api.causal(),
-        api.workers(),
-        api.causalHistory()
-      ]);
-      if (n?.data?.data?.length) setNodes(n.data.data);
-      if (e?.data?.data?.length) setEdges(e.data.data);
-      if (ev?.data?.length) setEvents(ev.data);
-      if (s) setStatus(s);
-      if (d?.data) setDiff(d.data);
-      if (g?.data?.data) setGraph(g.data.data);
-      if (ca?.data?.length) setCausal(ca.data);
-      if (ws?.data?.length) setWorkers(ws.data);
-      if (ch?.data?.length) setCausalHistory(ch.data);
-    } catch (err) {
-      console.warn("Backend unavailable:", err?.message ?? err);
-      setBackendError(err?.message ?? "Backend unavailable");
-    }
-  }, []);
+      const workerResponse = await api.workers();
+      const availableWorkers = workerResponse?.data ?? [];
+      setWorkers(availableWorkers);
+      setWorkerInventoryLoaded(true);
 
-  useEffect(() => { refresh(); }, [refresh]);
+      const selectedStillExists = availableWorkers.find(
+        (worker) => String(worker.pid) === String(selectedWorkerPid),
+      );
+      const selectedWorker = selectedStillExists ?? availableWorkers[0] ?? null;
+      const workerPid = selectedWorker ? String(selectedWorker.pid) : null;
+
+      if (workerPid !== selectedWorkerPid) {
+        setSelectedWorkerPid(workerPid);
+        // Captures belong to one live process; do not show a prior worker's
+        // prompts or tool values while the next worker is being selected.
+        setLlmContent([]);
+        setToolContent([]);
+      }
+
+      if (workerPid) {
+        const [graphResponse, eventResponse, statusResponse, diffResponse,
+          causalResponse, historyResponse] = await Promise.all([
+          api.workerQuery(workerPid, "SHOW GRAPH"),
+          api.workerQuery(workerPid, "SHOW EVENTS LIMIT 100"),
+          api.workerQuery(workerPid, "SHOW STATUS"),
+          api.workerQuery(workerPid, "DIFF"),
+          api.workerQuery(workerPid, "CAUSAL"),
+          api.causalHistory().catch(() => null),
+        ]);
+
+        const graph = workerResult(graphResponse)?.data ?? {};
+        const liveEvents = workerResult(eventResponse)?.data ?? [];
+        const liveStatus = workerResult(statusResponse)?.data ?? {};
+        const liveDiff = workerResult(diffResponse)?.data ?? null;
+        const liveCausal = workerResult(causalResponse)?.data ?? [];
+
+        setNodes(normalizeWorkerNodes(graph.nodes));
+        setEdges(graph.edges ?? []);
+        setEvents(liveEvents);
+        setStatus({ ...liveStatus, mode: "worker" });
+        setDiff(normalizeWorkerDiff(liveDiff));
+        setCausal(liveCausal);
+        setCausalHistory(historyResponse?.data ?? []);
+      } else {
+        const historyResponse = await api.causalHistory().catch(() => null);
+
+        setNodes([]);
+        setEdges([]);
+        setEvents([]);
+        setTrace((current) => current?.source === "history" ? current : null);
+        setStatus({ mode: "no-worker" });
+        setDiff(null);
+        setCausal([]);
+        setCausalHistory(historyResponse?.data ?? []);
+      }
+
+      setBackendError(null);
+    } catch (error) {
+      console.warn("Backend unavailable:", error?.message ?? error);
+      setBackendError(error?.message ?? "Backend unavailable");
+    }
+  }, [selectedWorkerPid]);
+
   useEffect(() => {
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    refresh();
   }, [refresh]);
-  
-  const runQuery = async (q) => {
-    const lower = q.toLowerCase().trim();
-    if (lower.startsWith("\\stitch") || lower.startsWith("stitch")) {
-      const id = q.split(/\s+/)[1];
-      if (!id) { setView("trace"); return; }
-      setLoading(true);
-      try {
-        const res = await api.trace(id);
-        const stages = res?.data?.data || res?.data || [];
-        if (stages.length) setTrace({ id, stages });
-        setView("trace");
-      } catch { setView("trace"); }
-      finally  { setLoading(false); }
-    } else if (lower.includes("node")) setView("nodes");
-    else if (lower.includes("edge")) setView("edges");
-    else if (lower.includes("event")) setView("events");
-    else if (lower.includes("trace")) setView("trace");
+
+  useEffect(() => {
+    const timer = setInterval(refresh, 5000);
+    return () => clearInterval(timer);
+  }, [refresh]);
+
+  const applyQueryResult = (result, query) => {
+    const metric = result?.metric;
+    const verb = result?.verb;
+
+    if (metric === "nodes") {
+      setNodes(normalizeWorkerNodes(result.data));
+      setView("nodes");
+    } else if (metric === "edges") {
+      setEdges(result.data ?? []);
+      setView("edges");
+    } else if (metric === "events") {
+      setEvents(result.data ?? []);
+      setView("events");
+    } else if (metric === "llm_content") {
+      setLlmContent(result.data ?? []);
+      setView("llm_content");
+    } else if (metric === "tool_content") {
+      setToolContent(result.data ?? []);
+      setView("tool_content");
+    } else if (metric === "graph") {
+      setNodes(normalizeWorkerNodes(result.data?.nodes));
+      setEdges(result.data?.edges ?? []);
+      setView("graph");
+    } else if (metric === "critical_path" || verb === "TRACE") {
+      setTrace({
+        id: result.trace_id ?? query.split(/\s+/)[1] ?? "trace",
+        stages: result.data ?? [],
+        source: "worker",
+      });
+      setView("trace");
+    } else if (verb === "STATUS") {
+      setStatus({ ...(result.data ?? {}), mode: "worker" });
+      setView("status");
+    } else if (verb === "DIFF") {
+      setDiff(normalizeWorkerDiff(result.data));
+      setView("diff");
+    } else if (verb === "CAUSAL") {
+      setCausal(result.data ?? []);
+      setView("causal");
+    }
   };
 
+  const runQuery = async (query) => {
+    const lower = query.toLowerCase().trim();
+    if (lower.startsWith("\\stitch") || lower.startsWith("stitch")) {
+      const id = query.split(/\s+/)[1];
+      if (!id) {
+        setView("trace");
+        return;
+      }
+      setLoading(true);
+      try {
+        const response = await api.trace(id);
+        const stages = response?.data?.data || response?.data || [];
+        setTrace({ id, stages, source: "history" });
+        setView("trace");
+        setBackendError(null);
+      } catch (error) {
+        setBackendError(error?.message ?? "Trace lookup failed");
+        setView("trace");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (selectedWorkerPid) {
+      setLoading(true);
+      try {
+        const response = await api.workerQuery(selectedWorkerPid, query);
+        applyQueryResult(workerResult(response), query);
+        setBackendError(null);
+      } catch (error) {
+        setBackendError(error?.message ?? "Worker query failed");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    setBackendError("No live OriginTracer process is available for this query");
+  };
+
+  // Content capture is intentionally user-driven. Unlike graph/events/status,
+  // it is not fetched by the five-second refresh loop: that keeps redacted
+  // prompt, response, and tool previews out of routine dashboard traffic.
+  const loadCapturedContent = async (metric) => {
+    setView(metric);
+    if (!selectedWorkerPid) {
+      setBackendError("No live OriginTracer process is available for this query");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await api.workerQuery(
+        selectedWorkerPid,
+        `SHOW ${metric} LIMIT 100`,
+      );
+      applyQueryResult(workerResult(response), `SHOW ${metric} LIMIT 100`);
+      setBackendError(null);
+    } catch (error) {
+      setBackendError(error?.message ?? "Worker query failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const selectedWorker = workers.find(
+    (worker) => String(worker.pid) === String(selectedWorkerPid),
+  );
+  const noLiveWorker = workerInventoryLoaded && workers.length === 0;
+  const showingHistoricalData = view === "history"
+    || (view === "trace" && trace?.source === "history");
   const badge = {
     nodes: `${nodes.length} nodes`,
     edges: `${edges.length} edges`,
     trace: trace ? `${trace.stages.length} stages` : "—",
     events: `${events.length} events`,
-    diff: diff ? `${(diff.added_nodes?.length || 0) + (diff.added_edges?.length || 0)} changes` : "—",
+    diff: diff
+      ? `${(diff.added_nodes?.length || 0) + (diff.added_edges?.length || 0)} changes`
+      : "—",
     graph: `${nodes.length} nodes · ${edges.length} edges`,
+    llm_content: `${llmContent.length} entries`,
+    tool_content: `${toolContent.length} entries`,
     causal: `${causal.length} patterns`,
-    status: "live",
+    status: selectedWorker ? "live" : noLiveWorker ? "no worker" : "…",
     history: `${causalHistory.length} snapshots`,
   };
 
@@ -107,75 +291,109 @@ export default function App() {
       <aside className="sidebar">
         <div className="logo">ORIGIN<span>TRACER</span></div>
         <nav className="nav">
-          {VIEWS.map(v => (
-            <div key={v}
-              className={`nav-item ${view === v ? "active" : ""}`}
-              onClick={() => setView(v)}>
+          {VIEWS.map((item) => (
+            <div
+              key={item}
+              className={`nav-item ${view === item ? "active" : ""}`}
+              onClick={() => (
+                item === "llm_content" || item === "tool_content"
+                  ? loadCapturedContent(item)
+                  : setView(item)
+              )}
+            >
               <span className="nav-dot" />
-              {v}
+              {item.replace("_", " ")}
             </div>
           ))}
         </nav>
 
-        {workers.length > 1 && (
-          <div style={{ padding: "8px 14px", borderTop: "1px solid var(--border)" }}>
-            <div style={{ fontFamily: "monospace", fontSize: 9,
-                color: "var(--muted)", marginBottom: 6, letterSpacing: "0.06em" }}>
-              WORKERS
-            </div>
-            {workers.map(w => (
-              <div key={w.pid}
-                style={{
-                  fontFamily: "monospace", fontSize: 10, padding: "3px 0",
-                  cursor: "pointer",
-                  color: "var(--muted)",
-                }}>
-                <span style={{
-                  display: "inline-block", width: 6, height: 6,
-                  borderRadius: "50%", marginRight: 6,
-                  background: "#555",
-                  verticalAlign: "middle",
-                }} />
-                pid {w.pid}
-              </div>
-            ))}
+        {workers.length > 0 && (
+          <div className="sockets">
+            <div className="socket-title">LIVE PROCESSES</div>
+            {workers.map((worker) => {
+              const active = String(worker.pid) === String(selectedWorkerPid);
+              return (
+                <button
+                  type="button"
+                  key={worker.pid}
+                  className={`worker-option ${active ? "active" : ""}`}
+                  onClick={() => setSelectedWorkerPid(String(worker.pid))}
+                  title={worker.socket}
+                >
+                  <span className="socket-dot" />
+                  pid {worker.pid}
+                </button>
+              );
+            })}
           </div>
         )}
       </aside>
 
       <div className="main">
         <div className="toolbar">
-          <span className="toolbar-title">{view}</span>
+          <span className="toolbar-title">{view.replace("_", " ")}</span>
+          {selectedWorker && (
+            <span className="worker-badge">pid {selectedWorker.pid}</span>
+          )}
           <span className="badge">{badge[view]}</span>
           {backendError && (
-            <span style={{ fontFamily:"monospace", fontSize:10,
-                color:"var(--red, #e05252)", marginLeft:"auto" }}>
-              {backendError}
-            </span>
+            <span className="backend-error">{backendError}</span>
           )}
         </div>
         <QueryBar onRun={runQuery} loading={loading} />
         <div className="content">
           <ErrorBoundary key={view}>
-            {view === "nodes" && <NodeTable nodes={nodes} />}
-            {view === "edges" && <EdgeTable edges={edges} />}
-            {view === "trace" && <TraceTimeline trace={trace} />}
-            {view === "events" && <EventLog events={events} />}
-            {view === "diff" && <DiffView diff={diff} />}
-            {view === "graph" && <GraphView nodes={nodes} edges={edges} />}
-            {view === "causal" && <CausalView causal={causal} />}
-            {view === "status" && (
-              <StatusView
-                nodes={nodes}
-                edges={edges}
-                events={events}
-                status={status}
-              />
+            {noLiveWorker && !showingHistoricalData ? (
+              <div className="no-worker-state">
+                <div className="no-worker-title">
+                  No live OriginTracer processes
+                </div>
+                <div>
+                  Start an instrumented process to expose an OriginTracer
+                  worker socket. This dashboard will select it automatically.
+                </div>
+                <div className="no-worker-history">
+                  Historical causal history and explicit \stitch queries remain
+                  available.
+                </div>
+              </div>
+            ) : (
+              <>
+                {view === "nodes" && <NodeTable nodes={nodes} />}
+                {view === "edges" && <EdgeTable edges={edges} />}
+                {view === "trace" && <TraceTimeline trace={trace} />}
+                {view === "events" && <EventLog events={events} />}
+                {view === "diff" && <DiffView diff={diff} />}
+                {view === "graph" && <GraphView nodes={nodes} edges={edges} />}
+                {view === "causal" && <CausalView causal={causal} />}
+                {view === "status" && (
+                  <StatusView
+                    nodes={nodes}
+                    edges={edges}
+                    events={events}
+                    status={status}
+                    worker={selectedWorker}
+                  />
+                )}
+                {view === "history" && <CausalHistory history={causalHistory} />}
+                {view === "llm_content" && (
+                  <ContentView kind="llm" rows={llmContent} />
+                )}
+                {view === "tool_content" && (
+                  <ContentView kind="tool" rows={toolContent} />
+                )}
+              </>
             )}
-            {view === "history" && <CausalHistory history={causalHistory} />}
           </ErrorBoundary>
-          </div>
-          <StatusBar nodes={nodes} edges={edges} events={events} status={status} />
+        </div>
+        <StatusBar
+          nodes={nodes}
+          edges={edges}
+          events={events}
+          status={status}
+          worker={selectedWorker}
+          workerInventoryLoaded={workerInventoryLoaded}
+        />
       </div>
     </div>
   );

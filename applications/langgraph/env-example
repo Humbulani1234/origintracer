@@ -1,0 +1,20 @@
+# Agent Server still requires the credentials or license appropriate to the
+# selected deployment mode. Disabling this flag prevents LangSmith tracing;
+# OriginTracer remains the observability implementation for the example.
+LANGSMITH_API_KEY=<>
+LANGSMITH_TRACING=false
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+export LANGSMITH_PROJECT="origintracer"
+
+# Must match a tool-calling model already pulled into Ollama.
+OLLAMA_MODEL=qwen3:4b
+OLLAMA_BASE_URL=http://<>:11434
+ORIGINTRACER_CAPTURE_LLM_CONTENT=1
+ORIGINTRACER_LLM_CONTENT_MAX_CHARS=4000
+ORIGINTRACER_CAPTURE_TOOL_CONTENT=1
+ORIGINTRACER_TOOL_CONTENT_MAX_CHARS=4000
+
+
+# Used by OriginTracer's optional uploader from inside the Agent Server image.
+#ORIGINTRACER_ENDPOINT=http://host.docker.internal:8001
+ORIGINTRACER_ENDPOINT=http://localhost:8001

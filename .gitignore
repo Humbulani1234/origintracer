@@ -1,5 +1,6 @@
 origintracer.code-workspace
 origintracer.sublime-workspace
+origintracer.sublime-project
 /env
 logs/
 *.log
@@ -26,6 +27,7 @@ build/
 *.egg-info/
 *.egg
 .eggs/
+applications/langgraph/.langgraph_api
 
 # Testing
 .pytest_cache/
@@ -45,6 +47,7 @@ Thumbs.db
 # OriginTracer specific
 *.db
 *.sqlite3
+applications/langgraph/.env.example
 
 # dependencies
 node_modules/
