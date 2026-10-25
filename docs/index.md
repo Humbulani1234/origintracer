@@ -103,7 +103,11 @@ OriginTracer is MIT licensed.
 
 The **rules and probes libraries** that ship with the book chapters are available at [origintracer.dev](https://origintracer.app). Each chapter covers one layer of the stack - asyncio, Django, nginx, Gunicorn, Celery, database internals - with PDB and GDB traces, and a companion `.py` rule and probe files that detects the patterns described in the chapter automatically in your running system.
 
-Four starter rules and two probes ship with the package.
+The package includes built-in probes for Django, asyncio, and LangGraph. The
+starter configuration enables Django and asyncio. Enable the LangGraph probe
+and its rules in `origintracer.yaml` when using the LangGraph application. The
+repository's `applications/langgraph/README.md` explains its Agent Server and
+Uvicorn run paths.
 
 ---
 

@@ -12,6 +12,26 @@ The `RuntimeGraph` converges to a stable topology after warmup. At 100 req/s hit
 
 Probes call `emit()` which appends to `EventBuffer` - a thread-safe bounded deque. The drain thread processes the buffer asynchronously. Request handlers never wait for graph processing.
 
+## Connect concurrent operations by span ID
+
+`trace_id` groups observations from one execution. `span_id` identifies one
+operation in that execution, and `parent_span_id` identifies the operation
+that directly caused it. The engine looks up parents by both trace and span ID.
+One parent can therefore have several children, even when their events arrive
+in a different order.
+
+The engine treats events with the same `(trace_id, span_id)` as observations
+of one operation. For example, a callback's start and finish events update one
+graph call and its duration rather than counting two calls. If a child arrives
+before its declared parent, the engine holds the relationship and connects it
+when the parent arrives. Unresolved lineage is kept for a limited time.
+
+Events without a `parent_span_id` use the sequential fallback: the most
+recent event in that trace becomes the next event's parent. This works for
+ordered event streams, but producers must provide explicit parent IDs when
+they observe concurrent branches. Arrival order alone cannot identify which
+parallel operation caused another.
+
 ## One init per process
 
 After `os.fork()`, threads do not survive. The drain thread is dead in the child. `_restart_drain_thread()` revives it. `AppConfig.ready()` is the correct and only place to call `stacktracer.init()` in a gunicorn worker - never in gunicorn hooks.
@@ -31,18 +51,24 @@ The sole data contract between probes and the engine.
 ```python
 @dataclass
 class NormalizedEvent:
-    probe: str # ProbeType - e.g. "request.entry"
-    service: str # "django", "nginx", "celery"
-    name: str # route, function, query text
-    trace_id: str # ties all events in one request
+    probe: str # event type, e.g. "request.entry"
+    service: str # e.g. "django", "nginx", "langgraph"
+    name: str # route, operation, query, or graph node
+    trace_id: str # groups observations from one execution
     timestamp: float # perf_counter() at emission
     wall_time: float # time.time() for display
-    duration_ns: Optional[int] # measured duration
-    span_id: str # OTel-compatible span id
-    parent_span_id: Optional[str] # parent span for distributed tracing
+    duration_ns: Optional[int] # measured operation duration
+    span_id: str # identity of one logical operation
+    parent_span_id: Optional[str] # direct parent operation, when known
     pid: Optional[int] # OS process id
-    metadata: Dict # probe-specific payload
+    tid: Optional[int] # OS thread id
+    metadata: Dict # probe-specific details
 ```
+
+The engine scopes a span by `(trace_id, span_id)`. A producer should reuse the
+same span ID for lifecycle observations of one operation and set the direct
+parent's ID for child operations. This is how the graph can represent multiple
+concurrent children without guessing from event arrival order.
 
 ## Factory
 

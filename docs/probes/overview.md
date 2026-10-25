@@ -32,10 +32,16 @@ Probes call `emit()` for per-request events (goes through the buffer) and `emit_
 
 ## Built-in probes
 
-Two probes ship with the open-source package:
+The package includes three built-in probes:
 
 - `django` - full probe
 - `asyncio` - `create_task` wrapper + loop tick counter
+- `langgraph` - LangChain and LangGraph callbacks, including model calls, tools,
+  graph nodes, and their parent relationships
+
+The LangGraph probe needs `langchain-core` installed. Enable it by listing
+`langgraph` under `probes` in `origintracer.yaml`. See the
+[LangGraph probe](langgraph.md) page for setup and event details.
 
 ## Advanced probe libraries
 

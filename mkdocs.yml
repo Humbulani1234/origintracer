@@ -49,11 +49,13 @@ nav:
   - Probes:
     - Overview: probes/overview.md
     - Django Probe: probes/django.md
+    - LangGraph Probe: probes/langgraph.md
     - asyncio Probe Installation: probes/asyncio/installation.md
     - asyncio Probe Architecture: probes/asyncio/architecture.md
   - Causal Rules:
     - Overview: rules/overview.md
     - Built-in Django Rules: rules/django_rules.md
+    - LangGraph Rules: rules/langgraph_rules.md
     - Built-in Asyncio Rules: rules/asyncio_rules.md
   - REPL:
     - Overview: repl/overview.md

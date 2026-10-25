@@ -42,6 +42,11 @@ new_edges_since_deployment and ":calls" in edge_key
 
 ## Running rules
 
+The package also includes LangGraph rules for repeated model calls and
+high-latency model or tool nodes. They are enabled by adding their names to
+`rules` in `origintracer.yaml`. See [LangGraph rules](langgraph_rules.md) for
+their thresholds and limits.
+
 ```
 › CAUSAL
 ```
