@@ -60,6 +60,10 @@ from typing import (
     Union,
 )
 
+from origintracer.core.worker_identity import (
+    current_worker_identity,
+)
+
 if TYPE_CHECKING:
     from origintracer.core.engine import Engine
 
@@ -605,6 +609,7 @@ def _show_status(engine: Engine) -> Dict:
     Engine health snapshot.
     """
     graph = engine.graph
+    worker_instance_id, worker_pid = current_worker_identity()
     tracker = getattr(engine, "tracker", None)
     started = getattr(engine, "_started_at", None)
     event_log = getattr(engine, "_event_log", [])
@@ -634,8 +639,9 @@ def _show_status(engine: Engine) -> Dict:
         "verb": "STATUS",
         "data": {
             # Process
-            "pid": os.getpid(),
-            "socket": f"/tmp/origintracer-{os.getpid()}.sock",
+            "pid": worker_pid,
+            "worker_instance_id": worker_instance_id,
+            "socket": f"/tmp/origintracer-{worker_pid}.sock",
             "uptime_s": uptime_s,
             "uptime": uptime_human,
             # Graph

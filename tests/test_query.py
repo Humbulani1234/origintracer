@@ -277,6 +277,8 @@ class TestQueryExecutor:
         result = self._run("SHOW status", engine)
         data = result.get("data", result)
         assert "pid" in data
+        assert "worker_instance_id" in data
+        assert data["worker_instance_id"]
         assert "uptime_s" in data
 
     def test_show_active_returns_list(self, engine):
