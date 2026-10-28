@@ -69,6 +69,7 @@ logger = logging.getLogger("origintracer.fastapi")
 
 class DeploymentRequest(BaseModel):
     label: Optional[str] = None
+    worker_pid: str
 
 
 class CausalEvaluationRequest(BaseModel):
@@ -131,6 +132,9 @@ app.add_middleware(
 _graphs: Dict[tuple[str, str], Any] = {}
 _snapshot_metadata: Dict[tuple[str, str], Dict[str, Any]] = {}
 _graphs_lock = threading.Lock()
+# PID remains the selector for event history; graph state is keyed by instance ID.
+_active_pid: Dict[str, str] = {}
+_active_pid_lock = threading.Lock()
 
 # Storage repository - set in _init_repository() at startup.
 # Implements insert_event(), insert_snapshot(), get_latest_snapshot(),
@@ -537,6 +541,45 @@ def query_worker(
     }
 
 
+@app.post("/api/v1/workers/select")
+def select_worker(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Select a worker PID for event history and return its latest instance."""
+    customer_id = _authenticate(authorization)
+    worker_pid = str(body.get("worker_pid", ""))
+    if not worker_pid.isdigit() or int(worker_pid) < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A positive worker_pid is required",
+        )
+
+    matches = [
+        (instance_id, metadata)
+        for (
+            owner,
+            instance_id,
+        ), metadata in _snapshot_metadata.items()
+        if owner == customer_id
+        and str(metadata.get("worker_pid")) == worker_pid
+    ]
+    if not matches:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No snapshot found for worker PID {worker_pid}",
+        )
+    instance_id, _ = max(
+        matches, key=lambda item: item[1].get("received_at") or 0
+    )
+    with _active_pid_lock:
+        _active_pid[customer_id] = worker_pid
+    return {
+        "selected": worker_pid,
+        "worker_instance_id": instance_id,
+    }
+
+
 def get_repository() -> Any:
     return _repository
 
@@ -603,6 +646,10 @@ async def receive_snapshot(
                 "node_count": len(graph._nodes),
                 "edge_count": len(graph._edge_index),
             }
+        with _active_pid_lock:
+            _active_pid.setdefault(
+                customer_id, str(worker_pid_header)
+            )
         # Persist to storage - survives FastAPI restarts
         repository.insert_snapshot(
             customer_id=customer_id,
@@ -648,6 +695,9 @@ async def receive_graph_diff(
     worker_instance_id_header: Optional[str] = Header(
         None, alias="X-OriginTracer-Worker-Instance-ID"
     ),
+    worker_pid_header: Optional[int] = Header(
+        None, alias="X-OriginTracer-Worker-PID"
+    ),
     repository: Any = Depends(get_repository),
 ) -> Dict:
     """
@@ -657,8 +707,16 @@ async def receive_graph_diff(
     worker_instance_id = _require_instance_id(
         worker_instance_id_header
     )
+    if not worker_pid_header or worker_pid_header < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A positive X-OriginTracer-Worker-PID is required",
+        )
     repository.insert_graph_diff(
-        customer_id, worker_instance_id, body.model_dump()
+        customer_id,
+        worker_instance_id,
+        body.model_dump(),
+        str(worker_pid_header),
     )
 
     logger.info(
@@ -711,11 +769,19 @@ async def ingest_events(
 
     stored = 0
     errors = 0
+    worker_pid = payload.get("worker_pid")
+    if worker_pid is not None:
+        with _active_pid_lock:
+            _active_pid.setdefault(customer_id, str(worker_pid))
     for raw in payload.get("events", []):
         try:
             raw.setdefault("metadata", {})[
                 "customer_id"
             ] = customer_id
+            if worker_pid is not None:
+                raw["metadata"].setdefault(
+                    "worker_pid", str(worker_pid)
+                )
             from origintracer.core.event_schema import (
                 NormalizedEvent,
             )
@@ -746,10 +812,13 @@ def get_recent_events(
     trace_id: Optional[str] = None,
     probe: Optional[str] = None,
     service: Optional[str] = None,
+    worker_pid: Optional[str] = None,
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ):
-    _authenticate(authorization)
+    customer_id = _authenticate(authorization)
+    with _active_pid_lock:
+        selected_pid = worker_pid or _active_pid.get(customer_id)
 
     if repository is None:
         raise HTTPException(
@@ -758,6 +827,8 @@ def get_recent_events(
         )
 
     events = repository.query_events(
+        customer_id=customer_id,
+        worker_pid=selected_pid,
         trace_id=trace_id,
         probe=probe,
         service=service,
@@ -822,6 +893,7 @@ async def causal_history(
     repository: InMemoryRepository = Depends(get_repository),
 ):
     customer_id = _authenticate(authorization)
+    worker_instance_id = _require_instance_id(worker_instance_id)
     return {
         "data": repository.get_causal_history(
             customer_id, worker_instance_id, limit
@@ -900,6 +972,7 @@ def _evaluate_causal_rules(
                 ),
                 timestamp=d.get("timestamp", time.time()),
                 label=d.get("label"),
+                worker_pid=d.get("worker_pid"),
             )
         )
     # rules registered once at startup in lifespan
@@ -909,11 +982,17 @@ def _evaluate_causal_rules(
     matches = registry.evaluate(graph, temporal, tags=tag_list)
     # persist to storage
     if matches:
+        snapshot_meta = _snapshot_metadata.get(
+            (customer_id, worker_instance_id), {}
+        )
         repository.save_causal_matches(
             customer_id=customer_id,
             worker_instance_id=worker_instance_id,
             matches=[m.to_dict() for m in matches],
             timestamp=time.time(),
+            worker_pid=str(
+                snapshot_meta.get("worker_pid", "unknown")
+            ),
         )
     return {
         "match_count": len(matches),
@@ -991,7 +1070,9 @@ async def get_trace(
     """
     from origintracer.core.event_schema import ProbeTypes
 
-    _authenticate(authorization)
+    customer_id = _authenticate(authorization)
+    with _active_pid_lock:
+        selected_pid = _active_pid.get(customer_id)
     # pull events from repository instead of _event_log
     if repository is None:
         raise HTTPException(
@@ -999,7 +1080,10 @@ async def get_trace(
             detail="No storage backend configured - cannot retrieve traces",
         )
     events = repository.query_events(
-        trace_id=trace_id, limit=1000
+        customer_id=customer_id,
+        worker_pid=selected_pid,
+        trace_id=trace_id,
+        limit=1000,
     )
 
     # repository returns dicts, sort by timestamp
@@ -1027,7 +1111,7 @@ async def get_trace(
     total_ms = 0.0
     for e in filtered:
         ts = e.get("timestamp")
-        duration_ms = (
+        duration_ms: Optional[float] = (
             round((ts - last_ts) * 1000, 3)
             if last_ts and ts
             else None
@@ -1072,9 +1156,17 @@ async def mark_deployment_endpoint(
             status_code=400,
             detail="A positive X-OriginTracer-Worker-PID is required",
         )
+    if str(worker_pid_header) != str(body.worker_pid):
+        raise HTTPException(
+            status_code=400,
+            detail="Deployment body worker_pid must match the process header",
+        )
     if repository is not None:
         repository.insert_deployment_marker(
-            customer_id, worker_instance_id, body.label
+            customer_id,
+            worker_instance_id,
+            body.label,
+            str(worker_pid_header),
         )
 
     logger.info(

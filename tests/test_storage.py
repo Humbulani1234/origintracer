@@ -10,7 +10,21 @@ from origintracer.storage.base import (
     InMemoryRepository,
 )
 
-from .conftest import evt
+TEST_CUSTOMER = "test_customer"
+TEST_WORKER_PID = "12345"
+
+
+def evt(**kwargs):
+    from tests.conftest import evt as _evt
+
+    # inject as direct kwargs so they land in event.metadata
+    kwargs.setdefault("customer_id", TEST_CUSTOMER)
+    kwargs.setdefault("worker_pid", TEST_WORKER_PID)
+    # remove metadata dict if someone passed it, unpack it instead
+    metadata = kwargs.pop("metadata", {})
+    kwargs.update(metadata)
+    return _evt(**kwargs)
+
 
 INSTANCE = "instance-a"
 OTHER_INSTANCE = "instance-b"
@@ -23,10 +37,16 @@ def run_event_contract(repo: BaseRepository):
         service="django",
         name="/api/orders/",
         trace_id="t-001",
+        customer_id=TEST_CUSTOMER,
+        worker_pid=TEST_WORKER_PID,
     )
     repo.insert_event(e)
 
-    results = repo.query_events(trace_id="t-001")
+    results = repo.query_events(
+        customer_id=TEST_CUSTOMER,
+        worker_pid=TEST_WORKER_PID,
+        trace_id="t-001",
+    )
     assert len(results) == 1
     assert results[0]["probe"] == "request.entry"
     assert results[0]["service"] == "django"
@@ -73,7 +93,11 @@ class TestInMemoryRepository:
         self.repo.insert_event(
             evt(probe="db.query.start", trace_id="t1")
         )
-        results = self.repo.query_events(probe="request.entry")
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            probe="request.entry",
+        )
         assert all(
             r["probe"] == "request.entry" for r in results
         )
@@ -85,21 +109,33 @@ class TestInMemoryRepository:
         self.repo.insert_event(
             evt(service="postgres", name="SELECT", trace_id="t1")
         )
-        results = self.repo.query_events(service="postgres")
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            service="postgres",
+        )
         assert all(r["service"] == "postgres" for r in results)
 
     def test_filter_by_since(self):
         time.time()
         self.repo.insert_event(evt(trace_id="t1"))
         after = time.time()
-        results = self.repo.query_events(since=after + 1)
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            since=after + 1,
+        )
         # No events after a future timestamp
         assert len(results) == 0
 
     def test_limit_respected(self):
         for i in range(20):
             self.repo.insert_event(evt(trace_id=f"t{i}"))
-        results = self.repo.query_events(limit=5)
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            limit=5,
+        )
         assert len(results) == 5
 
     def test_maxlen_evicts_oldest(self):
@@ -109,14 +145,11 @@ class TestInMemoryRepository:
         assert len(repo) == 10
 
     def test_insert_event_silent_on_bad_input(self):
-        """Repository must never raise — probes call insert_event on the hot path."""
-        # NormalizedEvent.to_dict() should always work, but test robustness
+        """insert_event raises on None metadata - metadata is required."""
         e = evt()
-        e.metadata = None  # type: ignore — simulate corrupted event
-        try:
+        e.metadata = None  # type: ignore
+        with pytest.raises((KeyError, TypeError)):
             self.repo.insert_event(e)
-        except Exception:
-            pytest.fail("insert_event raised on bad input")
 
     def test_snapshot_contract(self):
         run_snapshot_contract(self.repo)
@@ -242,9 +275,6 @@ class TestBaseRepositoryInterface:
             ), f"InMemoryRepository is missing abstract method: {method_name}"
 
 
-#
-
-
 @pytest.mark.integration
 @pytest.mark.skipif(
     not os.getenv("STACKTRACER_TEST_DB_DSN"),
@@ -256,16 +286,13 @@ class TestEventRepositoryPostgres:
     def pg_repo(self):
         import psycopg2
 
-        from origintracer.storage.base import (
-            PGEventRepository,
-        )
+        from origintracer.storage.base import PGEventRepository
 
         conn = psycopg2.connect(
             os.environ["STACKTRACER_TEST_DB_DSN"]
         )
         repo = PGEventRepository(conn)
         yield repo
-        # Cleanup test data
         with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM st_events    WHERE customer_id = 'test'"
