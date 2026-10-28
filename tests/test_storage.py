@@ -26,6 +26,10 @@ def evt(**kwargs):
     return _evt(**kwargs)
 
 
+INSTANCE = "instance-a"
+OTHER_INSTANCE = "instance-b"
+
+
 def run_event_contract(repo: BaseRepository):
     """Every backend must satisfy this contract."""
     e = evt(
@@ -53,16 +57,14 @@ def run_snapshot_contract(repo: BaseRepository):
     data = b"\x82\xa5nodes\x91\xa3foo"  # fake msgpack bytes
     repo.insert_snapshot(
         customer_id="acme",
-        worker_pid=TEST_WORKER_PID,
+        worker_instance_id=INSTANCE,
+        worker_pid=123,
         data=data,
         content_type="application/msgpack",
         node_count=42,
         edge_count=17,
     )
-    row = repo.get_latest_snapshot(
-        customer_id="acme",
-        worker_pid=TEST_WORKER_PID,
-    )
+    row = repo.get_latest_snapshot("acme", INSTANCE)
     assert row is not None
     assert row["data"] == data
     assert row["content_type"] == "application/msgpack"
@@ -71,9 +73,7 @@ def run_snapshot_contract(repo: BaseRepository):
 
 def run_marker_contract(repo: BaseRepository):
     repo.insert_deployment_marker(
-        customer_id="acme",
-        worker_pid=TEST_WORKER_PID,
-        label="deploy:v1.0.0",
+        "acme", INSTANCE, "deploy:v1.0.0"
     )
     # No query API for markers — just verify it doesn't raise
 
@@ -158,58 +158,78 @@ class TestInMemoryRepository:
         self,
     ):
         assert (
-            self.repo.get_latest_snapshot(
-                customer_id=TEST_CUSTOMER,
-                worker_pid=TEST_WORKER_PID,
-            )
+            self.repo.get_latest_snapshot("nobody", INSTANCE)
             is None
         )
 
     def test_snapshot_overwrites_per_customer(self):
         """Only the most recent snapshot per customer is retained."""
         self.repo.insert_snapshot(
-            customer_id="acme",
-            worker_pid=TEST_WORKER_PID,
-            data=b"first",
-            content_type="application/msgpack",
+            "acme",
+            INSTANCE,
+            123,
+            b"first",
+            "application/msgpack",
         )
         self.repo.insert_snapshot(
-            customer_id="acme",
-            worker_pid=TEST_WORKER_PID,
-            data=b"second",
-            content_type="application/msgpack",
+            "acme",
+            INSTANCE,
+            123,
+            b"second",
+            "application/msgpack",
         )
-        row = self.repo.get_latest_snapshot(
-            customer_id="acme",
-            worker_pid=TEST_WORKER_PID,
-        )
+        row = self.repo.get_latest_snapshot("acme", INSTANCE)
         assert row["data"] == b"second"
+
+    def test_snapshots_are_isolated_per_process_instance(self):
+        self.repo.insert_snapshot(
+            "acme", INSTANCE, 123, b"worker-a"
+        )
+        self.repo.insert_snapshot(
+            "acme", OTHER_INSTANCE, 456, b"worker-b"
+        )
+        assert (
+            self.repo.get_latest_snapshot("acme", INSTANCE)[
+                "data"
+            ]
+            == b"worker-a"
+        )
+        assert (
+            self.repo.get_latest_snapshot(
+                "acme", OTHER_INSTANCE
+            )["data"]
+            == b"worker-b"
+        )
+        assert {
+            row["worker_instance_id"]
+            for row in self.repo.list_latest_snapshots("acme")
+        } == {INSTANCE, OTHER_INSTANCE}
 
     def test_snapshots_isolated_per_customer(self):
         self.repo.insert_snapshot(
-            customer_id="acme",
-            worker_pid=TEST_WORKER_PID,
-            data=b"acme-data",
-            content_type="application/msgpack",
+            "acme",
+            INSTANCE,
+            123,
+            b"acme-data",
+            "application/msgpack",
         )
         self.repo.insert_snapshot(
-            customer_id="other",
-            worker_pid=TEST_WORKER_PID,
-            data=b"other-data",
-            content_type="application/msgpack",
+            "other",
+            INSTANCE,
+            456,
+            b"other-data",
+            "application/msgpack",
         )
         assert (
-            self.repo.get_latest_snapshot(
-                customer_id="acme",
-                worker_pid=TEST_WORKER_PID,
-            )["data"]
+            self.repo.get_latest_snapshot("acme", INSTANCE)[
+                "data"
+            ]
             == b"acme-data"
         )
         assert (
-            self.repo.get_latest_snapshot(
-                customer_id="other",
-                worker_pid=TEST_WORKER_PID,
-            )["data"]
+            self.repo.get_latest_snapshot("other", INSTANCE)[
+                "data"
+            ]
             == b"other-data"
         )
 
@@ -218,18 +238,17 @@ class TestInMemoryRepository:
 
     def test_multiple_markers_stored(self):
         self.repo.insert_deployment_marker(
-            customer_id="acme",
-            worker_pid=TEST_WORKER_PID,
-            label="deploy:v1",
+            "acme", INSTANCE, "deploy:v1"
         )
         self.repo.insert_deployment_marker(
-            customer_id="acme",
-            worker_pid=TEST_WORKER_PID,
-            label="deploy:v2",
+            "acme", INSTANCE, "deploy:v2"
         )
-        assert (
-            len(self.repo._markers["acme"][TEST_WORKER_PID]) == 2
-        )
+
+        # Check the number of markers for the 'acme' customer specifically
+        assert len(self.repo._markers[("acme", INSTANCE)]) == 2
+
+
+#
 
 
 class TestBaseRepositoryInterface:
@@ -297,21 +316,24 @@ class TestEventRepositoryPostgres:
         self, pg_repo
     ):
         pg_repo.insert_snapshot(
-            customer_id="test",
-            worker_pid=TEST_WORKER_PID,
-            data=b"v1",
-            content_type="application/msgpack",
+            "test",
+            INSTANCE,
+            123,
+            b"v1",
+            "application/msgpack",
             node_count=10,
         )
         pg_repo.insert_snapshot(
-            customer_id="test",
-            worker_pid=TEST_WORKER_PID,
-            data=b"v2",
-            content_type="application/msgpack",
+            "test",
+            INSTANCE,
+            123,
+            b"v2",
+            "application/msgpack",
             node_count=20,
         )
-        row = pg_repo.get_latest_snapshot(
-            customer_id="test",
-            worker_pid=TEST_WORKER_PID,
-        )
-        assert row["data"] in (b"v1", b"v2")
+        row = pg_repo.get_latest_snapshot("test", INSTANCE)
+        # PostgreSQL returns most recent by received_at DESC
+        assert row["data"] in (
+            b"v1",
+            b"v2",
+        )  # either could be latest depending on timing
