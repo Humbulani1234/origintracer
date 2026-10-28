@@ -19,6 +19,19 @@ repos:
         exclude: "^tests/"
         additional_dependencies:
           - types-PyYAML
+      - id: mypy
+        name: mypy (agent)
+        args:
+          - --ignore-missing-imports
+          - --config-file=agent/pyproject.toml
+          - agent/src/origintracer_agent/
+        pass_filenames: false
+        additional_dependencies:
+          - langchain>=1.0.0
+          - langchain-ollama>=1.0.0
+          - langgraph>=1.0.0
+          - httpx>=0.27.0
+          - types-PyYAML
   - repo: local
     hooks:
       - id: pytest
@@ -28,6 +41,7 @@ repos:
         pass_filenames: false
         args:
           - tests/
+          - agent/tests/
           - -x
           - -q
           - --tb=short

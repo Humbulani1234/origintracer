@@ -85,11 +85,13 @@ are sent every `snapshot_interval` seconds (default 15).
 |--------|------|-------------|
 | `POST` | `/api/v1/events` | Receive probe events from agent (msgpack or JSON) |
 | `POST` | `/api/v1/graph/snapshot` | Receive serialised RuntimeGraph from agent |
-| `GET`  | `/api/v1/status` | Snapshot metadata and storage info |
-| `GET`  | `/api/v1/graph` | Full graph, optionally filtered by `?service=` or `?system=` |
+| `GET`  | `/api/v1/snapshots` | Latest stored snapshot metadata for each worker instance |
+| `GET`  | `/api/v1/snapshots/{worker_instance_id}` | Graph and metadata for one process instance |
+| `GET`  | `/api/v1/status?worker_instance_id=...` | Snapshot metadata for one process instance |
+| `GET`  | `/api/v1/graph?worker_instance_id=...` | Full graph for one process instance; optional `service` / `system` filters |
 | `POST` | `/api/v1/query` | Execute DSL query — `{"query": "SHOW nodes"}` |
-| `GET`  | `/api/v1/hotspots` | Top N nodes by call count — `?top=10` |
-| `GET`  | `/api/v1/causal` | Run causal rules — `?tags=latency,async` |
+| `GET`  | `/api/v1/hotspots?worker_instance_id=...` | Top N nodes by call count for one process instance |
+| `GET`  | `/api/v1/causal?worker_instance_id=...` | Run causal rules for one process instance |
 | `GET`  | `/api/v1/traces/{id}` | Critical path for a trace (requires event storage) |
 | `POST` | `/api/v1/deployment` | Mark a deployment `{"label": "deployment"}` |
 | `GET`  | `/health` | Liveness probe |
@@ -125,9 +127,10 @@ path appears in `discover_sockets()`.
 
 React automatically selects the first live process, preserves the selection
 while that PID remains available, and falls back to another live process if it
-exits. When no local socket is available, it clears process-owned data and
-displays an explicit `No live OriginTracer processes` state. It does not show
-a previously uploaded snapshot as though that snapshot were a live process.
+exits. When no local socket is available, it clears live-process data and
+displays an explicit `No live OriginTracer processes` state. A saved snapshot
+can be selected separately; the dashboard labels it as a snapshot rather than
+a live process.
 
 Persistence-backed features remain separate: causal history can still be
 browsed, and an explicit `\\stitch <trace_id>` lookup can still retrieve a
@@ -137,11 +140,16 @@ This workflow requires FastAPI to share the instrumented processes' `/tmp` and
 PID namespace. It is intended for the local/live inspection surface represented
 by the existing REPL.
 
-## Future work
+## Process-scoped snapshots
 
-Live worker selection does not require changing the uploader or persistence model. In future we intend to add durable per-process attribution by:
+Each OriginTracer process generates a stable `worker_instance_id` and reports it
+with its OS PID. Snapshot, diff, deployment-marker, and causal-history records
+are scoped to that instance. The PID is display metadata; the instance ID is
+the storage key because PIDs can be reused. Snapshot uploads must include both
+`X-OriginTracer-Worker-Instance-ID` and `X-OriginTracer-Worker-PID` headers.
 
-1. stamping event batches, graph snapshots, and diffs with the uploader PID;
-2. keying backend graphs by `(customer_id, pid)`;
-3. storing the PID with snapshots and diffs; and
-4. adding PID filters to historical events, traces, and causal history.
+The React dashboard lists live processes separately from saved snapshots. A
+saved snapshot is selected by instance ID and can be read after its process has
+exited. Snapshot-backed graph endpoints require `worker_instance_id`; they do
+not choose a customer's newest process implicitly. The live worker query API
+continues to select by PID and query the process socket directly.

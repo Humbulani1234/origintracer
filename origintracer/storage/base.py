@@ -42,6 +42,8 @@ class BaseRepository(ABC):
     def insert_snapshot(
         self,
         customer_id: str,
+        worker_instance_id: str,
+        worker_pid: int,
         data: bytes,
         content_type: str = "application/msgpack",
         node_count: int = 0,
@@ -59,12 +61,20 @@ class BaseRepository(ABC):
     def get_latest_snapshot(
         self,
         customer_id: str,
+        worker_instance_id: str,
     ) -> Optional[Dict[str, Any]]:
         """
         Return the latest snapshot for this customer, or None.
         Return dict keys: data (bytes), content_type (str), received_at (float).
         Called by FastAPI on startup to restore graph without waiting for agent.
         """
+        ...
+
+    @abstractmethod
+    def list_latest_snapshots(
+        self, customer_id: str
+    ) -> List[Dict[str, Any]]:
+        """Return one latest snapshot record per worker instance."""
         ...
 
     @abstractmethod
@@ -76,7 +86,10 @@ class BaseRepository(ABC):
 
     @abstractmethod
     def insert_deployment_marker(
-        self, customer_id: str, label: str
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: str,
     ) -> None:
         """
         Store a deployment marker with the current timestamp.
@@ -85,7 +98,10 @@ class BaseRepository(ABC):
 
     @abstractmethod
     def insert_graph_diff(
-        self, customer_id: str, diff: Dict
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        diff: Dict,
     ) -> None:
         """
         Store one graph diff snapshot from the agent.
@@ -96,6 +112,7 @@ class BaseRepository(ABC):
     def save_causal_matches(
         self,
         customer_id: str,
+        worker_instance_id: str,
         matches: List[Dict],
         timestamp: float,
     ) -> None:
@@ -108,6 +125,7 @@ class BaseRepository(ABC):
     def get_causal_history(
         self,
         customer_id: str,
+        worker_instance_id: str,
         limit: int = 50,
     ) -> List[Dict]:
         """
@@ -142,32 +160,39 @@ _PG_CREATE_SNAPSHOTS = """
 CREATE TABLE IF NOT EXISTS st_snapshots (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL,
+    worker_instance_id TEXT,
+    worker_pid INT,
     received_at DOUBLE PRECISION NOT NULL,
     content_type TEXT NOT NULL DEFAULT 'application/msgpack',
     node_count INT,
     edge_count INT,
     data BYTEA NOT NULL
 );
+ALTER TABLE st_snapshots ADD COLUMN IF NOT EXISTS worker_instance_id TEXT;
+ALTER TABLE st_snapshots ADD COLUMN IF NOT EXISTS worker_pid INT;
+UPDATE st_snapshots SET worker_instance_id = 'legacy-' || id::text
+    WHERE worker_instance_id IS NULL;
+ALTER TABLE st_snapshots ALTER COLUMN worker_instance_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_st_snapshots_customer
-    ON st_snapshots (customer_id, received_at DESC);
+    ON st_snapshots (customer_id, worker_instance_id, received_at DESC);
 """
 
 _PG_CREATE_MARKERS = """
 CREATE TABLE IF NOT EXISTS st_markers (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL,
+    worker_instance_id TEXT,
     label TEXT NOT NULL,
     created_at DOUBLE PRECISION NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_st_markers_customer
-    ON st_markers (customer_id, created_at DESC);
 """
 
 
 _PG_CREATE_GRAPH_DIFFS = """
-CREATE TABLE graph_diffs (
+CREATE TABLE IF NOT EXISTS graph_diffs (
     id SERIAL PRIMARY KEY,
     customer_id VARCHAR(100) NOT NULL,
+    worker_instance_id TEXT,
     snapshot_time TIMESTAMPTZ DEFAULT NOW(),
     added_nodes JSONB,
     removed_nodes JSONB,
@@ -178,14 +203,14 @@ CREATE TABLE graph_diffs (
 """
 
 _PG_CREATE_CAUSAL_RULES = """
-CREATE TABLE causal_matches (
+CREATE TABLE IF NOT EXISTS causal_matches (
     id SERIAL PRIMARY KEY,
     customer_id VARCHAR(255) NOT NULL,
+    worker_instance_id TEXT,
     timestamp DOUBLE PRECISION NOT NULL,
     matches JSONB NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_causal_customer ON causal_matches(customer_id, timestamp DESC);
 """
 
 
@@ -204,7 +229,90 @@ class PGEventRepository(BaseRepository):
             cur.execute(_PG_CREATE_SNAPSHOTS)
             cur.execute(_PG_CREATE_MARKERS)
             cur.execute(_PG_CREATE_GRAPH_DIFFS)
+            cur.execute(
+                "ALTER TABLE st_markers ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
+            )
+            cur.execute(
+                "UPDATE st_markers SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
+            )
+            cur.execute(
+                "ALTER TABLE st_markers ALTER COLUMN worker_instance_id SET NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_st_markers_customer ON st_markers (customer_id, worker_instance_id, created_at DESC)"
+            )
+            cur.execute(
+                "ALTER TABLE graph_diffs ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
+            )
+            cur.execute(
+                "UPDATE graph_diffs SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
+            )
+            cur.execute(
+                "ALTER TABLE graph_diffs ALTER COLUMN worker_instance_id SET NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_graph_diffs_worker ON graph_diffs (customer_id, worker_instance_id, snapshot_time DESC)"
+            )
+            cur.execute(_PG_CREATE_CAUSAL_RULES)
+            cur.execute(
+                "ALTER TABLE causal_matches ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
+            )
+            cur.execute(
+                "UPDATE causal_matches SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
+            )
+            cur.execute(
+                "ALTER TABLE causal_matches ALTER COLUMN worker_instance_id SET NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_causal_worker ON causal_matches (customer_id, worker_instance_id, timestamp DESC)"
+            )
         self._conn.commit()
+
+    def get_diffs(
+        self, customer_id: str, worker_instance_id: str
+    ) -> List[Dict[str, Any]]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label FROM graph_diffs WHERE customer_id=%s AND worker_instance_id=%s ORDER BY snapshot_time DESC LIMIT 500",
+                (customer_id, worker_instance_id),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "added_nodes": r[0] or [],
+                "removed_nodes": r[1] or [],
+                "added_edges": r[2] or [],
+                "removed_edges": r[3] or [],
+                "timestamp": (
+                    r[4].timestamp() if r[4] else time.time()
+                ),
+                "label": r[5],
+            }
+            for r in rows
+        ]
+
+    def get_label_diff(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label FROM graph_diffs WHERE customer_id=%s AND worker_instance_id=%s AND label IS NOT DISTINCT FROM %s ORDER BY snapshot_time DESC LIMIT 1",
+                (customer_id, worker_instance_id, label),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "added_nodes": row[0] or [],
+            "removed_nodes": row[1] or [],
+            "added_edges": row[2] or [],
+            "removed_edges": row[3] or [],
+            "timestamp": row[4].timestamp() if row[4] else None,
+            "label": row[5],
+        }
 
     def insert_event(self, event: NormalizedEvent) -> None:
         try:
@@ -304,6 +412,8 @@ class PGEventRepository(BaseRepository):
     def insert_snapshot(
         self,
         customer_id: str,
+        worker_instance_id: str,
+        worker_pid: int,
         data: bytes,
         content_type: str = "application/msgpack",
         node_count: int = 0,
@@ -314,12 +424,14 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     INSERT INTO st_snapshots
-                        (customer_id, received_at, content_type,
+                        (customer_id, worker_instance_id, worker_pid, received_at, content_type,
                          node_count, edge_count, data)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         customer_id,
+                        worker_instance_id,
+                        worker_pid,
                         time.time(),
                         content_type,
                         node_count,
@@ -335,18 +447,19 @@ class PGEventRepository(BaseRepository):
     def get_latest_snapshot(
         self,
         customer_id: str,
+        worker_instance_id: str,
     ) -> Optional[Dict[str, Any]]:
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT data, content_type, received_at
+                    SELECT data, content_type, received_at, worker_pid, worker_instance_id, node_count, edge_count
                     FROM   st_snapshots
-                    WHERE  customer_id = %s
+                    WHERE  customer_id = %s AND worker_instance_id = %s
                     ORDER  BY received_at DESC
                     LIMIT  1
                     """,
-                    (customer_id,),
+                    (customer_id, worker_instance_id),
                 )
                 row = cur.fetchone()
             if row is None:
@@ -357,6 +470,10 @@ class PGEventRepository(BaseRepository):
                 ),  # psycopg2 returns memoryview
                 "content_type": row[1],
                 "received_at": row[2],
+                "worker_pid": row[3],
+                "worker_instance_id": row[4],
+                "node_count": row[5],
+                "edge_count": row[6],
             }
         except Exception as exc:
             logger.error(
@@ -364,16 +481,47 @@ class PGEventRepository(BaseRepository):
             )
             return None
 
+    def list_latest_snapshots(
+        self, customer_id: str
+    ) -> List[Dict[str, Any]]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (worker_instance_id) worker_instance_id, worker_pid,
+                       data, content_type, received_at, node_count, edge_count
+                FROM st_snapshots WHERE customer_id = %s
+                ORDER BY worker_instance_id, received_at DESC
+            """,
+                (customer_id,),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "worker_instance_id": r[0],
+                "worker_pid": r[1],
+                "data": bytes(r[2]),
+                "content_type": r[3],
+                "received_at": r[4],
+                "node_count": r[5],
+                "edge_count": r[6],
+            }
+            for r in rows
+        ]
+
     def insert_graph_diff(
-        self, customer_id: str, diff: Dict
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        diff: Dict,
     ) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO graph_diffs
-                (customer_id, added_nodes, removed_nodes, added_edges, removed_edges, label)
-                VALUES (%s, %s, %s, %s, %s, %s)""",
+                (customer_id, worker_instance_id, added_nodes, removed_nodes, added_edges, removed_edges, label)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                 (
                     customer_id,
+                    worker_instance_id,
                     json.dumps(
                         list(diff.get("added_nodes", []))
                     ),
@@ -391,17 +539,25 @@ class PGEventRepository(BaseRepository):
             )
         self._conn.commit()
 
-    def insert_marker(
-        self, customer_id: str, label: str
+    def insert_deployment_marker(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: str,
     ) -> None:
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_markers (customer_id, label, created_at)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO st_markers (customer_id, worker_instance_id, label, created_at)
+                    VALUES (%s, %s, %s, %s)
                     """,
-                    (customer_id, label, time.time()),
+                    (
+                        customer_id,
+                        worker_instance_id,
+                        label,
+                        time.time(),
+                    ),
                 )
             self._conn.commit()
         except Exception as exc:
@@ -409,26 +565,37 @@ class PGEventRepository(BaseRepository):
             self._safe_rollback()
 
     def save_causal_matches(
-        self, customer_id, matches, timestamp
+        self, customer_id, worker_instance_id, matches, timestamp
     ):
-        self._conn.execute(
-            """
-            INSERT INTO causal_matches (customer_id, timestamp, label, matches)
-            VALUES (%s, %s, %s, %s)
-        """,
-            (customer_id, timestamp, label, json.dumps(matches)),
-        )
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO causal_matches (customer_id, worker_instance_id, timestamp, matches) VALUES (%s, %s, %s, %s)",
+                (
+                    customer_id,
+                    worker_instance_id,
+                    timestamp,
+                    json.dumps(matches),
+                ),
+            )
+        self._conn.commit()
 
-    def get_causal_history(self, customer_id, limit=50):
-        rows = self._conn.execute(
-            """
-            SELECT timestamp, label, matches FROM causal_matches
-            WHERE customer_id = %s
-            ORDER BY timestamp DESC LIMIT %s
-        """,
-            (customer_id, limit),
-        )
-        return [dict(r) for r in rows]
+    def get_causal_history(
+        self, customer_id, worker_instance_id, limit=50
+    ):
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT worker_instance_id, timestamp, matches FROM causal_matches WHERE customer_id = %s AND worker_instance_id = %s ORDER BY timestamp DESC LIMIT %s",
+                (customer_id, worker_instance_id, limit),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "worker_instance_id": row[0],
+                "timestamp": row[1],
+                "matches": row[2],
+            }
+            for row in rows
+        ]
 
     def close(self) -> None:
         try:
@@ -455,13 +622,15 @@ class InMemoryRepository(BaseRepository):
         # Events, global rolling buffer
         self._events: deque = deque(maxlen=max_events)
         # Snapshots, usually one-per-customer
-        self._snapshots: Dict[str, Dict] = {}
+        self._snapshots: Dict[tuple[str, str], Dict] = {}
         # Markers, using defaultdict(list)
-        self._markers: Dict[str, List[Dict]] = defaultdict(list)
+        self._markers: Dict[tuple[str, str], List[Dict]] = (
+            defaultdict(list)
+        )
         # Diffs, using defaultdict with a lambda to create deques automatically
         # This keeps exactly the last 500 diffs per customer with zero
         # manual work.
-        self._diffs: Dict[str, deque] = defaultdict(
+        self._diffs: Dict[tuple[str, str], deque] = defaultdict(
             lambda: deque(maxlen=max_diffs)
         )
         # For rules that matched - anti-patterns
@@ -498,12 +667,16 @@ class InMemoryRepository(BaseRepository):
     def insert_snapshot(
         self,
         customer_id: str,
+        worker_instance_id: str,
+        worker_pid: int,
         data: bytes,
         content_type: str = "application/msgpack",
         node_count: int = 0,
         edge_count: int = 0,
     ) -> None:
-        self._snapshots[customer_id] = {
+        self._snapshots[(customer_id, worker_instance_id)] = {
+            "worker_instance_id": worker_instance_id,
+            "worker_pid": worker_pid,
             "data": data,
             "content_type": content_type,
             "received_at": time.time(),
@@ -514,12 +687,15 @@ class InMemoryRepository(BaseRepository):
     def get_latest_snapshot(
         self,
         customer_id: str,
+        worker_instance_id: str,
     ) -> Optional[Dict[str, Any]]:
         """
         Retrieves the most recent full graph snapshot for a customer.
         Returns None if no snapshot exists.
         """
-        entry = self._snapshots.get(customer_id)
+        entry = self._snapshots.get(
+            (customer_id, worker_instance_id)
+        )
 
         if entry is None:
             return None
@@ -530,37 +706,68 @@ class InMemoryRepository(BaseRepository):
             "received_at": entry["received_at"],
             "node_count": entry.get("node_count", 0),
             "edge_count": entry.get("edge_count", 0),
+            "worker_instance_id": entry["worker_instance_id"],
+            "worker_pid": entry["worker_pid"],
         }
 
+    def list_latest_snapshots(
+        self, customer_id: str
+    ) -> List[Dict[str, Any]]:
+        return [
+            dict(value)
+            for (owner, _), value in self._snapshots.items()
+            if owner == customer_id
+        ]
+
     def insert_deployment_marker(
-        self, customer_id: str, label: str
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: str,
     ) -> None:
-        self._markers[customer_id].append(
+        self._markers[(customer_id, worker_instance_id)].append(
             {"label": label, "created_at": time.time()}
         )
 
     def insert_graph_diff(
-        self, customer_id: str, diff: Dict
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        diff: Dict,
     ) -> None:
-        self._diffs[customer_id].append(diff)
+        self._diffs[(customer_id, worker_instance_id)].append(
+            diff
+        )
 
     def get_label_diff(
-        self, customer_id: str, label: Optional[str]
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: Optional[str],
     ) -> Optional[Dict]:
-        for d in reversed(self._diffs[customer_id]):
+        for d in reversed(
+            self._diffs[(customer_id, worker_instance_id)]
+        ):
             if d.get("label") == label:
                 return d
         return None
 
-    def get_diffs(self, customer_id: str) -> List[GraphDiff]:
-        return list(self._diffs.get(customer_id, []))
+    def get_diffs(
+        self, customer_id: str, worker_instance_id: str
+    ) -> List[GraphDiff]:
+        return list(
+            self._diffs.get(
+                (customer_id, worker_instance_id), []
+            )
+        )
 
     def save_causal_matches(
-        self, customer_id, matches, timestamp, label=None
+        self, customer_id, worker_instance_id, matches, timestamp
     ):
         self._causal_history.append(
             {
                 "customer_id": customer_id,
+                "worker_instance_id": worker_instance_id,
                 "timestamp": timestamp,
                 "matches": matches,
             }
@@ -569,11 +776,14 @@ class InMemoryRepository(BaseRepository):
         if len(self._causal_history) > 200:
             self._causal_history = self._causal_history[-200:]
 
-    def get_causal_history(self, customer_id, limit=50):
+    def get_causal_history(
+        self, customer_id, worker_instance_id, limit=50
+    ):
         return [
             e
             for e in reversed(self._causal_history)
             if e["customer_id"] == customer_id
+            and e["worker_instance_id"] == worker_instance_id
         ][:limit]
 
     def close(self) -> None:

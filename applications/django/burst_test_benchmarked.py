@@ -85,11 +85,11 @@ def _print_engine_health(
 
 def build_pool(base: str) -> list:
     return (
-        [(f"{base}/", "GET")] * 25
+        [(f"{base}/", "GET")] * 15
         + [(f"{base}/db/", "GET")] * 20
-        + [(f"{base}/async/", "GET")] * 30
-        + [(f"{base}/n1/", "GET")] * 20
-        # + [(f"{base}/slow/", "GET")] * 5
+        + [(f"{base}/async/", "GET")] * 20
+        + [(f"{base}/n1/", "GET")] * 25
+        + [(f"{base}/slow/", "GET")] * 20
     )
 
 

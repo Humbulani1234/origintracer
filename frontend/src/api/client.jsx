@@ -27,19 +27,21 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  nodes: () => request("/api/v1/nodes"),
-  edges: () => request("/api/v1/edges"),
+  nodes: (workerInstanceId) => request(`/api/v1/nodes?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
+  edges: (workerInstanceId) => request(`/api/v1/edges?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
   events: (limit = 30) => request(`/api/v1/events?limit=${limit}`),
   trace: (id) => request(`/api/v1/traces/${id}`),
-  status: () => request("/api/v1/status"),
+  status: (workerInstanceId) => request(`/api/v1/status?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
   // hardcoded label for testing
-  diff: (label = "deployment") => request(`/api/v1/graph/diff?since=${label}`),
-  graph: () => request("/api/v1/graph"),
-  causal: (tags) => request(`/api/v1/causal${tags ? `?tags=${tags}` : ''}`),
+  diff: (workerInstanceId, label = "deployment") => request(`/api/v1/graph/diff?worker_instance_id=${encodeURIComponent(workerInstanceId)}&since=${encodeURIComponent(label)}`),
+  graph: (workerInstanceId) => request(`/api/v1/graph?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
+  causal: (workerInstanceId, tags) => request(`/api/v1/causal?worker_instance_id=${encodeURIComponent(workerInstanceId)}${tags ? `&tags=${encodeURIComponent(tags)}` : ''}`),
   workers: () => request("/api/v1/workers"),
   workerQuery: (pid, query) => request(
     `/api/v1/workers/${encodeURIComponent(pid)}/query`,
     { method: "POST", data: { query } },
   ),
-  causalHistory: (limit = 50) => request(`/api/v1/causal/history?limit=${limit}`),
+  causalHistory: (workerInstanceId, limit = 50) => request(`/api/v1/causal/history?worker_instance_id=${encodeURIComponent(workerInstanceId)}&limit=${limit}`),
+  snapshots: () => request("/api/v1/snapshots"),
+  snapshot: (workerInstanceId) => request(`/api/v1/snapshots/${encodeURIComponent(workerInstanceId)}`),
 };

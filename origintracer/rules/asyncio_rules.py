@@ -91,16 +91,16 @@ def _asyncio_loop_starvation(
     """
     High average loop-tick duration means something is blocking the event
     loop — CPU work, a missing await, or a synchronous call on the hot path.
-    Threshold: >10ms average per tick.
+    Threshold: >10ms average per measured asyncio task step.
     """
     stalled = [
         n
         for n in graph.all_nodes()
         if (
             n.node_type == "asyncio"
-            and n.id == "asyncio::loop.tick"
+            and n.metadata.get("probe") == "asyncio.loop.tick"
             and n.avg_duration_ns is not None
-            and n.avg_duration_ns > 3_000_000
+            and n.avg_duration_ns > 10_000_000
         )
     ]
     if not stalled:
@@ -121,7 +121,7 @@ def _asyncio_loop_starvation(
 LOOP_STARVATION = CausalRule(
     name="asyncio_event_loop_starvation",
     description=(
-        "asyncio event loop ticks averaging >10ms. "
+        "asyncio task steps averaging >10ms. "
         "A blocking operation (CPU work, synchronous I/O, or missing await) "
         "is starving other coroutines. Check for sync calls on the hot path."
     ),

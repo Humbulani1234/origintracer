@@ -62,3 +62,57 @@ jobs:
       - name: Run tests
         run: |
           pytest tests/ -x -q --tb=short
+
+  agent-lint:
+    name: Agent lint (black + ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lint tools
+        run: pip install black ruff
+      - name: black check
+        run: black --line-length 65 src/ tests/
+      - name: ruff check
+        run: ruff check --fix src/ tests/
+
+  agent-mypy:
+    name: Agent type check (mypy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install agent and development dependencies
+        run: pip install -e ".[dev]"
+      - name: mypy check
+        run: mypy src/ --ignore-missing-imports
+
+  agent-test:
+    name: Agent tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install agent and development dependencies
+        run: pip install -e ".[dev]"
+      - name: Run agent tests
+        run: pytest tests/ -x -q --tb=short

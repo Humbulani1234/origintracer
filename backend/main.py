@@ -4,6 +4,7 @@ FastAPI service - persistence, query, and UI surface for OriginTracer.
 Surfaces:
     POST /api/v1/graph/snapshot - receive serialised graph from agent
     POST /api/v1/events - receive raw events for persistence
+    POST /api/v1/causal/evaluate - evaluate and store causal rule matches
     GET  /api/v1/graph - current graph (from latest snapshot)
     GET  /api/v1/traces/{id} - critical path from event store
     GET  /api/v1/causal - causal rules on latest snapshot
@@ -70,6 +71,13 @@ class DeploymentRequest(BaseModel):
     label: Optional[str] = None
 
 
+class CausalEvaluationRequest(BaseModel):
+    """Rule tags to include when an explicit causal evaluation is requested."""
+
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    worker_instance_id: str
+
+
 class GraphDiffRequest(BaseModel):
     added_nodes: Optional[list] = None
     removed_nodes: Optional[list] = None
@@ -119,9 +127,9 @@ app.add_middleware(
 )
 
 
-# One deserialised RuntimeGraph per user.
-# Populated on startup (from DB) and updated on every POST /graph/snapshot.
-_graphs: Dict[str, Any] = {}
+# One deserialised RuntimeGraph per customer and process instance.
+_graphs: Dict[tuple[str, str], Any] = {}
+_snapshot_metadata: Dict[tuple[str, str], Dict[str, Any]] = {}
 _graphs_lock = threading.Lock()
 
 # Storage repository - set in _init_repository() at startup.
@@ -197,33 +205,38 @@ def _load_snapshots_on_startup() -> None:
     customer_ids = set(_valid_api_keys.values())
     for customer_id in customer_ids:
         try:
-            row = _repository.get_latest_snapshot(customer_id)
-            if row is None:
-                continue
+            rows = _repository.list_latest_snapshots(customer_id)
             from origintracer.core.graph_serializer import (
                 MsgpackSerializer,
                 ProtobufSerializer,
             )
 
-            serializer = (
-                ProtobufSerializer()
-                if row["content_type"]
-                == "application/x-protobuf"
-                else MsgpackSerializer()
-            )
-            # TODO: also implement functionality for other stored data like
-            # diffs, markers, etc. Currently we using InMemory storage for
-            # others
-            graph = serializer.deserialize(row["data"])
-            with _graphs_lock:
-                _graphs[customer_id] = graph
-            logger.info(
-                "Startup snapshot loaded: customer=%s nodes=%d edges=%d age=%.0fs",
-                customer_id,
-                len(graph._nodes),
-                len(graph._edge_index),
-                time.time() - row["received_at"],
-            )
+            for row in rows:
+                serializer = (
+                    ProtobufSerializer()
+                    if row["content_type"]
+                    == "application/x-protobuf"
+                    else MsgpackSerializer()
+                )
+                graph = serializer.deserialize(row["data"])
+                key = (customer_id, row["worker_instance_id"])
+                with _graphs_lock:
+                    _graphs[key] = graph
+                    _snapshot_metadata[key] = {
+                        k: row.get(k)
+                        for k in (
+                            "worker_pid",
+                            "received_at",
+                            "node_count",
+                            "edge_count",
+                        )
+                    }
+                logger.info(
+                    "Startup snapshot loaded: customer=%s instance=%s pid=%s",
+                    customer_id,
+                    row["worker_instance_id"],
+                    row["worker_pid"],
+                )
         except Exception as exc:
             logger.warning(
                 "Startup snapshot load failed for %s: %s",
@@ -252,26 +265,28 @@ def _authenticate(authorization: Optional[str]) -> str:
     return customer_id
 
 
-def get_graph(customer_id: str) -> Optional[Any]:
+def get_graph(
+    customer_id: str, worker_instance_id: str
+) -> Optional[Any]:
     """
     Return the latest deserialised graph for this customer, or None.
     """
     with _graphs_lock:
-        return _graphs.get(customer_id)
+        return _graphs.get((customer_id, worker_instance_id))
 
 
-def require_graph(customer_id: str) -> Any:
+def require_graph(
+    customer_id: str, worker_instance_id: str
+) -> Any:
     """
     Return graph or raise 404 - used by every query endpoint.
     """
-    graph = get_graph(customer_id)
+    graph = get_graph(customer_id, worker_instance_id)
     if graph is None:
         raise HTTPException(
             status_code=404,
             detail=(
-                "No graph snapshot received yet for this account. "
-                "Ensure the OriginTracer agent is running - "
-                "it ships a snapshot every interval seconds after startup."
+                f"No graph snapshot exists for worker instance {worker_instance_id}."
             ),
         )
     return graph
@@ -321,6 +336,20 @@ def _socket_path_for_pid(pid: int) -> str:
     Construct the only socket path a client-supplied PID may select.
     """
     return f"{_SOCKET_PREFIX}{pid}{_SOCKET_SUFFIX}"
+
+
+def _require_instance_id(value: Optional[str]) -> str:
+    """Validate the process-instance key required by snapshot operations."""
+    if (
+        not value
+        or len(value) > 64
+        or not all(c.isalnum() or c == "-" for c in value)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="A valid worker_instance_id is required",
+        )
+    return value
 
 
 def discover_sockets() -> list[str]:
@@ -447,7 +476,29 @@ def get_workers(authorization: Optional[str] = Header(None)):
     workers = []
     for path in sockets:
         pid = _pid_from_socket_path(path)
-        workers.append({"pid": pid, "socket": path})
+        try:
+            status_result = query_worker_socket(
+                int(pid), "SHOW STATUS"
+            )
+            status_data = status_result.get("data", {}).get(
+                "data", {}
+            )
+        except (
+            ValueError,
+            WorkerUnavailableError,
+            WorkerProtocolError,
+        ):
+            continue
+        instance_id = status_data.get("worker_instance_id")
+        if not instance_id:
+            continue
+        workers.append(
+            {
+                "pid": pid,
+                "worker_instance_id": instance_id,
+                "socket": path,
+            }
+        )
     return {"data": workers}
 
 
@@ -494,6 +545,12 @@ def get_repository() -> Any:
 async def receive_snapshot(
     request: Request,
     authorization: Optional[str] = Header(None),
+    worker_instance_id_header: Optional[str] = Header(
+        None, alias="X-OriginTracer-Worker-Instance-ID"
+    ),
+    worker_pid_header: Optional[int] = Header(
+        None, alias="X-OriginTracer-Worker-PID"
+    ),
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
     """
@@ -504,6 +561,14 @@ async def receive_snapshot(
     waiting for the next snapshot.
     """
     customer_id = _authenticate(authorization)
+    worker_instance_id = _require_instance_id(
+        worker_instance_id_header
+    )
+    if not worker_pid_header or worker_pid_header < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A positive X-OriginTracer-Worker-PID is required",
+        )
     body = await request.body()
     content_type = request.headers.get(
         "content-type", "application/msgpack"
@@ -529,10 +594,20 @@ async def receive_snapshot(
 
         # Store in memory - immediate query serving
         with _graphs_lock:
-            _graphs[customer_id] = graph
+            _graphs[(customer_id, worker_instance_id)] = graph
+            _snapshot_metadata[
+                (customer_id, worker_instance_id)
+            ] = {
+                "worker_pid": worker_pid_header,
+                "received_at": time.time(),
+                "node_count": len(graph._nodes),
+                "edge_count": len(graph._edge_index),
+            }
         # Persist to storage - survives FastAPI restarts
         repository.insert_snapshot(
             customer_id=customer_id,
+            worker_instance_id=worker_instance_id,
+            worker_pid=worker_pid_header,
             data=body,
             content_type=content_type,
             node_count=len(graph._nodes),
@@ -570,13 +645,21 @@ async def receive_snapshot(
 async def receive_graph_diff(
     body: GraphDiffRequest,
     authorization: Optional[str] = Header(None),
+    worker_instance_id_header: Optional[str] = Header(
+        None, alias="X-OriginTracer-Worker-Instance-ID"
+    ),
     repository: Any = Depends(get_repository),
 ) -> Dict:
     """
     Receive an incremental graph diff from the OriginTracer agent
     """
     customer_id = _authenticate(authorization)
-    repository.insert_graph_diff(customer_id, body.model_dump())
+    worker_instance_id = _require_instance_id(
+        worker_instance_id_header
+    )
+    repository.insert_graph_diff(
+        customer_id, worker_instance_id, body.model_dump()
+    )
 
     logger.info(
         "Graph diff received: customer=%s nodes=%d edges=%d bytes=%d",
@@ -702,10 +785,13 @@ def get_recent_events(
 async def get_graph_route(
     service: Optional[str] = None,
     system: Optional[str] = None,
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
+    graph = require_graph(
+        customer_id, _require_instance_id(worker_instance_id)
+    )
 
     nodes = list(graph.all_nodes())
     edges = list(graph.all_edges())
@@ -731,18 +817,22 @@ async def get_graph_route(
 @app.get("/api/v1/causal/history")
 async def causal_history(
     limit: int = Query(50),
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ):
     customer_id = _authenticate(authorization)
     return {
-        "data": repository.get_causal_history(customer_id, limit)
+        "data": repository.get_causal_history(
+            customer_id, worker_instance_id, limit
+        )
     }
 
 
 @app.get("/api/v1/causal")
 async def causal(
     tags: Optional[str] = None,
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
@@ -750,10 +840,44 @@ async def causal(
     Run all causal rules against the latest snapshot.
     """
     customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
     tag_list = (
         [t.strip() for t in tags.split(",")] if tags else None
     )
+    return _evaluate_causal_rules(
+        customer_id,
+        _require_instance_id(worker_instance_id),
+        repository,
+        tag_list,
+    )
+
+
+@app.post("/api/v1/causal/evaluate")
+async def evaluate_causal_rules(
+    body: CausalEvaluationRequest,
+    authorization: Optional[str] = Header(None),
+    repository: InMemoryRepository = Depends(get_repository),
+) -> Dict:
+    """Run causal rules and save any matches for an explicit agent action."""
+    customer_id = _authenticate(authorization)
+    worker_instance_id = _require_instance_id(
+        body.worker_instance_id
+    )
+    return _evaluate_causal_rules(
+        customer_id,
+        worker_instance_id,
+        repository,
+        body.tags or None,
+    )
+
+
+def _evaluate_causal_rules(
+    customer_id: str,
+    worker_instance_id: str,
+    repository: Any,
+    tag_list: Optional[list[str]],
+) -> Dict:
+    """Evaluate rules for one customer and persist matches when found."""
+    graph = require_graph(customer_id, worker_instance_id)
     from origintracer.core.causal import PatternRegistry
     from origintracer.core.temporal import (
         GraphDiff,
@@ -761,7 +885,9 @@ async def causal(
     )
 
     temporal = TemporalStore()
-    raw_diffs = repository.get_diffs(customer_id)
+    raw_diffs = repository.get_diffs(
+        customer_id, worker_instance_id
+    )
 
     for d in raw_diffs:
         temporal._diffs.append(
@@ -785,6 +911,7 @@ async def causal(
     if matches:
         repository.save_causal_matches(
             customer_id=customer_id,
+            worker_instance_id=worker_instance_id,
             matches=[m.to_dict() for m in matches],
             timestamp=time.time(),
         )
@@ -797,13 +924,16 @@ async def causal(
 @app.get("/api/v1/hotspots")
 async def hotspots(
     top: int = Query(10, ge=1, le=100),
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
     Return the top N nodes by call count from the latest snapshot.
     """
     customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
+    graph = require_graph(
+        customer_id, _require_instance_id(worker_instance_id)
+    )
 
     return {
         "data": [
@@ -825,6 +955,7 @@ async def hotspots(
 @app.get("/api/v1/graph/diff")
 async def diff(
     since: Optional[str] = None,
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
@@ -835,7 +966,11 @@ async def diff(
     metadata in the graph snapshot (TODO: include diffs in snapshot payload).
     """
     customer_id = _authenticate(authorization)
-    results = repository.get_label_diff(customer_id, since)
+    results = repository.get_label_diff(
+        customer_id,
+        _require_instance_id(worker_instance_id),
+        since,
+    )
     if results is None:
         raise HTTPException(
             status_code=404, detail="No graph diffs available"
@@ -920,12 +1055,26 @@ async def get_trace(
 async def mark_deployment_endpoint(
     body: DeploymentRequest,
     authorization: Optional[str] = Header(None),
+    worker_instance_id_header: Optional[str] = Header(
+        None, alias="X-OriginTracer-Worker-Instance-ID"
+    ),
+    worker_pid_header: Optional[int] = Header(
+        None, alias="X-OriginTracer-Worker-PID"
+    ),
     repository: Any = Depends(get_repository),
 ) -> Dict:
     customer_id = _authenticate(authorization)
+    worker_instance_id = _require_instance_id(
+        worker_instance_id_header
+    )
+    if not worker_pid_header or worker_pid_header < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A positive X-OriginTracer-Worker-PID is required",
+        )
     if repository is not None:
         repository.insert_deployment_marker(
-            customer_id, body.label
+            customer_id, worker_instance_id, body.label
         )
 
     logger.info(
@@ -942,6 +1091,7 @@ async def mark_deployment_endpoint(
 
 @app.get("/api/v1/status")
 async def status(
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
@@ -949,7 +1099,8 @@ async def status(
     Return snapshot metadata and system state for this customer.
     """
     customer_id = _authenticate(authorization)
-    graph = get_graph(customer_id)
+    worker_instance_id = _require_instance_id(worker_instance_id)
+    graph = get_graph(customer_id, worker_instance_id)
 
     snapshot_info: Dict[str, Any] = {"available": False}
     if graph is not None:
@@ -958,6 +1109,10 @@ async def status(
             "nodes": len(graph._nodes),
             "edges": len(graph._edge_index),
             "last_updated": getattr(graph, "last_updated", None),
+            "worker_instance_id": worker_instance_id,
+            **_snapshot_metadata.get(
+                (customer_id, worker_instance_id), {}
+            ),
         }
 
     storage_info = type(_repository).__name__ or "none"
@@ -980,6 +1135,7 @@ async def health() -> Dict:
 @app.get("/api/v1/nodes")
 async def get_nodes(
     service: Optional[str] = None,
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
@@ -987,7 +1143,9 @@ async def get_nodes(
     by service.
     """
     customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
+    graph = require_graph(
+        customer_id, _require_instance_id(worker_instance_id)
+    )
 
     nodes = []
     for node in graph.all_nodes():
@@ -1014,13 +1172,16 @@ async def get_nodes(
 
 @app.get("/api/v1/edges")
 async def get_edges(
+    worker_instance_id: str = Query(...),
     authorization: Optional[str] = Header(None),
 ) -> Dict:
     """
     Return all edges from the latest graph snapshot.
     """
     customer_id = _authenticate(authorization)
-    graph = require_graph(customer_id)
+    graph = require_graph(
+        customer_id, _require_instance_id(worker_instance_id)
+    )
 
     edges = []
     for edge in graph.all_edges():
@@ -1037,6 +1198,61 @@ async def get_edges(
     return {
         "ok": True,
         "data": {"metric": "edges", "data": edges},
+    }
+
+
+@app.get("/api/v1/snapshots")
+async def list_snapshots(
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """List the latest stored snapshot metadata for each worker instance."""
+    customer_id = _authenticate(authorization)
+    with _graphs_lock:
+        rows = [
+            {
+                "worker_instance_id": instance_id,
+                "worker_pid": meta.get("worker_pid"),
+                "received_at": meta.get("received_at"),
+                "nodes": meta.get("node_count"),
+                "edges": meta.get("edge_count"),
+            }
+            for (
+                owner,
+                instance_id,
+            ), meta in _snapshot_metadata.items()
+            if owner == customer_id
+        ]
+    return {
+        "data": sorted(
+            rows,
+            key=lambda row: row.get("received_at") or 0,
+            reverse=True,
+        )
+    }
+
+
+@app.get("/api/v1/snapshots/{worker_instance_id}")
+async def get_process_snapshot(
+    worker_instance_id: str,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Return graph content and metadata for exactly one worker instance."""
+    customer_id = _authenticate(authorization)
+    instance_id = _require_instance_id(worker_instance_id)
+    graph = require_graph(customer_id, instance_id)
+    with _graphs_lock:
+        metadata = dict(
+            _snapshot_metadata.get(
+                (customer_id, instance_id), {}
+            )
+        )
+    return {
+        "worker_instance_id": instance_id,
+        **metadata,
+        "data": {
+            "nodes": [_node_dict(n) for n in graph.all_nodes()],
+            "edges": [_edge_dict(e) for e in graph.all_edges()],
+        },
     }
 
 
