@@ -8,7 +8,8 @@
   --bg2:   #141414;
   --bg3:   #1c1c1c;
   --border:#2a2a2a;
-  --amber: #e8a020;
+  --amber:  #e8a020;
+  --accent: #45c4b0;
   --text:  #e0ddd5;
   --muted: #666;
   --mono:  'JetBrains Mono', monospace;
@@ -35,33 +36,43 @@ body {
   flex-shrink: 0;
 }
 
-.logo { padding: 16px 14px 12px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; color: var(--amber); border-bottom: 1px solid var(--border); }
+.logo { padding: 16px 14px 12px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .12em; color: var(--accent); border-bottom: 1px solid var(--border); }
 .logo span { color: var(--muted); font-weight: 400; }
 .nav { padding: 8px 0; flex: 1; }
 .nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-family: var(--mono); font-size: 11px; color: var(--muted); cursor: pointer; border-left: 2px solid transparent; }
 .nav-item:hover { color: var(--text); background: var(--bg3); }
-.nav-item.active { color: var(--amber); border-left-color: var(--amber); background: rgba(232,160,32,.06); }
+.nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(69,196,176,.08); }
 .nav-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .sockets { padding: 10px 14px; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 10px; color: var(--muted); }
 .socket-title { margin-bottom: 6px; font-size: 9px; letter-spacing: .06em; }
 .worker-option { display: block; width: 100%; padding: 4px 0; border: 0; background: transparent; color: var(--muted); text-align: left; font-family: var(--mono); font-size: 10px; cursor: pointer; }
 .worker-option:hover { color: var(--text); }
+.snapshot-row {
+  cursor: default;
+  margin: 3px 0;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg2);
+  color: var(--text);
+}
+.snapshot-row:hover { color: var(--text); }
+.snapshot-row .socket-dot { background: var(--accent); }
 .worker-option .socket-dot { background: #555; }
-.worker-option.active { color: var(--amber); }
+.worker-option.active { color: var(--accent); }
 .worker-option.active .socket-dot { background: #3c9; box-shadow: 0 0 6px rgba(51,204,153,.4); }
 .socket-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3c9; margin-right: 5px; vertical-align: middle; }
 
 /* Main */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg2); }
-.toolbar-title { font-family: var(--mono); font-size: 11px; color: var(--amber); letter-spacing: .08em; flex: 1; }
+.toolbar-title { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: .08em; flex: 1; }
 .badge { background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
 .worker-badge { border: 1px solid rgba(51,204,153,.25); border-radius: 3px; padding: 1px 6px; color: #3c9; font-family: var(--mono); font-size: 10px; }
 .backend-error { max-width: 45%; overflow: hidden; color: var(--red, #e05252); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .content { flex: 1; overflow-y: auto; }
 .no-worker-state { display: flex; min-height: 240px; padding: 48px 24px; align-items: center; flex-direction: column; justify-content: center; color: var(--muted); font-family: var(--mono); font-size: 11px; line-height: 1.7; text-align: center; }
 .no-worker-title { margin-bottom: 8px; color: var(--text); font-size: 13px; }
-.no-worker-history { margin-top: 8px; color: var(--amber); }
 
 /* Table */
 .data-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
@@ -69,6 +80,6 @@ body {
 .data-table td { padding: 5px 14px; border-bottom: 1px solid rgba(42,42,42,.5); white-space: nowrap; vertical-align: middle; }
 .data-table tr:hover td { background: var(--bg2); }
 
-.count { color: var(--amber); font-weight: 500; }
+.count { color: var(--text); font-weight: 500; }
 .muted { color: var(--muted); }
 .name-cell { color: var(--text); }

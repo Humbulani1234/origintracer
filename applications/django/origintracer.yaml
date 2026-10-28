@@ -5,12 +5,15 @@
 probes:
   - asyncio
   - django
+  - langgraph
 
 rules:
   - new_sync_call_after_deployment
   - asyncio_event_loop_starvation
   - n_plus_one_queries
   - db_query_hotspot
+  - loop_runaway
+  - agent_latency_hotspot
 
 semantic:
   - label: http
@@ -34,8 +37,12 @@ semantic:
 
   - label: database
     description: Database queries from Django ORM
-    services:
-      - postgres
-      - sqlite
     node_patterns:
-      - ".*::db\\.query.*"
+      - '(?i)django::(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|PRAGMA|CREATE|ALTER|DROP|SAVEPOINT|RELEASE|COMMIT|ROLLBACK).*'
+
+  - label: agent
+    description: LangGraph model and tool calls in the Django process
+    services:
+      - langgraph
+    node_patterns:
+      - "langgraph::.*"

@@ -307,9 +307,14 @@ class TestLoopStarvation:
 
     def test_fires_when_loop_tick_avg_high(self, tracker):
         g, t, a = fresh(tracker)
-        g.upsert_node("asyncio::loop.tick", "asyncio", "asyncio")
-        node = g._nodes["asyncio::loop.tick"]
-        # Simulate 20ms average tick duration (threshold is 10ms)
+        g.upsert_node(
+            "asyncio::SlowView.get",
+            "asyncio",
+            "asyncio",
+            metadata={"probe": "asyncio.loop.tick"},
+        )
+        node = g._nodes["asyncio::SlowView.get"]
+        # Simulate a measured 20ms task step (threshold is 10ms).
         node.total_duration_ns = 20_000_000
         node.call_count = 1
         node.node_type = "asyncio"
@@ -321,8 +326,13 @@ class TestLoopStarvation:
 
     def test_silent_when_loop_tick_fast(self, tracker):
         g, t, a = fresh(tracker)
-        g.upsert_node("asyncio::loop.tick", "asyncio", "asyncio")
-        node = g._nodes["asyncio::loop.tick"]
+        g.upsert_node(
+            "asyncio::SlowView.get",
+            "asyncio",
+            "asyncio",
+            metadata={"probe": "asyncio.loop.tick"},
+        )
+        node = g._nodes["asyncio::SlowView.get"]
         node.total_duration_ns = (
             1_000_000  # 1ms — well below 10ms threshold
         )

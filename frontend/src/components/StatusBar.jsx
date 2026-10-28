@@ -19,14 +19,14 @@ export default function StatusBar({
           marginRight:4, verticalAlign:"middle" }} />
         {connectionLabel}
       </span>
-      <span><span style={{color:"var(--amber)"}}>{nodes.length}</span> nodes</span>
-      <span><span style={{color:"var(--amber)"}}>{edges.length}</span> edges</span>
-      <span><span style={{color:"var(--amber)"}}>{events.length}</span> events</span>
+      <span><span style={{color:"var(--text)"}}>{nodes.length}</span> nodes</span>
+      <span><span style={{color:"var(--text)"}}>{edges.length}</span> edges</span>
+      <span><span style={{color:"var(--text)"}}>{events.length}</span> events</span>
       {stored != null && (
-        <span><span style={{color:"var(--amber)"}}>{stored}</span> stored</span>
+        <span><span style={{color:"var(--text)"}}>{stored}</span> stored</span>
       )}
       {snapLabel && (
-        <span>snap: <span style={{color:"var(--amber)"}}>{snapLabel}</span></span>
+        <span>snap: <span style={{color:"var(--text)"}}>{snapLabel}</span></span>
       )}
       <span style={{ marginLeft:"auto" }}>
         {worker?.pid ? `pid ${worker.pid}` : customer}

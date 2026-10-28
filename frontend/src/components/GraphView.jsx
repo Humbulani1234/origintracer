@@ -44,11 +44,11 @@ function EdgeRow({ edge }) {
       borderBottom: "1px solid rgba(42,42,42,0.4)",
       fontFamily: "monospace", fontSize: 10,
     }}>
-      <span style={{ color: "var(--amber, #d4a843)", fontWeight: 500 }}>
+      <span style={{ color: "var(--amber, #e8a020)", fontWeight: 500 }}>
         {short(src, 28)}
       </span>
       <span style={{ color: EDGE_DIM }}>→</span>
-      <span style={{ color: "var(--amber, #d4a843)", fontWeight: 500 }}>
+      <span style={{ color: "var(--amber, #e8a020)", fontWeight: 500 }}>
         {short(tgt, 28)}
       </span>
       <span style={{ color: EDGE_DIM }}>
