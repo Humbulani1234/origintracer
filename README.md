@@ -250,7 +250,6 @@ This level of stability gives strong confidence for running OriginTracer alongsi
 pip install -e ".[dev]"
 pytest origintracer/tests/ -q
 pre-commit install
-```
 
 See `docs/` for full architecture, probe internals, and contribution guidelines.
 
