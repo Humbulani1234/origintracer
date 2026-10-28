@@ -20,6 +20,7 @@ env2/
 venv/
 .venv/
 saim/
+.env
 
 # Distribution/packaging
 dist/
@@ -28,6 +29,7 @@ build/
 *.egg
 .eggs/
 applications/langgraph/.langgraph_api
+agent/.langgraph_api/
 
 # Testing
 .pytest_cache/

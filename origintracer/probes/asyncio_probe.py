@@ -164,6 +164,7 @@ logger = logging.getLogger("origintracer.probes.asyncio")
 ProbeTypes.register_many(
     {
         "asyncio.loop.epoll_wait": "epoll_wait syscall returned — fds ready for I/O",
+        "asyncio.loop.tick": "asyncio task step completed, including its execution duration",
         "asyncio.loop.coro_call": "coroutine entered (awaited or started)",
         "asyncio.loop.coro_return": "coroutine returned or raised",
         "asyncio.task.create": "asyncio.create_task() called",
@@ -387,36 +388,49 @@ def _make_step_wrapper(original_step):
         self: asyncio.Task, exc: Optional[BaseException] = None
     ):
         trace_id = get_trace_id()
+        if not trace_id:
+            return original_step(self, exc)
 
-        if trace_id:
+        try:
+            coro = self.get_coro()
+            coro_name = getattr(
+                coro, "__qualname__", type(coro).__name__
+            )
+            task_name = self.get_name()
+
+            # What this task was blocked on before this step.
+            waiter = getattr(self, "_fut_waiter", None)
+            fut_waiter_repr = (
+                repr(waiter)[:120]
+                if waiter is not None
+                else None
+            )
+            loop = self.get_loop()
+            ready_count = len(getattr(loop, "_ready", []))
+            scheduled_count = len(
+                getattr(loop, "_scheduled", [])
+            )
+            parent_span_id = get_span_id()
+        except Exception as probe_exc:
+            logger.debug(
+                "asyncio step context error: %s", probe_exc
+            )
+            return original_step(self, exc)
+
+        started_ns = time.perf_counter_ns()
+        try:
+            return original_step(self, exc)
+        finally:
+            duration_ns = time.perf_counter_ns() - started_ns
             try:
-                coro = self.get_coro()
-                coro_name = getattr(
-                    coro, "__qualname__", type(coro).__name__
-                )
-                task_name = self.get_name()
-
-                # What this task was blocked on before this step
-                waiter = getattr(self, "_fut_waiter", None)
-                fut_waiter_repr = (
-                    repr(waiter)[:120]
-                    if waiter is not None
-                    else None
-                )
-
-                loop = self.get_loop()
-                ready_count = len(getattr(loop, "_ready", []))
-                scheduled_count = len(
-                    getattr(loop, "_scheduled", [])
-                )
-
                 emit(
                     NormalizedEvent.now(
                         probe="asyncio.loop.tick",
                         trace_id=trace_id,
                         service="asyncio",
                         name=coro_name,
-                        parent_span_id=get_span_id(),
+                        parent_span_id=parent_span_id,
+                        duration_ns=duration_ns,
                         task_name=task_name,
                         fut_waiter=fut_waiter_repr,
                         ready_queue_depth=ready_count,
@@ -429,8 +443,6 @@ def _make_step_wrapper(original_step):
                 logger.debug(
                     "asyncio step probe error: %s", probe_exc
                 )
-
-        return original_step(self, exc)
 
     return _traced_step
 
