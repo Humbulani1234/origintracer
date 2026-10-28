@@ -11,6 +11,9 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from origintracer.core.event_schema import NormalizedEvent
+from origintracer.core.worker_identity import (
+    current_worker_identity,
+)
 
 logger = logging.getLogger("origintracer.uploader")
 
@@ -156,6 +159,16 @@ class Uploader:
         """
         self._engine = engine
 
+    @staticmethod
+    def _identity_headers() -> Dict[str, str]:
+        worker_instance_id, worker_pid = (
+            current_worker_identity()
+        )
+        return {
+            "X-OriginTracer-Worker-Instance-ID": worker_instance_id,
+            "X-OriginTracer-Worker-PID": str(worker_pid),
+        }
+
     def start(self) -> None:
         """
         Start the uploader background thread.
@@ -256,6 +269,7 @@ class Uploader:
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": content_type,
+                    **self._identity_headers(),
                 },
                 timeout=10.0,
             )
@@ -330,6 +344,7 @@ class Uploader:
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": content_type,
+                    **self._identity_headers(),
                 },
                 timeout=30.0,
             )
@@ -375,18 +390,22 @@ class Uploader:
                 f"{self._endpoint}/api/v1/graph/diff",
                 json=latest_diff,
                 headers={
-                    "Authorization": f"Bearer {self._api_key}"
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
                 },
                 timeout=5.0,
             )
 
             if diff_resp.status_code == 200:
                 self._diffs_sent += 1
-                info = diff_resp.json()
+                diff_resp.json()
                 logger.debug(
-                    "Diff uploaded: nodes=%s edges=%s",
-                    info.get("nodes", "?"),
-                    info.get("edges", "?"),
+                    "Diff uploaded: added_nodes=%d removed_nodes=%d "
+                    "added_edges=%d removed_edges=%d",
+                    len(latest_diff.get("added_nodes") or []),
+                    len(latest_diff.get("removed_nodes") or []),
+                    len(latest_diff.get("added_edges") or []),
+                    len(latest_diff.get("removed_edges") or []),
                 )
             else:
                 self._failed_diffs_sends += 1
@@ -416,7 +435,8 @@ class Uploader:
                     "worker_pid": str(os.getpid()),
                 },
                 headers={
-                    "Authorization": f"Bearer {self._api_key}"
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
                 },
                 timeout=5.0,
             )

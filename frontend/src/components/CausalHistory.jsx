@@ -6,40 +6,98 @@ function fmtTime(ts) {
   });
 }
 
-export default function CausalHistory({ history }) {
-  if (!history?.length) {
+function MatchRows({ matches }) {
+  return matches?.map((match, index) => (
+    <div key={index} style={{
+      marginTop:8, padding:"8px 10px", background:"var(--bg)",
+      border:"1px solid var(--border)", borderRadius:4,
+    }}>
+      <div style={{ color:"var(--text)", fontSize:11, fontWeight:600 }}>
+        {match.rule ?? match.name ?? "Causal rule"}
+        <span style={{ color:"var(--muted)", fontWeight:400, marginLeft:8 }}>
+          {Math.round((match.confidence ?? 0) * 100)}% confidence
+        </span>
+      </div>
+      <div style={{ color:"var(--muted)", marginTop:5, lineHeight:1.6 }}>
+        {match.explanation}
+      </div>
+    </div>
+  ));
+}
+
+function MatchGroup({ matches, label, timestamp }) {
+  const color = matches?.some(match => match.confidence >= 0.8)
+    ? "var(--red, #e05252)" : "var(--amber, #e8a020)";
+  return (
+    <div style={{
+      margin:"6px 12px 12px", padding:"12px 14px",
+      background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:5,
+      fontFamily:"monospace", fontSize:10,
+    }}>
+      <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+        <span style={{ color:"var(--text)", fontSize:11, fontWeight:600 }}>
+          {timestamp ? fmtTime(timestamp) : label}
+        </span>
+        {timestamp && <span style={{ color:"var(--muted)" }}>{label}</span>}
+        <span style={{
+          marginLeft:"auto", padding:"3px 7px", borderRadius:10,
+          color, background:"var(--bg)", border:"1px solid var(--border)",
+        }}>
+          {matches?.length ?? 0} rule{matches?.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <MatchRows matches={matches} />
+    </div>
+  );
+}
+
+function SectionHeading({ children }) {
+  return (
+    <div style={{
+      margin:"12px 12px 0", padding:"8px 10px",
+      color:"var(--accent)", background:"rgba(69,196,176,0.08)",
+      border:"1px solid rgba(69,196,176,0.22)", borderRadius:4,
+      fontFamily:"monospace", fontSize:10, fontWeight:700,
+      letterSpacing:"0.06em", textTransform:"uppercase",
+    }}>
+      {children}
+    </div>
+  );
+}
+
+export default function CausalHistory({ history, currentMatches = [] }) {
+  if (!history?.length && !currentMatches?.length) {
     return (
       <div style={{ padding:"32px 14px", fontFamily:"monospace",
           fontSize:11, color:"var(--muted)", textAlign:"center" }}>
-        No causal matches recorded yet.
+        No current matches or saved causal history.
       </div>
     );
   }
 
   return (
     <div>
-      {history.map((entry, i) => {
-        const color = entry.matches?.some(m => m.confidence >= 0.8)
-          ? "var(--red, #e05252)" : "var(--amber, #d4a843)";
+      {currentMatches?.length > 0 && (
+        <>
+          <SectionHeading>
+            Current live matches
+          </SectionHeading>
+          <MatchGroup matches={currentMatches} label="Live worker" />
+        </>
+      )}
+      {history?.length > 0 && (
+        <SectionHeading>
+          Saved history
+        </SectionHeading>
+      )}
+      {(history ?? []).map((entry, i) => {
         return (
-          <div key={i} style={{
-            padding:"8px 14px", borderBottom:"0.5px solid rgba(42,42,42,0.4)",
-            borderLeft:`2px solid ${color}`, fontFamily:"monospace", fontSize:10,
-          }}>
-            <div style={{ display:"flex", gap:12, marginBottom:4 }}>
-              <span style={{ color:"var(--muted)" }}>{fmtTime(entry.timestamp)}</span>
-              <span style={{ color:"var(--muted)", opacity:0.5 }}>{entry.label ?? "—"}</span>
-              <span style={{ color }}>{entry.matches?.length} rule{entry.matches?.length !== 1 ? "s" : ""}</span>
-            </div>
-            {entry.matches?.map((m, j) => (
-              <div key={j} style={{ color:"var(--muted)", fontSize:9, marginLeft:8 }}>
-                · {m.name} ({Math.round((m.confidence ?? 0) * 100)}%)
-                <div style={{ opacity:0.6, marginLeft:8, lineHeight:1.5 }}>
-                  {m.explanation}
-                </div>
-              </div>
-            ))}
-          </div>
+          <MatchGroup
+            key={i}
+            matches={entry.matches ?? []}
+            timestamp={entry.timestamp}
+            label={entry.label ?? "Saved snapshot"}
+          />
         );
       })}
     </div>

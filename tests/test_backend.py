@@ -28,6 +28,51 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 AUTH = {"Authorization": "Bearer test-key-0000"}
+TEST_INSTANCE = "test-worker-instance"
+PROCESS_HEADERS = {
+    "X-OriginTracer-Worker-Instance-ID": TEST_INSTANCE,
+    "X-OriginTracer-Worker-PID": "12345",
+}
+
+
+class ScopedTestClient(AsyncClient):
+    """Send the required process identity on snapshot-backed test requests."""
+
+    async def request(self, method, url, *args, **kwargs):
+        path = str(url)
+        params = dict(kwargs.pop("params", {}) or {})
+        if path.startswith(
+            (
+                "/api/v1/graph",
+                "/api/v1/nodes",
+                "/api/v1/edges",
+                "/api/v1/status",
+                "/api/v1/causal",
+                "/api/v1/hotspots",
+            )
+        ) and not path.startswith("/api/v1/graph/snapshot"):
+            params.setdefault(
+                "worker_instance_id", TEST_INSTANCE
+            )
+        if params:
+            from httpx import URL
+
+            url = URL(url).copy_merge_params(params)
+        headers = dict(kwargs.pop("headers", {}) or {})
+        if path in {
+            "/api/v1/graph/snapshot",
+            "/api/v1/graph/diff",
+            "/api/v1/deployment",
+        }:
+            for key, value in PROCESS_HEADERS.items():
+                headers.setdefault(key, value)
+        if headers:
+            kwargs["headers"] = headers
+        return await super().request(
+            method, url, *args, **kwargs
+        )
+
+
 NOAUTH: dict = {}
 
 TEST_CUSTOMER = "dev_customer"
@@ -103,7 +148,7 @@ class TestAuth:
         assert r.json()["status"] == "healthy"
 
 
-@pytest.mark.usefixtures("reset_global_state")
+@pytest.mark.usefixtures("reset_backend_state")
 @pytest.mark.anyio
 class TestEventIngest:
 
@@ -143,9 +188,26 @@ class TestEventIngest:
         assert r.json()["stored"] == 0
 
 
-@pytest.mark.usefixtures("reset_global_state")
+@pytest.mark.usefixtures("reset_backend_state")
 @pytest.mark.anyio
 class TestGraphSnapshot:
+
+    def _make_snapshot_bytes(self, node_count: int = 2) -> bytes:
+        """Build real msgpack snapshot bytes from a tiny RuntimeGraph."""
+        from origintracer.core.graph_serializer import (
+            MsgpackSerializer,
+        )
+        from origintracer.core.runtime_graph import RuntimeGraph
+
+        g = RuntimeGraph()
+        g.upsert_node("django::view", "fn", "django")
+        g.upsert_node("postgres::SELECT", "db", "postgres")
+        g.upsert_edge(
+            "django::view", "postgres::SELECT", "calls"
+        )
+        if node_count > 2:
+            g.upsert_node("redis::GET", "cache", "redis")
+        return MsgpackSerializer().serialize(g)
 
     async def test_receive_snapshot_stores_in_memory(
         self, client
@@ -168,6 +230,8 @@ class TestGraphSnapshot:
     async def test_receive_snapshot_persists_to_repository(
         self, client
     ):
+        import backend.main as m
+
         pytest.importorskip("msgpack")
         data = _make_snapshot_bytes()
         await client.post(
@@ -178,10 +242,8 @@ class TestGraphSnapshot:
                 "content-type": "application/msgpack",
             },
         )
-        import backend.main as m
-
         row = m._repository.get_latest_snapshot(
-            "test_customer", TEST_WORKER_PID
+            "test_customer", TEST_INSTANCE
         )
         assert row is not None
         assert row["data"] == data
@@ -207,6 +269,68 @@ class TestGraphSnapshot:
             },
         )
         assert r.status_code == 400
+
+    async def test_snapshot_upload_requires_process_identity(
+        self,
+    ):
+        pytest.importorskip("msgpack")
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as raw:
+            response = await raw.post(
+                "/api/v1/graph/snapshot",
+                content=self._make_snapshot_bytes(),
+                headers={
+                    **AUTH,
+                    "content-type": "application/msgpack",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_snapshot_inventory_and_retrieval_are_process_scoped(
+        self, client
+    ):
+        pytest.importorskip("msgpack")
+        for instance_id, pid, node_count in (
+            ("process-a", "111", 2),
+            ("process-b", "222", 3),
+        ):
+            response = await client.post(
+                "/api/v1/graph/snapshot",
+                content=self._make_snapshot_bytes(node_count),
+                headers={
+                    **AUTH,
+                    "content-type": "application/msgpack",
+                    "X-OriginTracer-Worker-Instance-ID": instance_id,
+                    "X-OriginTracer-Worker-PID": pid,
+                },
+            )
+            assert response.status_code == 200
+        inventory = (
+            await client.get("/api/v1/snapshots", headers=AUTH)
+        ).json()["data"]
+        assert {
+            row["worker_instance_id"] for row in inventory
+        } == {"process-a", "process-b"}
+        first = (
+            await client.get(
+                "/api/v1/snapshots/process-a", headers=AUTH
+            )
+        ).json()
+        second = (
+            await client.get(
+                "/api/v1/snapshots/process-b", headers=AUTH
+            )
+        ).json()
+        assert (
+            first["worker_pid"] == 111
+            and len(first["data"]["nodes"]) == 2
+        )
+        assert (
+            second["worker_pid"] == 222
+            and len(second["data"]["nodes"]) == 3
+        )
 
 
 @pytest.mark.anyio
@@ -243,6 +367,18 @@ class TestGraphQueries:
         body = r.json()
         assert "data" in body or "nodes" in body
 
+    async def test_graph_requires_explicit_process_instance(
+        self,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as raw:
+            response = await raw.get(
+                "/api/v1/graph", headers=AUTH
+            )
+        assert response.status_code == 422
+
     async def test_hotspots_returns_sorted_list(self, client):
         r = await client.get(
             "/api/v1/hotspots?top=5", headers=AUTH
@@ -268,14 +404,12 @@ class TestGraphQueries:
         assert r.status_code == 200
         assert "data" in r.json()
 
-    @pytest.mark.usefixtures("reset_global_state")
+    @pytest.mark.usefixtures("reset_backend_state")
     async def test_get_graph_before_snapshot_returns_404(
         self, client
     ):
         import backend.main as m
 
-        with m._active_pid_lock:
-            m._active_pid["test_customer"] = TEST_WORKER_PID
         m._graphs.clear()
         r = await client.get("/api/v1/graph", headers=AUTH)
         assert r.status_code == 404
@@ -322,6 +456,16 @@ class TestLiveWorkerQueries:
             "discover_sockets",
             lambda: ["/tmp/origintracer-1234.sock"],
         )
+        monkeypatch.setattr(
+            m,
+            "query_worker_socket",
+            lambda pid, query: {
+                "ok": True,
+                "data": {
+                    "data": {"worker_instance_id": "worker-1234"}
+                },
+            },
+        )
 
         response = await client.get(
             "/api/v1/workers", headers=AUTH
@@ -332,6 +476,7 @@ class TestLiveWorkerQueries:
             "data": [
                 {
                     "pid": "1234",
+                    "worker_instance_id": "worker-1234",
                     "socket": "/tmp/origintracer-1234.sock",
                 }
             ]
@@ -460,10 +605,25 @@ class TestDeploymentMarker:
 
 @pytest.fixture
 async def client():
-    async with AsyncClient(
+    async with ScopedTestClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as c:
         yield c
+
+
+AUTH = {"Authorization": "Bearer test-key-0000"}
+
+
+def _make_snapshot_bytes(node_count: int = 2) -> bytes:
+    """Build minimal msgpack snapshot bytes."""
+
+    g = RuntimeGraph()
+    g.upsert_node("django::view", "fn", "django")
+    g.upsert_node("postgres::SELECT", "db", "postgres")
+    if node_count > 2:
+        g.upsert_node("redis::GET", "cache", "redis")
+    g.upsert_edge("django::view", "postgres::SELECT", "calls")
+    return MsgpackSerializer().serialize(g)
 
 
 async def _post_snapshot(client, bytes_: bytes) -> None:
@@ -749,10 +909,16 @@ def reset_backend_state():
     import backend.main as m
 
     m._graphs.clear()
+    m._snapshot_metadata.clear()
+    with m._active_pid_lock:
+        m._active_pid.clear()
     m._valid_api_keys = {"test-key-0000": "test_customer"}
     m._repository = InMemoryRepository()
     yield
     m._graphs.clear()
+    m._snapshot_metadata.clear()
+    with m._active_pid_lock:
+        m._active_pid.clear()
 
 
 def _make_diff_bytes(node_count: int = 2) -> bytes:
@@ -836,7 +1002,14 @@ class TestGraphDiff:
             "/api/v1/graph/diff", json=payload, headers=AUTH
         )
         # Verify repository received the diff via internal _diffs deque
-        assert len(m._repository._diffs["test_customer"]) >= 1
+        assert (
+            len(
+                m._repository._diffs[
+                    ("test_customer", TEST_INSTANCE)
+                ]
+            )
+            >= 1
+        )
 
     async def test_post_graph_diff_requires_auth(self, client):
         r = await client.post(
@@ -890,6 +1063,35 @@ class TestCausalTags:
         m._graphs.clear()
         r = await client.get("/api/v1/causal", headers=AUTH)
         assert r.status_code == 404
+
+
+@pytest.mark.anyio
+class TestCausalHistory:
+    async def test_history_uses_integer_limit_and_selected_instance(
+        self, client
+    ):
+        import backend.main as m
+
+        for instance_id in (TEST_INSTANCE, "another-instance"):
+            m._repository.save_causal_matches(
+                customer_id="test_customer",
+                worker_instance_id=instance_id,
+                matches=[{"rule": instance_id}],
+                timestamp=1.0,
+            )
+        response = await client.get(
+            f"/api/v1/causal/history?worker_instance_id={TEST_INSTANCE}&limit=1",
+            headers=AUTH,
+        )
+        assert response.status_code == 200
+        assert response.json()["data"] == [
+            {
+                "customer_id": "test_customer",
+                "worker_instance_id": TEST_INSTANCE,
+                "timestamp": 1.0,
+                "matches": [{"rule": TEST_INSTANCE}],
+            }
+        ]
 
 
 @pytest.mark.anyio
