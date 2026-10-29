@@ -25,6 +25,6 @@ Currently supports `\stitch <id>`
 SHOW nodes
 SHOW edges
 SHOW events
-TRACE << switches to trace view
-\stitch <id>  << fetches real trace from backend if available
+TRACE <id>  << reads this trace from the selected live worker
+\stitch <id>  << queries all live workers and merges matching stages
 ```

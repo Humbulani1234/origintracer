@@ -1055,6 +1055,48 @@ class TestCausalTags:
         body = r.json()
         assert body["match_count"] == len(body["data"])
 
+    async def test_get_is_read_only_and_post_records_matches(
+        self, client, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        import backend.main as m
+        from origintracer.core.causal import PatternRegistry
+
+        match = {"rule": "test_rule", "confidence": 0.9}
+        monkeypatch.setattr(
+            PatternRegistry,
+            "evaluate",
+            classmethod(
+                lambda cls, graph, temporal, tracker=None, tags=None: [
+                    SimpleNamespace(to_dict=lambda: match)
+                ]
+            ),
+        )
+
+        live = await client.get("/api/v1/causal", headers=AUTH)
+        assert live.status_code == 200
+        assert live.json()["data"] == [match]
+        assert (
+            m._repository.get_causal_history(
+                "test_customer", TEST_INSTANCE, 10
+            )
+            == []
+        )
+
+        saved = await client.post(
+            "/api/v1/causal/evaluate",
+            headers=AUTH,
+            json={"worker_instance_id": TEST_INSTANCE},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["data"] == [match]
+        history = m._repository.get_causal_history(
+            "test_customer", TEST_INSTANCE, 10
+        )
+        assert len(history) == 1
+        assert history[0]["matches"] == [match]
+
     async def test_causal_before_snapshot_returns_404(
         self, client
     ):

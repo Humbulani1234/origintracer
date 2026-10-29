@@ -31,6 +31,7 @@ export const api = {
   edges: (workerInstanceId) => request(`/api/v1/edges?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
   events: (limit = 30) => request(`/api/v1/events?limit=${limit}`),
   trace: (id) => request(`/api/v1/traces/${id}`),
+  stitchTrace: (id) => request(`/api/v1/traces/${encodeURIComponent(id)}/stitch`),
   status: (workerInstanceId) => request(`/api/v1/status?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
   // hardcoded label for testing
   diff: (workerInstanceId, label = "deployment") => request(`/api/v1/graph/diff?worker_instance_id=${encodeURIComponent(workerInstanceId)}&since=${encodeURIComponent(label)}`),

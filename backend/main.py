@@ -7,6 +7,7 @@ Surfaces:
     POST /api/v1/causal/evaluate - evaluate and store causal rule matches
     GET  /api/v1/graph - current graph (from latest snapshot)
     GET  /api/v1/traces/{id} - critical path from event store
+    GET  /api/v1/traces/{id}/stitch - merge TRACE results from live workers
     GET  /api/v1/causal - causal rules on latest snapshot
     GET  /api/v1/causal/history - return causal matches history
     GET  /api/v1/hotspots - top N busiest nodes
@@ -39,10 +40,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -920,6 +923,7 @@ async def causal(
         _require_instance_id(worker_instance_id),
         repository,
         tag_list,
+        persist=False,
     )
 
 
@@ -939,6 +943,7 @@ async def evaluate_causal_rules(
         worker_instance_id,
         repository,
         body.tags or None,
+        persist=True,
     )
 
 
@@ -947,8 +952,10 @@ def _evaluate_causal_rules(
     worker_instance_id: str,
     repository: Any,
     tag_list: Optional[list[str]],
+    *,
+    persist: bool,
 ) -> Dict:
-    """Evaluate rules for one customer and persist matches when found."""
+    """Evaluate rules and optionally persist matches for one worker."""
     graph = require_graph(customer_id, worker_instance_id)
     from origintracer.core.causal import PatternRegistry
     from origintracer.core.temporal import (
@@ -980,8 +987,7 @@ def _evaluate_causal_rules(
     # No tracker - backend has no live requests.
     # rules that depends on it won't be executed
     matches = registry.evaluate(graph, temporal, tags=tag_list)
-    # persist to storage
-    if matches:
+    if persist and matches:
         snapshot_meta = _snapshot_metadata.get(
             (customer_id, worker_instance_id), {}
         )
@@ -1133,6 +1139,146 @@ async def get_trace(
         )
         last_ts = ts
     return {"data": path, "total_ms": round(total_ms, 3)}
+
+
+@app.get("/api/v1/traces/{trace_id}/stitch")
+def stitch_live_trace(
+    trace_id: str,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Query every live worker for one trace and merge its returned stages."""
+    _authenticate(authorization)
+    if not re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", trace_id):
+        raise HTTPException(
+            status_code=400,
+            detail="trace_id contains unsupported characters",
+        )
+
+    sockets = discover_sockets()
+    workers_searched = [
+        _pid_from_socket_path(path) for path in sockets
+    ]
+    query = f"TRACE {trace_id}"
+
+    def query_socket(
+        path: str,
+    ) -> tuple[str, Any, Optional[str]]:
+        pid = _pid_from_socket_path(path)
+        try:
+            return (
+                pid,
+                query_worker_socket(int(pid), query),
+                None,
+            )
+        except Exception as exc:
+            return pid, None, str(exc)
+
+    with ThreadPoolExecutor(
+        max_workers=max(1, min(len(sockets), 16))
+    ) as executor:
+        responses = list(executor.map(query_socket, sockets))
+
+    stages: list[dict[str, Any]] = []
+    workers_found: list[str] = []
+    errors: list[dict[str, str]] = []
+    for pid, response, error in responses:
+        if error:
+            errors.append({"worker_pid": pid, "error": error})
+            continue
+        if not isinstance(response, dict):
+            errors.append(
+                {
+                    "worker_pid": pid,
+                    "error": "Worker returned an invalid TRACE response",
+                }
+            )
+            continue
+        if response.get("ok") is False:
+            errors.append(
+                {
+                    "worker_pid": pid,
+                    "error": str(
+                        response.get(
+                            "error", "Worker TRACE query failed"
+                        )
+                    ),
+                }
+            )
+            continue
+
+        result = response.get("data", response)
+        if not isinstance(result, dict):
+            errors.append(
+                {
+                    "worker_pid": pid,
+                    "error": "Worker returned an invalid TRACE payload",
+                }
+            )
+            continue
+        if result.get("error"):
+            errors.append(
+                {
+                    "worker_pid": pid,
+                    "error": str(result["error"]),
+                }
+            )
+            continue
+        if result.get("truncated"):
+            errors.append(
+                {
+                    "worker_pid": pid,
+                    "error": "Worker TRACE response was truncated",
+                }
+            )
+            continue
+        worker_stages = result.get("data", [])
+        if not isinstance(worker_stages, list):
+            errors.append(
+                {
+                    "worker_pid": pid,
+                    "error": "Worker TRACE payload has no stage list",
+                }
+            )
+            continue
+        if not worker_stages:
+            continue
+
+        workers_found.append(pid)
+        stages.extend(
+            {**stage, "worker_pid": pid}
+            for stage in worker_stages
+            if isinstance(stage, dict)
+        )
+
+    def stage_sort_key(
+        stage: dict[str, Any],
+    ) -> tuple[bool, float, str]:
+        timestamp = stage.get("timestamp")
+        try:
+            parsed_timestamp = float(timestamp)
+            missing_timestamp = False
+        except (TypeError, ValueError):
+            parsed_timestamp = 0.0
+            missing_timestamp = True
+        return (
+            missing_timestamp,
+            parsed_timestamp,
+            stage["worker_pid"],
+        )
+
+    stages.sort(key=stage_sort_key)
+    return {
+        "trace_id": trace_id,
+        "source": "OriginTracer stitched live worker trace",
+        "workers_searched": workers_searched,
+        "workers_found": workers_found,
+        "stages": stages,
+        "errors": errors,
+        "interpretation_limits": [
+            "duration_ms values are intervals returned by each worker's "
+            "TRACE query; no cross-worker end-to-end duration is computed."
+        ],
+    }
 
 
 @app.post("/api/v1/deployment")

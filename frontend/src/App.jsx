@@ -18,6 +18,7 @@ const VIEWS = [
   "nodes",
   "edges",
   "trace",
+  "stitch",
   "events",
   "diff",
   "status",
@@ -252,19 +253,34 @@ export default function App() {
     if (lower.startsWith("\\stitch") || lower.startsWith("stitch")) {
       const id = query.split(/\s+/)[1];
       if (!id) {
-        setView("trace");
+        setView("stitch");
         return;
       }
       setLoading(true);
       try {
-        const response = await api.trace(id);
-        const stages = response?.data?.data || response?.data || [];
-        setTrace({ id, stages, source: "history" });
-        setView("trace");
-        setBackendError(null);
+        const response = await api.stitchTrace(id);
+        const stages = response?.stages ?? [];
+        setTrace({
+          id,
+          stages,
+          workersFound: response?.workers_found ?? [],
+          workersSearched: response?.workers_searched ?? [],
+          errors: response?.errors ?? [],
+          source: "stitched",
+        });
+        setView("stitch");
+        if (response?.errors?.length) {
+          setBackendError(
+            `Partial stitch: ${response.errors.length} worker query(s) failed`,
+          );
+        } else if (!stages.length) {
+          setBackendError("Trace not found on any live worker");
+        } else {
+          setBackendError(null);
+        }
       } catch (error) {
         setBackendError(error?.message ?? "Trace lookup failed");
-        setView("trace");
+        setView("stitch");
       } finally {
         setLoading(false);
       }
@@ -299,6 +315,12 @@ export default function App() {
   const selectedWorker = workers.find(
     (worker) => String(worker.pid) === String(selectedWorkerPid),
   );
+  const liveInstanceIds = new Set(
+    workers.map((worker) => worker.worker_instance_id).filter(Boolean),
+  );
+  const liveSnapshots = snapshots.filter((snapshot) =>
+    liveInstanceIds.has(snapshot.worker_instance_id),
+  );
   const noLiveWorker = workerInventoryLoaded && workers.length === 0;
   const showingHistoricalData = view === "history"
     || (view === "trace" && trace?.source === "history");
@@ -306,6 +328,9 @@ export default function App() {
     nodes: `${nodes.length} nodes`,
     edges: `${edges.length} edges`,
     trace: trace ? `${trace.stages.length} stages` : "—",
+    stitch: trace?.source === "stitched"
+      ? `${trace.workersFound.length} workers · ${trace.stages.length} stages`
+      : "—",
     events: `${events.length} events`,
     diff: diff
       ? `${(diff.added_nodes?.length || 0) + (diff.added_edges?.length || 0)} changes`
@@ -327,11 +352,19 @@ export default function App() {
             <div
               key={item}
               className={`nav-item ${view === item ? "active" : ""}`}
-              onClick={() => (
-                item === "llm_content" || item === "tool_content"
-                  ? loadCapturedContent(item)
-                  : setView(item)
-              )}
+              onClick={() => {
+                if (
+                  (item === "stitch" && trace?.source !== "stitched")
+                  || (item === "trace" && trace?.source === "stitched")
+                ) {
+                  setTrace(null);
+                }
+                if (item === "llm_content" || item === "tool_content") {
+                  loadCapturedContent(item);
+                } else {
+                  setView(item);
+                }
+              }}
             >
               <span className="nav-dot" />
               {item.replace("_", " ")}
@@ -359,10 +392,10 @@ export default function App() {
             })}
           </div>
         )}
-        {snapshots.length > 0 && (
+        {liveSnapshots.length > 0 && (
           <div className="sockets">
-            <div className="socket-title">SAVED SNAPSHOTS</div>
-            {snapshots.map((snapshot) => (
+            <div className="socket-title">LIVE PROCESS SNAPSHOTS</div>
+            {liveSnapshots.map((snapshot) => (
               <div className="worker-option snapshot-row" key={snapshot.worker_instance_id}
                 title={`Process instance ${snapshot.worker_instance_id}`}>
                 <span className="socket-dot" />{snapshot.worker_pid ? `pid ${snapshot.worker_pid}` : "unknown PID"} · {snapshot.nodes ?? 0} nodes · {formatSnapshotTime(snapshot.received_at)} · {snapshot.worker_instance_id.slice(0, 8)}
@@ -402,6 +435,9 @@ export default function App() {
                 {view === "nodes" && <NodeTable nodes={nodes} />}
                 {view === "edges" && <EdgeTable edges={edges} />}
                 {view === "trace" && <TraceTimeline trace={trace} />}
+                {view === "stitch" && (
+                  <TraceTimeline trace={trace} mode="stitch" />
+                )}
                 {view === "events" && <EventLog events={events} />}
                 {view === "diff" && <DiffView diff={diff} />}
                 {view === "graph" && <GraphView nodes={nodes} edges={edges} />}
