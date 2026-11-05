@@ -130,6 +130,14 @@ export default function App() {
           api.causalHistory(instanceId).catch(() => null),
         ]);
 
+        // A worker can be selected while these requests are in flight. Ignore
+        // the old response so its graph cannot replace the newly selected one.
+        if (
+          window.localStorage.getItem("origintracer.selected_worker_instance_id") !== instanceId
+        ) {
+          return;
+        }
+
         const graph = graphResponse?.data ?? {};
 
         setNodes(normalizeWorkerNodes(graph.nodes));
