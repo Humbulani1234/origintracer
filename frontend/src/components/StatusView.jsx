@@ -1,36 +1,33 @@
 // src/components/StatusView.jsx
 export default function StatusView({ nodes, edges, events, status, worker }) {
-  const workerRows = [
-    ["process", worker?.pid ? `pid ${worker.pid}` : status?.pid],
-    ["socket", worker?.socket ?? status?.socket],
-    ["uptime", status?.uptime],
-    ["nodes (live)", status?.graph_nodes ?? nodes?.length],
-    ["edges (live)", status?.graph_edges ?? edges?.length],
-    ["events (live)", status?.event_log_size ?? events?.length],
-    ["active requests", status?.active_requests],
-    ["probes active", Array.isArray(status?.probes_active)
-      ? status.probes_active.join(", ") : status?.probes_active],
-    ["semantic labels", status?.semantic_labels],
-  ];
+  const snapshotInfo = status?.snapshot ?? {};
+  const runtime = snapshotInfo.runtime_status ?? {};
   const snapshotRows = [
+    ["process", worker?.worker_pid ? `pid ${worker.worker_pid}` : "—"],
+    ["worker instance", worker?.worker_instance_id],
     ["customer", status?.customer_id],
     ["storage", status?.storage],
-    ["timestamp", status?.timestamp
-      ? new Date(status.timestamp * 1000).toLocaleTimeString() : null],
+    ["snapshot updated", snapshotInfo.last_updated
+      ? new Date(snapshotInfo.last_updated * 1000).toLocaleTimeString() : null],
+    ["snapshot received", worker?.received_at
+      ? new Date(worker.received_at * 1000).toLocaleTimeString() : null],
+    ["reporting", snapshotInfo.online ? "yes" : "no / stale heartbeat"],
+    ["last heartbeat age", snapshotInfo.heartbeat_age_s == null
+      ? null : `${snapshotInfo.heartbeat_age_s}s`],
+    ["uptime", runtime.uptime_s == null
+      ? null : `${Math.floor(runtime.uptime_s / 3600)}h ${Math.floor((runtime.uptime_s % 3600) / 60)}m`],
+    ["active requests", runtime.active_requests],
+    ["active probes", runtime.probes_active?.join(", ")],
+    ["active rules", runtime.rules_active?.join(", ")],
     ["nodes", nodes?.length],
     ["edges", edges?.length],
     ["events", events?.length],
-    ["snapshot", status?.snapshot?.available ? "available" : "unavailable"],
-    ["snap nodes", status?.snapshot?.nodes],
-    ["snap edges", status?.snapshot?.edges],
-    ["last updated", status?.snapshot?.last_updated
-      ? new Date(status.snapshot.last_updated * 1000).toLocaleTimeString() : null],
+    ["snapshot", snapshotInfo.available ? "available" : "unavailable"],
   ];
-  const rows = status?.mode === "worker" ? workerRows : snapshotRows;
 
   return (
     <div style={{ padding:14, fontFamily:"monospace", fontSize:11 }}>
-      {rows.map(([label, value]) => (
+      {snapshotRows.map(([label, value]) => (
         <div key={label} style={{
           display:"grid", gridTemplateColumns:"140px 1fr",
           gap:12, padding:"5px 0",

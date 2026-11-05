@@ -1,9 +1,9 @@
-"""
-ContextVar-based trace propagation.
-Works correctly across asyncio coroutines, threads, and task boundaries.
+"""ContextVar-based trace and investigation grouping propagation.
 
-Every probe reads current_trace_id to know which request it's in.
-Django middleware sets and resets it per request.
+Context values flow across asyncio tasks and callback boundaries. Probes use
+``current_trace_id`` for one execution and ``current_investigation_id`` to
+group related agent executions. Django middleware sets and resets trace IDs;
+the agent sets and resets investigation IDs around graph nodes.
 """
 
 from __future__ import annotations
@@ -20,6 +20,12 @@ current_trace_id: ContextVar[Optional[str]] = ContextVar(
 # build parent_span chains
 current_span_id: ContextVar[Optional[str]] = ContextVar(
     "origintracer_span_id", default=None
+)
+
+# Groups multiple trace roots that belong to the same agent investigation.
+# This is distinct from trace_id: one investigation can span several runs.
+current_investigation_id: ContextVar[Optional[str]] = ContextVar(
+    "origintracer_investigation_id", default=None
 )
 
 
@@ -53,3 +59,18 @@ def get_trace_id() -> Optional[str]:
 
 def get_span_id() -> Optional[str]:
     return current_span_id.get()
+
+
+def set_investigation_id(investigation_id: str) -> Token:
+    """Set the active investigation grouping context and return its token."""
+    return current_investigation_id.set(investigation_id)
+
+
+def reset_investigation_id(token: Token) -> None:
+    """Restore the previous investigation grouping context."""
+    current_investigation_id.reset(token)
+
+
+def get_investigation_id() -> Optional[str]:
+    """Return the active investigation grouping identifier, if any."""
+    return current_investigation_id.get()

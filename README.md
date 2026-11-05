@@ -137,6 +137,12 @@ Similar to the `Django` and `Celery` applications above. Navigate to the `applic
 
 The example runs a supervisor and two specialist agents through LangGraph's production Agent Server packaging path. It uses Ollama for local model inference, initializes OriginTracer through the server's FastAPI lifespan, and includes an `invoke.py` script for sending requests to the running application.
 
+## Agentic Investigation Layer
+
+OriginTracer also includes an optional agentic layer for natural-language investigations of live worker evidence. It plans and runs read-only observations through OriginTracer's tools, then returns findings grounded in that evidence, along with remaining uncertainty. The agent complements the graph, REPL, and UI; it does not replace them. Any action that changes OriginTracer state requires explicit approval.
+
+For the agent's architecture, setup, and operating details, see the [agent README](agent/README.md).
+
 ## Core Strengths
 
 - **Decoupled architecture**: Probes emit `NormalizedEvent` objects. The engine never touches probes, and probes never block application code.

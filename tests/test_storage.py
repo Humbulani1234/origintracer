@@ -233,6 +233,50 @@ class TestInMemoryRepository:
             == b"other-data"
         )
 
+    def test_worker_runtime_status_is_scoped_and_updated(self):
+        self.repo.upsert_worker_runtime(
+            "acme",
+            INSTANCE,
+            "123",
+            {"uptime_s": 12, "probes_active": ["django"]},
+            100.0,
+        )
+        self.repo.upsert_worker_runtime(
+            "acme",
+            INSTANCE,
+            "123",
+            {
+                "uptime_s": 20,
+                "probes_active": ["django", "asyncio"],
+            },
+            108.0,
+        )
+
+        current = self.repo.get_worker_runtime("acme", INSTANCE)
+        assert current == {
+            "worker_pid": "123",
+            "observed_at": 108.0,
+            "status": {
+                "uptime_s": 20,
+                "probes_active": ["django", "asyncio"],
+            },
+        }
+        assert (
+            self.repo.get_worker_runtime("other", INSTANCE)
+            is None
+        )
+        assert self.repo.list_worker_runtime("acme") == [
+            {
+                "worker_instance_id": INSTANCE,
+                "worker_pid": "123",
+                "observed_at": 108.0,
+                "status": {
+                    "uptime_s": 20,
+                    "probes_active": ["django", "asyncio"],
+                },
+            }
+        ]
+
     def test_marker_contract(self):
         run_marker_contract(self.repo)
 

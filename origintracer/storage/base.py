@@ -29,6 +29,7 @@ class BaseRepository(ABC):
         *,
         customer_id: Optional[str] = None,
         worker_pid: Optional[str] = None,
+        worker_instance_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         probe: Optional[str] = None,
         service: Optional[str] = None,
@@ -36,7 +37,9 @@ class BaseRepository(ABC):
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve events matching filters, newest first.
+        Retrieve events matching filters, newest first. ``worker_instance_id``
+        filters the uploader identity stored in event metadata, distinguishing
+        process instances even when an OS PID is reused.
         """
         ...
 
@@ -80,6 +83,63 @@ class BaseRepository(ABC):
         ...
 
     @abstractmethod
+    def upsert_worker_runtime(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        worker_pid: str,
+        status: Dict[str, Any],
+        observed_at: float,
+    ) -> None:
+        """Insert or replace the latest runtime heartbeat for one instance.
+
+        A heartbeat contains status values that cannot be reconstructed from a
+        graph snapshot, including uptime, active requests, active probes, and
+        the observation time. Implementations key the record by customer and
+        worker instance so PID reuse cannot merge separate process lifetimes.
+
+        Args:
+            customer_id: Owner namespace for the stored process data.
+            worker_instance_id: Stable ID identifying one process lifetime.
+            worker_pid: Operating-system PID associated with the snapshot.
+            status: Runtime status payload reported by the uploader.
+            observed_at: Unix timestamp when the status was observed.
+        """
+        ...
+
+    @abstractmethod
+    def get_worker_runtime(
+        self, customer_id: str, worker_instance_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return one process instance's latest runtime heartbeat.
+
+        Args:
+            customer_id: Owner namespace for the stored process data.
+            worker_instance_id: Stable ID identifying the process lifetime.
+
+        Returns:
+            A mapping with ``worker_pid``, ``observed_at``, and ``status``, or
+            ``None`` when no heartbeat has been uploaded for this instance.
+        """
+        ...
+
+    @abstractmethod
+    def list_worker_runtime(
+        self, customer_id: str
+    ) -> List[Dict[str, Any]]:
+        """List the latest runtime heartbeat for each owned process instance.
+
+        Args:
+            customer_id: Owner namespace whose heartbeat records are requested.
+
+        Returns:
+            Rows containing ``worker_instance_id``, ``worker_pid``,
+            ``observed_at``, and the reported ``status`` mapping. An empty list
+            means no runtime heartbeat is stored for this customer.
+        """
+        ...
+
+    @abstractmethod
     def close(self) -> None:
         """
         Release any open connections.
@@ -96,6 +156,25 @@ class BaseRepository(ABC):
     ) -> None:
         """
         Store a deployment marker with the current timestamp.
+        """
+        ...
+
+    @abstractmethod
+    def get_deployment_marker_time(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: str,
+    ) -> Optional[float]:
+        """Return the newest timestamp for a named deployment marker.
+
+        Args:
+            customer_id: Owner namespace for the stored process data.
+            worker_instance_id: Stable identity of the marked process.
+            label: Deployment marker label to resolve.
+
+        Returns:
+            Marker creation time as Unix seconds, or ``None`` if it is absent.
         """
         ...
 
@@ -161,6 +240,8 @@ CREATE INDEX IF NOT EXISTS idx_st_events_customer ON st_events (customer_id, wal
 CREATE INDEX IF NOT EXISTS idx_st_events_worker ON st_events (customer_id, pid, wall_time DESC);
 CREATE INDEX IF NOT EXISTS idx_st_events_service ON st_events (service);
 CREATE INDEX IF NOT EXISTS idx_st_events_probe ON st_events (probe);
+CREATE INDEX IF NOT EXISTS idx_st_events_instance_probe
+    ON st_events (customer_id, (metadata->>'worker_instance_id'), probe, wall_time DESC);
 """
 
 _PG_CREATE_SNAPSHOTS = """
@@ -183,6 +264,19 @@ UPDATE st_snapshots SET worker_instance_id = 'legacy-' || id::text
 ALTER TABLE st_snapshots ALTER COLUMN worker_instance_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_st_snapshots_customer
     ON st_snapshots (customer_id, worker_instance_id, received_at DESC);
+"""
+
+_PG_CREATE_WORKER_RUNTIME = """
+CREATE TABLE IF NOT EXISTS worker_runtime_status (
+    customer_id TEXT NOT NULL,
+    worker_instance_id TEXT NOT NULL,
+    worker_pid TEXT NOT NULL,
+    observed_at DOUBLE PRECISION NOT NULL,
+    status JSONB NOT NULL,
+    PRIMARY KEY (customer_id, worker_instance_id)
+);
+CREATE INDEX IF NOT EXISTS idx_worker_runtime_seen
+    ON worker_runtime_status (customer_id, observed_at DESC);
 """
 
 _PG_CREATE_MARKERS = """
@@ -248,6 +342,7 @@ class PGEventRepository(BaseRepository):
                 "WHERE pid IS NULL AND worker_pid ~ '^[0-9]+$'"
             )
             cur.execute(_PG_CREATE_SNAPSHOTS)
+            cur.execute(_PG_CREATE_WORKER_RUNTIME)
             cur.execute(_PG_CREATE_MARKERS)
             cur.execute(_PG_CREATE_GRAPH_DIFFS)
             cur.execute(
@@ -396,6 +491,7 @@ class PGEventRepository(BaseRepository):
         *,
         customer_id: Optional[str] = None,
         worker_pid: Optional[str] = None,
+        worker_instance_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         probe: Optional[str] = None,
         service: Optional[str] = None,
@@ -426,6 +522,11 @@ class PGEventRepository(BaseRepository):
                 params.append(int(worker_pid))
             except (TypeError, ValueError):
                 params.append(worker_pid)
+        if worker_instance_id:
+            conditions.append(
+                "metadata->>'worker_instance_id' = %s"
+            )
+            params.append(worker_instance_id)
 
         where = (
             ("WHERE " + " AND ".join(conditions))
@@ -563,6 +664,105 @@ class PGEventRepository(BaseRepository):
             for r in rows
         ]
 
+    def upsert_worker_runtime(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        worker_pid: str,
+        status: Dict[str, Any],
+        observed_at: float,
+    ) -> None:
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO worker_runtime_status
+                        (customer_id, worker_instance_id, worker_pid, observed_at, status)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (customer_id, worker_instance_id)
+                    DO UPDATE SET worker_pid = EXCLUDED.worker_pid,
+                                  observed_at = EXCLUDED.observed_at,
+                                  status = EXCLUDED.status
+                    """,
+                    (
+                        customer_id,
+                        worker_instance_id,
+                        str(worker_pid),
+                        observed_at,
+                        json.dumps(status),
+                    ),
+                )
+            self._conn.commit()
+        except Exception as exc:
+            logger.warning(
+                "PG upsert_worker_runtime failed: %s", exc
+            )
+            self._safe_rollback()
+
+    def get_worker_runtime(
+        self, customer_id: str, worker_instance_id: str
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT worker_pid, observed_at, status
+                    FROM worker_runtime_status
+                    WHERE customer_id = %s AND worker_instance_id = %s
+                    """,
+                    (customer_id, worker_instance_id),
+                )
+                row = cur.fetchone()
+            if row is None:
+                return None
+            status = row[2]
+            if isinstance(status, str):
+                status = json.loads(status)
+            return {
+                "worker_pid": row[0],
+                "observed_at": row[1],
+                "status": status or {},
+            }
+        except Exception as exc:
+            logger.warning(
+                "PG get_worker_runtime failed: %s", exc
+            )
+            return None
+
+    def list_worker_runtime(
+        self, customer_id: str
+    ) -> List[Dict[str, Any]]:
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT worker_instance_id, worker_pid, observed_at, status
+                    FROM worker_runtime_status
+                    WHERE customer_id = %s
+                    ORDER BY observed_at DESC
+                    """,
+                    (customer_id,),
+                )
+                rows = cur.fetchall()
+            result = []
+            for instance_id, pid, observed_at, status in rows:
+                if isinstance(status, str):
+                    status = json.loads(status)
+                result.append(
+                    {
+                        "worker_instance_id": instance_id,
+                        "worker_pid": pid,
+                        "observed_at": observed_at,
+                        "status": status or {},
+                    }
+                )
+            return result
+        except Exception as exc:
+            logger.warning(
+                "PG list_worker_runtime failed: %s", exc
+            )
+            return []
+
     def insert_graph_diff(
         self,
         customer_id: str,
@@ -573,12 +773,13 @@ class PGEventRepository(BaseRepository):
         with self._conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO graph_diffs
-                (customer_id, worker_instance_id, worker_pid, added_nodes, removed_nodes, added_edges, removed_edges, label)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (customer_id, worker_instance_id, worker_pid, snapshot_time, added_nodes, removed_nodes, added_edges, removed_edges, label)
+                VALUES (%s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s)""",
                 (
                     customer_id,
                     worker_instance_id,
                     worker_pid or "unknown",
+                    diff.get("timestamp") or time.time(),
                     json.dumps(
                         list(diff.get("added_nodes", []))
                     ),
@@ -622,6 +823,34 @@ class PGEventRepository(BaseRepository):
         except Exception as exc:
             logger.warning("PG insert_marker failed: %s", exc)
             self._safe_rollback()
+
+    def get_deployment_marker_time(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: str,
+    ) -> Optional[float]:
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT created_at
+                    FROM st_markers
+                    WHERE customer_id = %s
+                      AND worker_instance_id = %s
+                      AND label = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (customer_id, worker_instance_id, label),
+                )
+                row = cur.fetchone()
+            return float(row[0]) if row is not None else None
+        except Exception as exc:
+            logger.warning(
+                "PG get_deployment_marker_time failed: %s", exc
+            )
+            return None
 
     def save_causal_matches(
         self,
@@ -688,6 +917,12 @@ class InMemoryRepository(BaseRepository):
         self._events: deque = deque(maxlen=max_events)
         # Snapshots, usually one-per-customer
         self._snapshots: Dict[tuple[str, str], Dict] = {}
+        # Latest uploader heartbeat keyed by (customer, process instance).
+        # Kept separately from snapshots because runtime health changes more
+        # often and cannot be derived from the serialized graph.
+        self._worker_runtime: Dict[
+            tuple[str, str], Dict[str, Any]
+        ] = {}
         # Markers, using defaultdict(list)
         self._markers: Dict[tuple[str, str], List[Dict]] = (
             defaultdict(list)
@@ -718,6 +953,7 @@ class InMemoryRepository(BaseRepository):
         *,
         customer_id: Optional[str] = None,
         worker_pid: Optional[str] = None,
+        worker_instance_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         probe: Optional[str] = None,
         service: Optional[str] = None,
@@ -735,6 +971,12 @@ class InMemoryRepository(BaseRepository):
             if worker_pid and str(
                 metadata.get("worker_pid", e.get("pid"))
             ) != str(worker_pid):
+                continue
+            if (
+                worker_instance_id
+                and metadata.get("worker_instance_id")
+                != worker_instance_id
+            ):
                 continue
             if trace_id and e.get("trace_id") != trace_id:
                 continue
@@ -804,6 +1046,45 @@ class InMemoryRepository(BaseRepository):
             if owner == customer_id
         ]
 
+    def upsert_worker_runtime(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        worker_pid: str,
+        status: Dict[str, Any],
+        observed_at: float,
+    ) -> None:
+        self._worker_runtime[
+            (customer_id, worker_instance_id)
+        ] = {
+            "worker_pid": str(worker_pid),
+            "observed_at": observed_at,
+            "status": dict(status),
+        }
+
+    def get_worker_runtime(
+        self, customer_id: str, worker_instance_id: str
+    ) -> Optional[Dict[str, Any]]:
+        entry = self._worker_runtime.get(
+            (customer_id, worker_instance_id)
+        )
+        return dict(entry) if entry is not None else None
+
+    def list_worker_runtime(
+        self, customer_id: str
+    ) -> List[Dict[str, Any]]:
+        return [
+            {
+                "worker_instance_id": instance_id,
+                **dict(status),
+            }
+            for (
+                owner,
+                instance_id,
+            ), status in self._worker_runtime.items()
+            if owner == customer_id
+        ]
+
     def insert_deployment_marker(
         self,
         customer_id: str,
@@ -818,6 +1099,22 @@ class InMemoryRepository(BaseRepository):
                 "created_at": time.time(),
             }
         )
+
+    def get_deployment_marker_time(
+        self,
+        customer_id: str,
+        worker_instance_id: str,
+        label: str,
+    ) -> Optional[float]:
+        markers = self._markers.get(
+            (customer_id, worker_instance_id), []
+        )
+        matches = [
+            float(marker["created_at"])
+            for marker in markers
+            if marker.get("label") == label
+        ]
+        return max(matches) if matches else None
 
     def insert_graph_diff(
         self,
@@ -847,7 +1144,7 @@ class InMemoryRepository(BaseRepository):
 
     def get_diffs(
         self, customer_id: str, worker_instance_id: str
-    ) -> List[GraphDiff]:
+    ) -> List[Dict[str, Any]]:
         return list(
             self._diffs.get(
                 (customer_id, worker_instance_id), []

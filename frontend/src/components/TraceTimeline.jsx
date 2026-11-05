@@ -13,7 +13,7 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
         color:"var(--muted)", textAlign:"center" }}>
         enter <span style={{color:"var(--amber)"}}>
           {mode === "stitch" ? "\\stitch &lt;trace_id&gt;" : "TRACE &lt;trace_id&gt;"}
-        </span> in the query bar to {mode === "stitch" ? "search all live workers" : "inspect the selected worker's trace"}
+        </span> in the query bar to {mode === "stitch" ? "search uploaded events across stored workers" : "inspect the selected snapshot's stored events"}
       </div>
     );
   }

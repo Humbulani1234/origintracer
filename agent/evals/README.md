@@ -1,14 +1,27 @@
 # Agent graph evaluations
 
 These evaluations run against the `origintracer_investigator` graph served by
-LangGraph Agent Server. They use the same graph, tools, backend and Ollama
-model as an ordinary agent run. They do not use a mock graph.
+LangGraph Agent Server. They use the same graph, tools, FastAPI stored-data
+routes and Ollama model as an ordinary agent run. They do not use a mock graph
+or query worker Unix sockets.
 
-The cases cover direct status, hotspots and events, database duration versus
+The cases cover heartbeat-backed status and worker freshness, stored snapshot
+inventory, hotspots and events, database duration versus
 call counts, caller relationships, graph changes since deployment, configured
 causal rules, and a Django comparison of database latency with asyncio
-event-loop starvation. They also cover follow-up questions, missing worker
-selection, and both action approval paths. The deployment-marker action case
+event-loop starvation. Docs-backed chat cases cover native Django probe setup
+and the built-in Django database rules; these require the published docs search
+index to be reachable when the agent cache is cold.
+
+Multi-turn cases reuse prior evidence for related follow-ups based on the
+planner's structured continuation decision. Their final reports stay scoped
+to the latest turn and omit unrelated prior observations. Another case starts a
+fresh investigation for an unrelated question on the same thread. Continuity
+does not depend on particular follow-up words; stable worker identity remains
+the scope boundary. The planner also interprets overview scope; the graph asks
+for a structured all-versus-selected choice only when the planner marks it
+ambiguous, then lets the planner complete the plan. The cases cover missing
+worker selection and both action approval paths. The deployment-marker action case
 also checks that a live worker PID is included and that the duplicate check is
 explained before approval. Longer request and grading text uses
 `{"lines": [...]}` in `cases.json` so it can wrap cleanly; the runner joins
@@ -30,7 +43,9 @@ The `django_database_vs_event_loop` case targets the Django example in
 selected process to have Django database and asyncio instrumentation, plus the
 `database` semantic group used by `get_worker_database_hotspots`. Run the
 Django app with its `origintracer.yaml`, send database-backed and async traffic,
-then set its live worker PID. A different application can run the general
+wait for a graph snapshot upload, then set its process PID. A fresh heartbeat
+is needed for cases that ask about current reporting status; stale snapshots
+remain selectable for stored graph and event questions. A different application can run the general
 cases, but this database comparison needs equivalent query instrumentation and
 semantic configuration. The runner currently executes every case against one
 selected worker; run separate eval sessions when comparing different apps.
@@ -62,24 +77,24 @@ python -m pip install -e ".[evals]"
 ## Run locally
 
 Start the OriginTracer backend, an instrumented process, and the LangGraph
-Agent Server. The server must use the same `.env` settings as the agent and
+Agent Server. The server must use the same `.env.example` settings as the agent and
 can be limited to one active job while debugging:
 
 ```bash
 langgraph dev --n-jobs-per-worker 1
 ```
 
-In another terminal, set a live worker PID for the investigation cases and run
-the local evaluation:
+In another terminal, set the PID for a process with an uploaded snapshot and
+run the local evaluation:
 
 ```bash
 export ORIGINTRACER_EVAL_WORKER_PID=12345
 python -m evals.run --mode local
 ```
 
-The runner loads `agent/.env`. Set `ORIGINTRACER_AGENT_SERVER_URL` if the Agent
-Server is not at `http://127.0.0.1:8123`. For a fully local run, keep
-`LANGSMITH_TRACING=false` in `agent/.env` before starting the server. Local mode
+The runner loads `agent/.env.example`. Set `ORIGINTRACER_AGENT_SERVER_URL` if the Agent Server is not at
+`http://127.0.0.1:8123`. For a fully local run, keep
+`LANGSMITH_TRACING=false` in `agent/.env.example` before starting the server. Local mode
 does not create a LangSmith experiment. It prints each case's graph output and
 scores. The run exits with a nonzero status if a case fails.
 

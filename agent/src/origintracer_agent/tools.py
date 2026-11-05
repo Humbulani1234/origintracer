@@ -19,6 +19,7 @@ from origintracer_agent.backend import (
     list_workers,
     query_worker,
     record_deployment_marker,
+    stitch_stored_trace,
     validate_pid,
 )
 from origintracer_agent.backend import (
@@ -27,22 +28,136 @@ from origintracer_agent.backend import (
 
 
 def _pid(runtime: ToolRuntime[Any]) -> int:
-    """Read the caller-selected PID from trusted graph input state."""
+    """Read the PID label for the selected stored process snapshot."""
     return validate_pid(runtime.state.get("worker_pid"))
+
+
+def _instance_id(runtime: ToolRuntime[Any]) -> str | None:
+    """Return the selected stable process-instance key, when resolved."""
+    value = runtime.state.get("worker_instance_id")
+    return str(value) if value else None
 
 
 @tool
 async def list_live_workers() -> dict[str, Any]:
-    """Find live OriginTracer processes that can be inspected.
+    """List process instances with fresh runtime heartbeats from FastAPI.
 
-    Use this when no worker is selected or when checking whether a selected
-    PID is available. Returns worker PIDs; it does not inspect their graphs.
-    The caller must select a PID before worker queries can run.
+    Use this when no worker is selected or when checking which workers are
+    currently reporting. Returns only reporting process PIDs and instance IDs;
+    stale stored snapshots are excluded and no local worker sockets are read.
     """
+    snapshots = await list_workers()
+    reporting = [
+        worker for worker in snapshots if worker["online"]
+    ]
     return {
-        "source": "OriginTracer backend worker inventory",
+        "source": "OriginTracer stored snapshot inventory",
         "observed_at": datetime.now(timezone.utc).isoformat(),
-        "result": await list_workers(),
+        "total_live_workers": len(reporting),
+        "result": reporting,
+    }
+
+
+def _overview_graph_payload(result: Any) -> Any:
+    """Bound graph detail while retaining counts and an explicit preview flag."""
+    graph = (
+        result.get("data", result)
+        if isinstance(result, dict)
+        else result
+    )
+    if not isinstance(graph, dict):
+        return graph
+    nodes = graph.get("nodes")
+    edges = graph.get("edges")
+    if not isinstance(nodes, list) or not isinstance(
+        edges, list
+    ):
+        return graph
+    return {
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "nodes": nodes[:20],
+        "edges": edges[:20],
+        "nodes_truncated": len(nodes) > 20,
+        "edges_truncated": len(edges) > 20,
+    }
+
+
+@tool
+async def get_live_workers_overview(
+    max_workers: int = 10,
+) -> dict[str, Any]:
+    """Read the stored overview for each recently reporting worker.
+
+    This read-only overview needs no caller-selected PID. It inspects only
+    process instances with fresh uploader heartbeats in the authenticated
+    snapshot inventory, up to max_workers (1–20), and reports partial failures
+    per worker/section.
+    Graphs include at most 20 nodes and 20 edges per worker.
+    """
+    bounded_workers = max(1, min(int(max_workers), 20))
+    snapshots = await list_workers()
+    workers = [
+        worker for worker in snapshots if worker["online"]
+    ]
+    shown = workers[:bounded_workers]
+    semaphore = asyncio.Semaphore(4)
+
+    async def read_section(
+        worker: dict[str, str], query: str
+    ) -> Any:
+        async with semaphore:
+            try:
+                response = await query_worker(
+                    int(worker["pid"]),
+                    query,
+                    worker_instance_id=worker[
+                        "worker_instance_id"
+                    ],
+                )
+                return response.get("result", response)
+            except Exception as exc:
+                return {"error": str(exc)}
+
+    async def inspect_worker(
+        worker: dict[str, str],
+    ) -> dict[str, Any]:
+        status, graph, matches, registered = (
+            await asyncio.gather(
+                read_section(worker, "SHOW status"),
+                read_section(worker, "SHOW graph"),
+                read_section(worker, build_causal_query(None)),
+                read_section(worker, "SHOW rules"),
+            )
+        )
+        return {
+            "pid": worker["pid"],
+            "worker_instance_id": worker["worker_instance_id"],
+            "status": status,
+            "graph": _overview_graph_payload(graph),
+            "causal_rule_matches": matches,
+            "registered_causal_rules": registered,
+        }
+
+    inspected = await asyncio.gather(
+        *(inspect_worker(worker) for worker in shown)
+    )
+    return {
+        "source": "OriginTracer stored multi-worker overview",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "total_live_workers": len(workers),
+        "workers_shown": len(inspected),
+        "workers_truncated": len(workers) > len(shown),
+        "worker_limit": bounded_workers,
+        "workers": inspected,
+        "interpretation_limits": [
+            "Each worker's status, graph, and rule results are scoped to that worker instance.",
+            "Only process instances with fresh uploaded runtime heartbeats are included.",
+            "Heartbeat freshness is inferred from the uploader interval and does not replace an operating-system process check.",
+            "Active probes and rules come from that process instance's uploaded runtime heartbeat.",
+            "Rule matches and graph structure are detected patterns and relationships, not proof of root cause or impact.",
+            "Graph nodes and edges are capped at 20 each per worker; truncation flags identify omitted rows.",
+        ],
     }
 
 
@@ -50,13 +165,15 @@ async def list_live_workers() -> dict[str, Any]:
 async def get_worker_status(
     runtime: ToolRuntime[Any],
 ) -> dict[str, Any]:
-    """Check the selected worker's health and current activity.
+    """Read stored heartbeat and graph status for the selected process.
 
-    Returns process uptime, probe status, graph counts, and active-request
-    count. Use for a direct health question or to confirm probes before
-    interpreting missing telemetry; it does not find slow operations.
+    Returns uploaded uptime, active requests, active probes, graph counts, and
+    heartbeat freshness. A stale heartbeat is reported as offline; this tool
+    does not probe the process directly.
     """
-    return await query_worker(_pid(runtime), "SHOW status")
+    return await query_worker(
+        _pid(runtime), "SHOW status", _instance_id(runtime)
+    )
 
 
 @tool
@@ -66,7 +183,7 @@ async def get_worker_snapshot(
     """Read the saved graph for exactly the selected worker process instance.
 
     Use this for questions about uploaded snapshot data. The tool requires the
-    instance ID resolved from the selected live worker and never chooses the
+    instance ID resolved from the selected stored snapshot and never chooses the
     customer's newest snapshot implicitly.
     """
     instance_id = runtime.state.get("worker_instance_id")
@@ -81,7 +198,7 @@ async def get_worker_snapshot(
 async def get_worker_nodes(
     runtime: ToolRuntime[Any], limit: int = 50
 ) -> dict[str, Any]:
-    """List observed operation nodes from the selected worker's live graph.
+    """List observed operation nodes from the selected stored snapshot.
 
     Rows include operation name, service, call count, and aggregate duration.
     Use to check whether an operation was observed or inspect the graph
@@ -90,6 +207,7 @@ async def get_worker_nodes(
     return await query_worker(
         _pid(runtime),
         f"SHOW nodes LIMIT {max(1, min(limit, 100))}",
+        _instance_id(runtime),
     )
 
 
@@ -103,7 +221,9 @@ async def get_worker_edges(
     operations or relate a suspected hotspot to its caller; edges have no
     per-edge latency measurement.
     """
-    return await query_worker(_pid(runtime), "SHOW edges")
+    return await query_worker(
+        _pid(runtime), "SHOW edges", _instance_id(runtime)
+    )
 
 
 @tool
@@ -116,7 +236,9 @@ async def get_worker_graph(
     observed operations and edges describe observed relationships; this
     structural view does not provide per-edge latency.
     """
-    return await query_worker(_pid(runtime), "SHOW graph")
+    return await query_worker(
+        _pid(runtime), "SHOW graph", _instance_id(runtime)
+    )
 
 
 @tool
@@ -130,7 +252,9 @@ async def get_worker_hotspots(
     the top. Use get_worker_database_hotspots for database durations.
     """
     return await query_worker(
-        _pid(runtime), f"HOTSPOT TOP {max(1, min(top, 100))}"
+        _pid(runtime),
+        f"HOTSPOT TOP {max(1, min(top, 100))}",
+        _instance_id(runtime),
     )
 
 
@@ -150,6 +274,7 @@ async def get_worker_database_hotspots(
     return await query_worker(
         _pid(runtime),
         f'SHOW latency WHERE system = "database" LIMIT {bounded_limit}',
+        _instance_id(runtime),
     )
 
 
@@ -172,7 +297,9 @@ async def get_worker_database_events(
         service="django",
         probe="django.db.query",
     )
-    return await query_worker(_pid(runtime), query)
+    return await query_worker(
+        _pid(runtime), query, _instance_id(runtime)
+    )
 
 
 @tool
@@ -218,12 +345,22 @@ async def get_worker_latency_diagnostics(
         causal_rules,
         registered_rules,
     ) = await asyncio.gather(
-        query_worker(pid, database_latency_query),
-        query_worker(pid, database_events_query),
-        query_worker(pid, asyncio_latency_query),
-        query_worker(pid, asyncio_events_query),
-        query_worker(pid, build_causal_query(None)),
-        query_worker(pid, "SHOW rules"),
+        query_worker(
+            pid, database_latency_query, _instance_id(runtime)
+        ),
+        query_worker(
+            pid, database_events_query, _instance_id(runtime)
+        ),
+        query_worker(
+            pid, asyncio_latency_query, _instance_id(runtime)
+        ),
+        query_worker(
+            pid, asyncio_events_query, _instance_id(runtime)
+        ),
+        query_worker(
+            pid, build_causal_query(None), _instance_id(runtime)
+        ),
+        query_worker(pid, "SHOW rules", _instance_id(runtime)),
     )
     asyncio_latency_result = asyncio_latency.get(
         "result", asyncio_latency
@@ -294,7 +431,7 @@ async def get_worker_latency_diagnostics(
             ][-bounded_limit:],
         }
     return {
-        "source": "OriginTracer live worker latency diagnostics",
+        "source": "OriginTracer stored snapshot latency diagnostics",
         "worker_pid": str(pid),
         "query": "database and asyncio latency/events",
         "observed_at": datetime.now(timezone.utc).isoformat(),
@@ -365,19 +502,25 @@ async def get_worker_events(
         str,
         Field(
             description=(
-                "Optional exact event probe filter. Leave empty to include "
-                "all probes."
+                "Optional exact event probe filter, such as "
+                "django.view.enter, django.db.query, or request.exit. "
+                "This matches the event's probe field, not a graph node ID "
+                "or operation name. Leave empty to include all probes; to "
+                "find events related to an operation, filter by service and "
+                "match returned event names and trace IDs."
             )
         ),
     ] = "",
 ) -> dict[str, Any]:
     """Read recent events captured by the selected worker.
 
-    Optional filters narrow results by trace ID, service name, or probe;
-    limit is capped at 100. The selected worker PID comes from trusted graph
-    state and is never a filter argument. Use for event-level evidence such as
-    loop ticks or request boundaries. Events are retained in memory, so an
-    empty result does not prove an event never occurred.
+    Optional filters narrow results by trace ID, service name, or exact event
+    probe; limit is capped at 100. A graph node ID or operation name is not a
+    probe. To look for an operation, query its service without a probe filter
+    and inspect returned event names and trace IDs. The selected worker PID
+    comes from trusted graph state and is never a filter argument. Events are
+    retained in memory, so an empty result does not prove an event never
+    occurred.
     """
     query = build_event_query(
         limit,
@@ -385,7 +528,9 @@ async def get_worker_events(
         service_name or None,
         probe or None,
     )
-    return await query_worker(_pid(runtime), query)
+    return await query_worker(
+        _pid(runtime), query, _instance_id(runtime)
+    )
 
 
 @tool
@@ -399,133 +544,33 @@ async def get_worker_trace(
     event observations to one request. Only retained trace data is available.
     """
     query = build_trace_query(trace_id)
-    return await query_worker(_pid(runtime), query)
+    return await query_worker(
+        _pid(runtime), query, _instance_id(runtime)
+    )
 
 
 @tool
 async def get_worker_stitched_trace(
     runtime: ToolRuntime[Any], trace_id: str
 ) -> dict[str, Any]:
-    """Join one explicitly identified trace across live worker processes.
+    """Join one explicitly identified trace across stored process instances.
 
     Use only when the user asks to stitch or follow a trace across processes.
-    The tool searches the backend's current live-worker inventory for this
-    exact trace ID; it does not guess trace IDs or inspect arbitrary queries.
-    Each stage keeps its worker PID and TRACE duration_ms. Those durations are
-    per-worker inter-event intervals, not cross-process span durations.
+    The tool searches uploaded event rows for this exact trace ID; it does not
+    guess trace IDs or inspect arbitrary queries. Each stage keeps its worker
+    PID and recorded duration. No cross-process end-to-end time is computed.
     """
-    query = build_trace_query(trace_id)
     selected_pid = _pid(runtime)
-    workers = await list_workers()
-    worker_by_pid: dict[str, dict[str, Any]] = {
-        str(worker["pid"]): worker
-        for worker in workers
-        if str(worker.get("pid", "")).isdigit()
-    }
-    worker_by_pid.setdefault(
-        str(selected_pid),
-        {
-            "pid": str(selected_pid),
-            "worker_instance_id": runtime.state.get(
-                "worker_instance_id"
-            ),
-        },
-    )
-    ordered_workers = sorted(
-        worker_by_pid.values(),
-        key=lambda worker: int(worker["pid"]),
-    )
-    responses = await asyncio.gather(
-        *(
-            query_worker(int(worker["pid"]), query)
-            for worker in ordered_workers
-        ),
-        return_exceptions=True,
-    )
-
-    stages: list[dict[str, Any]] = []
-    workers_found: list[str] = []
-    errors: list[dict[str, str]] = []
-    for worker, response in zip(ordered_workers, responses):
-        pid = str(worker["pid"])
-        if isinstance(response, BaseException):
-            errors.append(
-                {"worker_pid": pid, "error": str(response)}
-            )
-            continue
-        result = response.get("result", response)
-        if isinstance(result, dict) and result.get("error"):
-            errors.append(
-                {
-                    "worker_pid": pid,
-                    "error": str(result["error"]),
-                }
-            )
-            continue
-        if isinstance(result, dict) and result.get("truncated"):
-            errors.append(
-                {
-                    "worker_pid": pid,
-                    "error": "The worker's TRACE response was truncated.",
-                }
-            )
-            continue
-        worker_stages = (
-            result.get("data", [])
-            if isinstance(result, dict)
-            else []
-        )
-        if (
-            not isinstance(worker_stages, list)
-            or not worker_stages
-        ):
-            continue
-        workers_found.append(pid)
-        for stage in worker_stages:
-            if not isinstance(stage, dict):
-                continue
-            stages.append(
-                {
-                    **stage,
-                    "worker_pid": pid,
-                    "worker_instance_id": worker.get(
-                        "worker_instance_id"
-                    ),
-                }
-            )
-
-    def stage_sort_key(
-        stage: dict[str, Any],
-    ) -> tuple[bool, float, str]:
-        timestamp = stage.get("timestamp")
-        if isinstance(timestamp, (int, float)):
-            sort_timestamp = float(timestamp)
-            missing_timestamp = False
-        elif isinstance(timestamp, str):
-            try:
-                sort_timestamp = float(timestamp)
-                missing_timestamp = False
-            except ValueError:
-                sort_timestamp = 0.0
-                missing_timestamp = True
-        else:
-            sort_timestamp = 0.0
-            missing_timestamp = True
-        return (
-            missing_timestamp,
-            sort_timestamp,
-            stage["worker_pid"],
-        )
-
-    stages.sort(key=stage_sort_key)
+    payload = await stitch_stored_trace(trace_id)
+    stages = payload.get("stages", [])
+    workers_found = payload.get("workers_found", [])
+    errors = payload.get("errors", [])
     return {
-        "source": "OriginTracer stitched live worker trace",
+        "source": "OriginTracer stitched stored event trace",
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "trace_id": trace_id,
         "selected_worker_pid": str(selected_pid),
-        "workers_searched": [
-            str(worker["pid"]) for worker in ordered_workers
-        ],
+        "workers_searched": payload.get("workers_searched", []),
         "workers_found": workers_found,
         "stages": stages,
         "errors": errors,
@@ -572,13 +617,15 @@ async def get_worker_causal_history(
 async def evaluate_worker_rules(
     runtime: ToolRuntime[Any], tags: list[str] | None = None
 ) -> dict[str, Any]:
-    """Evaluate configured causal rules on the selected worker's live graph.
+    """Evaluate backend-registered causal rules on the selected stored graph.
 
     Use this read-only tool for rule-based evidence about Django database
     patterns (`n_plus_one_queries`, `db_query_hotspot`), asyncio problems
     (`asyncio_event_loop_starvation`, `new_sync_call_after_deployment`), or
-    LangGraph behavior (`loop_runaway`, `agent_latency_hotspot`). The worker
-    must have loaded the corresponding rules in its OriginTracer config.
+    LangGraph behavior (`loop_runaway`, `agent_latency_hotspot`). The backend
+    evaluates its registered rules against this uploaded snapshot. Per-process
+    rule configuration is not part of the snapshot, so this cannot prove which
+    rules the originating process loaded.
 
     Optional tags filter rule categories: `db`, `n+1`, `performance`,
     `asyncio`, `async`, `latency`, `blocking`, `deployment`, `langgraph`,
@@ -589,12 +636,13 @@ async def evaluate_worker_rules(
     matched without asking for a latency comparison.
     """
     pid = _pid(runtime)
+    instance_id = _instance_id(runtime)
     matches, registered = await asyncio.gather(
-        query_worker(pid, build_causal_query(tags)),
-        query_worker(pid, "SHOW rules"),
+        query_worker(pid, build_causal_query(tags), instance_id),
+        query_worker(pid, "SHOW rules", instance_id),
     )
     return {
-        "source": "OriginTracer live worker causal-rule review",
+        "source": "OriginTracer stored graph causal-rule review",
         "worker_pid": str(pid),
         "query": "configured rule matches and registered rules",
         "observed_at": datetime.now(timezone.utc).isoformat(),
@@ -621,40 +669,90 @@ async def get_worker_changes(
     to the deployment marker. Structural changes alone do not explain latency.
     """
     return await query_worker(
-        _pid(runtime), build_diff_query(since)
+        _pid(runtime),
+        build_diff_query(since),
+        _instance_id(runtime),
     )
 
 
 @dataclass(frozen=True)
 class ToolProfile:
-    """Discovery metadata used to expose only relevant tools to the LLM."""
+    """Catalog and interpretation metadata for one read-only tool.
+
+    ``terms`` ranks this tool in the planner's compact catalog. Worker scope
+    controls availability: tools marked ``requires_selected_worker`` are only
+    exposed when the graph has a selected worker PID.
+    ``assessment_guidance`` records how to interpret its returned evidence;
+    the graph adds it to the assessor prompt only when this tool was observed.
+    ``research_guidance`` records argument-selection semantics for evidence
+    gathering; the graph adds it when this tool is planned.
+    """
 
     tool: Any
     capability: str
     terms: tuple[str, ...]
+    assessment_guidance: str = ""
+    research_guidance: str = ""
+    requires_selected_worker: bool = True
 
 
 READ_ONLY_TOOL_PROFILES = (
     ToolProfile(
+        get_live_workers_overview,
+        "multi_worker_overview",
+        (
+            "overview of workers",
+            "workers overview",
+            "overview of processes",
+            "running processes",
+            "all currently reporting workers",
+            "all workers",
+            "all processes",
+            "worker fleet overview",
+        ),
+        assessment_guidance=(
+            "get_live_workers_overview reports independently scoped stored "
+            "status, snapshot, graph, and causal-rule data for each process "
+            "with a fresh uploader heartbeat. "
+            "Report worker IDs accurately, identify graph truncation, and "
+            "treat rules and topology as patterns rather than proof of risk "
+            "impact or root cause. Distinguish an empty result from an error. "
+            "Keep every status, graph, and rule value attached to its PID; "
+            "never copy fields between workers. A node label alone does not "
+            "establish a semantic pattern such as N+1. Do not multiply an "
+            "average duration by a call count or infer per-user impact."
+        ),
+        research_guidance=(
+            "get_live_workers_overview lists recently reporting process "
+            "instances from FastAPI snapshot storage and inspects each one. Do not "
+            "pass a PID or make separate selected-worker reads for this scope."
+        ),
+        requires_selected_worker=False,
+    ),
+    ToolProfile(
         list_live_workers,
         "worker_inventory",
         (
-            "live workers",
+            "currently reporting workers",
+            "live worker inventory",
+            "which workers are live",
+            "reported workers",
             "worker list",
             "processes",
             "pids",
             "available worker",
         ),
+        requires_selected_worker=False,
     ),
     ToolProfile(
         get_worker_status,
         "worker_status",
         (
-            "status",
-            "health",
-            "uptime",
-            "active requests",
-            "probe status",
+            "worker health and status",
+            "uptime and active requests",
+            "active probes",
+            "snapshot time",
+            "stored worker status",
         ),
     ),
     ToolProfile(
@@ -703,6 +801,12 @@ READ_ONLY_TOOL_PROFILES = (
             "call count",
             "frequent",
         ),
+        assessment_guidance=(
+            "get_worker_hotspots ranks graph nodes by call_count. Its "
+            "avg_duration_ms values are context only and do not determine "
+            "the ranking. High call frequency alone does not establish "
+            "request-level latency impact."
+        ),
     ),
     ToolProfile(
         get_worker_database_hotspots,
@@ -711,8 +815,23 @@ READ_ONLY_TOOL_PROFILES = (
             "database latency",
             "sql latency",
             "slow query",
+            "slowest database query",
+            "slowest database queries",
+            "slow database query",
+            "slow database queries",
+            "database query duration",
+            "database query durations",
+            "rank database queries",
             "query duration",
             "database hotspot",
+        ),
+        assessment_guidance=(
+            "get_worker_database_hotspots ranks database nodes by "
+            "avg_duration_ms. total_duration_ms is aggregated across "
+            "call_count observations; it is not the ranking key or one "
+            "request's latency. Without a supplied baseline, do not label "
+            "a query absolutely slow. This ranking alone does not establish "
+            "request-level impact."
         ),
     ),
     ToolProfile(
@@ -745,6 +864,15 @@ READ_ONLY_TOOL_PROFILES = (
             "trace id",
             "event history",
             "loop ticks",
+        ),
+        research_guidance=(
+            "For get_worker_events, `probe` is an exact event-probe filter "
+            "such as django.view.enter or request.exit. Do not pass a graph "
+            "node ID or operation name as `probe`. To check which recent "
+            "events relate to an operation, filter by its service only, leave "
+            "`probe` empty, and inspect returned event `name`, `probe`, and "
+            "trace ID fields. An empty filtered result only means that exact "
+            "filter matched nothing in the retained event set."
         ),
     ),
     ToolProfile(
@@ -785,9 +913,14 @@ READ_ONLY_TOOL_PROFILES = (
         (
             "causal rule",
             "rule match",
+            "matching rules",
             "configured rules",
             "evaluate rules",
             "pattern rules",
+            "rule patterns",
+            "n+1 query",
+            "database query hotspot",
+            "query hotspot pattern",
         ),
     ),
     ToolProfile(
@@ -808,45 +941,108 @@ READ_ONLY_TOOLS = [
 ]
 
 
-def select_read_only_tools(
-    request: str,
-    suggested_names: list[str] | None = None,
-) -> list[Any]:
-    """Select tools using request relevance and plan suggestions.
+def assessment_guidance_for_tools(
+    tool_names: set[str],
+) -> list[str]:
+    """Return evidence-interpretation guidance for observed tools.
 
-    Tool metadata is the single place to extend discovery as capabilities are
-    added. If a request is too broad to match safely, expose the full catalog
-    rather than risk making a needed read unavailable.
+    Keeping these semantics beside each tool profile makes the assessor
+    guidance follow the evidence actually gathered without request keywords
+    or tool-pair checks in the graph.
     """
-    normalized = " ".join(request.casefold().split())
-    selected_names = set(suggested_names or [])
-    selected_names.update(
-        profile.tool.name
+    return [
+        profile.assessment_guidance
         for profile in READ_ONLY_TOOL_PROFILES
-        if any(term in normalized for term in profile.terms)
+        if profile.tool.name in tool_names
+        and profile.assessment_guidance
+    ]
+
+
+def research_guidance_for_tools(
+    tool_names: set[str],
+) -> list[str]:
+    """Return tool-specific read semantics for planned observations."""
+    return [
+        profile.research_guidance
+        for profile in READ_ONLY_TOOL_PROFILES
+        if profile.tool.name in tool_names
+        and profile.research_guidance
+    ]
+
+
+def _read_only_profiles_for_scope(
+    *, selected_worker: bool
+) -> list[ToolProfile]:
+    """Expose only tools whose worker scope is available to this run."""
+    return [
+        profile
+        for profile in READ_ONLY_TOOL_PROFILES
+        if selected_worker
+        or not profile.requires_selected_worker
+    ]
+
+
+def select_planned_read_only_tools(
+    suggested_names: list[str],
+    *,
+    selected_worker: bool = True,
+    request: str = "",
+) -> list[Any]:
+    """Bind schemas for planner-selected tools from the read-only allowlist.
+
+    Unknown or out-of-scope names are ignored. If the plan contains no usable
+    name, make the complete set eligible for this worker scope available so
+    an invalid or empty plan cannot expose tools requiring an absent PID.
+    """
+    eligible_profiles = _read_only_profiles_for_scope(
+        selected_worker=selected_worker
     )
-    if not selected_names:
-        return READ_ONLY_TOOLS
+    selected_names = set(suggested_names)
     selected = [
         profile.tool
-        for profile in READ_ONLY_TOOL_PROFILES
+        for profile in eligible_profiles
         if profile.tool.name in selected_names
     ]
-    return selected or READ_ONLY_TOOLS
+    return selected or [
+        profile.tool for profile in eligible_profiles
+    ]
 
 
-def read_only_tool_catalog(request: str) -> list[dict[str, str]]:
-    """Return a compact, request-relevant catalog for the planning model."""
-    selected_names = {
-        tool.name for tool in select_read_only_tools(request)
-    }
+def read_only_tool_catalog(
+    request: str, *, selected_worker: bool = True
+) -> list[dict[str, str]]:
+    """Return compact tool capabilities and descriptions, relevant tools first.
+
+    Each entry contains a bounded description so planning can match requested
+    outputs to what a tool actually returns. Request wording ranks capabilities
+    within the current worker scope. Tools requiring a selected PID are hidden
+    when the run has no selected worker; the planner's tool names later
+    determine which eligible full schemas are bound for evidence gathering.
+    """
+    normalized = " ".join(request.casefold().split())
+    eligible_profiles = _read_only_profiles_for_scope(
+        selected_worker=selected_worker
+    )
+    relevant = [
+        profile
+        for profile in eligible_profiles
+        if any(term in normalized for term in profile.terms)
+    ]
+    relevant_names = {profile.tool.name for profile in relevant}
+    ordered_profiles = relevant + [
+        profile
+        for profile in eligible_profiles
+        if profile.tool.name not in relevant_names
+    ]
     return [
         {
             "name": profile.tool.name,
             "capability": profile.capability,
+            "description": (profile.tool.description or "")[
+                :220
+            ],
         }
-        for profile in READ_ONLY_TOOL_PROFILES
-        if profile.tool.name in selected_names
+        for profile in ordered_profiles
     ]
 
 
@@ -858,12 +1054,28 @@ async def record_deployment_marker_action(
 ) -> dict[str, Any]:
     """Record a deployment marker after the caller approves the action.
 
-    First check the selected worker's live temporal history for the same
-    marker. If it already exists, skip the backend write to avoid recording
-    the startup marker twice. Otherwise write the marker to backend history.
+    First check the selected process instance's stored graph-diff history for
+    the same marker. If it already exists, skip the backend write to avoid a
+    duplicate. Otherwise write the marker through FastAPI, scoped to the exact
+    stored instance rather than a live worker socket.
+
+    Args:
+        label: Deployment label to record and check for duplicates.
+        worker_pid: Selected PID label from trusted graph state.
+        worker_instance_id: Stable stored identity for the selected process.
+
+    Returns:
+        Backend write result, or a successful no-op result when the label
+        already exists.
+
+    Raises:
+        ToolException: If the existing marker cannot be checked safely or the
+            selected stored process instance is unavailable.
     """
     pid = validate_pid(worker_pid)
-    existing = await query_worker(pid, build_diff_query(label))
+    existing = await query_worker(
+        pid, build_diff_query(label), worker_instance_id
+    )
     query_result = existing.get("result")
     if not isinstance(query_result, dict):
         raise ToolException(
