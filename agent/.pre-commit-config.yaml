@@ -1,0 +1,45 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 26.3.1
+    hooks:
+      - id: black
+        language_version: python3
+        args: ["--line-length", "65"]
+        files: ^agent/.*\.py$
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.11
+    hooks:
+      - id: ruff
+        files: ^agent/.*\.py$
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.20.2
+    hooks:
+      - id: mypy
+        name: mypy (agent)
+        args:
+          - --ignore-missing-imports
+          - --config-file=agent/pyproject.toml
+          - agent/src/origintracer_agent/
+        pass_filenames: false
+        additional_dependencies:
+          - httpx>=0.27.0
+          - langchain>=1.0.0
+          - langchain-ollama>=1.0.0
+          - langgraph>=1.0.0
+          - types-PyYAML>=6.0
+
+  - repo: local
+    hooks:
+      - id: pytest-agent
+        name: pytest (agent)
+        entry: pytest
+        language: system
+        pass_filenames: false
+        args:
+          - agent/tests/
+          - -x
+          - -q
+          - --tb=short
+        always_run: true

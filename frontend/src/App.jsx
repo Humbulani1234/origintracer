@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import NodeTable from "./components/NodeTable";
 import EdgeTable from "./components/EdgeTable";
 import TraceTimeline from "./components/TraceTimeline";
@@ -18,6 +18,7 @@ const VIEWS = [
   "nodes",
   "edges",
   "trace",
+  "stitch",
   "events",
   "diff",
   "status",
@@ -27,16 +28,6 @@ const VIEWS = [
   "llm_content",
   "tool_content",
 ];
-
-function workerResult(response) {
-  if (!response?.ok) {
-    throw new Error(response?.error || "Worker query failed");
-  }
-  if (response.data?.error) {
-    throw new Error(response.data.error);
-  }
-  return response.data;
-}
 
 function normalizeWorkerNodes(nodes = []) {
   return nodes.map((node) => ({
@@ -59,6 +50,12 @@ function normalizeWorkerDiff(diff) {
   };
 }
 
+function formatSnapshotTime(value) {
+  if (value == null) return "time unknown";
+  const date = new Date(typeof value === "number" ? value * 1000 : value);
+  return Number.isNaN(date.getTime()) ? "time unknown" : date.toLocaleTimeString();
+}
+
 export default function App() {
   const [view, setView] = useState("nodes");
   const [nodes, setNodes] = useState([]);
@@ -75,77 +72,100 @@ export default function App() {
   const [causal, setCausal] = useState([]);
   const [loading, setLoading] = useState(false);
   const [backendError, setBackendError] = useState(null);
-  const [workers, setWorkers] = useState([]);
-  const [workerInventoryLoaded, setWorkerInventoryLoaded] = useState(false);
-  const [selectedWorkerPid, setSelectedWorkerPid] = useState(null);
+  const [snapshotInventoryLoaded, setSnapshotInventoryLoaded] = useState(false);
+  const [selectedWorkerInstanceId, setSelectedWorkerInstanceId] = useState(() =>
+    window.localStorage.getItem("origintracer.selected_worker_instance_id"),
+  );
+  const [snapshots, setSnapshots] = useState([]);
   const [causalHistory, setCausalHistory] = useState([]);
   const [llmContent, setLlmContent] = useState([]);
   const [toolContent, setToolContent] = useState([]);
+  const refreshInFlight = useRef(false);
 
   const refresh = useCallback(async () => {
+    // Prevent a slow poll from overlapping the next interval and letting an
+    // older inventory response overwrite a newer worker count or graph.
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
-      const workerResponse = await api.workers();
-      const availableWorkers = workerResponse?.data ?? [];
-      setWorkers(availableWorkers);
-      setWorkerInventoryLoaded(true);
-
-      const selectedStillExists = availableWorkers.find(
-        (worker) => String(worker.pid) === String(selectedWorkerPid),
+      const snapshotResponse = await api.snapshots();
+      const reportingSnapshots = (snapshotResponse?.data ?? []).filter(
+        (snapshot) => snapshot?.online === true,
       );
-      const selectedWorker = selectedStillExists ?? availableWorkers[0] ?? null;
-      const workerPid = selectedWorker ? String(selectedWorker.pid) : null;
+      setSnapshots(reportingSnapshots);
+      setSnapshotInventoryLoaded(true);
 
-      if (workerPid !== selectedWorkerPid) {
-        setSelectedWorkerPid(workerPid);
-        // Captures belong to one live process; do not show a prior worker's
+      const savedInstanceId =
+        selectedWorkerInstanceId ||
+        window.localStorage.getItem("origintracer.selected_worker_instance_id");
+      const selectedSnapshot = reportingSnapshots.find(
+        (snapshot) => snapshot.worker_instance_id === savedInstanceId,
+      ) ?? reportingSnapshots[0] ?? null;
+      const instanceId = selectedSnapshot?.worker_instance_id ?? null;
+
+      if (instanceId !== selectedWorkerInstanceId) {
+        setSelectedWorkerInstanceId(instanceId);
+        if (instanceId) {
+          window.localStorage.setItem(
+            "origintracer.selected_worker_instance_id",
+            instanceId,
+          );
+        } else {
+          window.localStorage.removeItem("origintracer.selected_worker_instance_id");
+        }
+        // Captures belong to one process instance; do not show a prior worker's
         // prompts or tool values while the next worker is being selected.
         setLlmContent([]);
         setToolContent([]);
       }
 
-      if (workerPid) {
+      if (instanceId) {
         const [graphResponse, eventResponse, statusResponse, diffResponse,
           causalResponse, historyResponse] = await Promise.all([
-          api.workerQuery(workerPid, "SHOW GRAPH"),
-          api.workerQuery(workerPid, "SHOW EVENTS LIMIT 100"),
-          api.workerQuery(workerPid, "SHOW STATUS"),
-          api.workerQuery(workerPid, "DIFF"),
-          api.workerQuery(workerPid, "CAUSAL"),
-          api.causalHistory().catch(() => null),
+          api.graph(instanceId),
+          api.events(instanceId, 100),
+          api.status(instanceId),
+          api.diff(instanceId).catch(() => null),
+          api.causal(instanceId).catch(() => null),
+          api.causalHistory(instanceId).catch(() => null),
         ]);
 
-        const graph = workerResult(graphResponse)?.data ?? {};
-        const liveEvents = workerResult(eventResponse)?.data ?? [];
-        const liveStatus = workerResult(statusResponse)?.data ?? {};
-        const liveDiff = workerResult(diffResponse)?.data ?? null;
-        const liveCausal = workerResult(causalResponse)?.data ?? [];
+        // A worker can be selected while these requests are in flight. Ignore
+        // the old response so its graph cannot replace the newly selected one.
+        if (
+          window.localStorage.getItem("origintracer.selected_worker_instance_id") !== instanceId
+        ) {
+          return;
+        }
+
+        const graph = graphResponse?.data ?? {};
 
         setNodes(normalizeWorkerNodes(graph.nodes));
         setEdges(graph.edges ?? []);
-        setEvents(liveEvents);
-        setStatus({ ...liveStatus, mode: "worker" });
-        setDiff(normalizeWorkerDiff(liveDiff));
-        setCausal(liveCausal);
+        setEvents(eventResponse?.data ?? []);
+        setStatus(statusResponse ?? { mode: "snapshot" });
+        setDiff(normalizeWorkerDiff(diffResponse?.data));
+        setCausal(causalResponse?.data ?? []);
         setCausalHistory(historyResponse?.data ?? []);
       } else {
-        const historyResponse = await api.causalHistory().catch(() => null);
-
         setNodes([]);
         setEdges([]);
         setEvents([]);
         setTrace((current) => current?.source === "history" ? current : null);
-        setStatus({ mode: "no-worker" });
+        setStatus({ mode: "no-snapshot" });
         setDiff(null);
         setCausal([]);
-        setCausalHistory(historyResponse?.data ?? []);
+        setCausalHistory([]);
       }
 
       setBackendError(null);
     } catch (error) {
       console.warn("Backend unavailable:", error?.message ?? error);
       setBackendError(error?.message ?? "Backend unavailable");
+    } finally {
+      refreshInFlight.current = false;
     }
-  }, [selectedWorkerPid]);
+  }, [selectedWorkerInstanceId]);
 
   useEffect(() => {
     refresh();
@@ -156,124 +176,173 @@ export default function App() {
     return () => clearInterval(timer);
   }, [refresh]);
 
-  const applyQueryResult = (result, query) => {
-    const metric = result?.metric;
-    const verb = result?.verb;
-
-    if (metric === "nodes") {
-      setNodes(normalizeWorkerNodes(result.data));
-      setView("nodes");
-    } else if (metric === "edges") {
-      setEdges(result.data ?? []);
-      setView("edges");
-    } else if (metric === "events") {
-      setEvents(result.data ?? []);
-      setView("events");
-    } else if (metric === "llm_content") {
-      setLlmContent(result.data ?? []);
-      setView("llm_content");
-    } else if (metric === "tool_content") {
-      setToolContent(result.data ?? []);
-      setView("tool_content");
-    } else if (metric === "graph") {
-      setNodes(normalizeWorkerNodes(result.data?.nodes));
-      setEdges(result.data?.edges ?? []);
-      setView("graph");
-    } else if (metric === "critical_path" || verb === "TRACE") {
-      setTrace({
-        id: result.trace_id ?? query.split(/\s+/)[1] ?? "trace",
-        stages: result.data ?? [],
-        source: "worker",
-      });
-      setView("trace");
-    } else if (verb === "STATUS") {
-      setStatus({ ...(result.data ?? {}), mode: "worker" });
-      setView("status");
-    } else if (verb === "DIFF") {
-      setDiff(normalizeWorkerDiff(result.data));
-      setView("diff");
-    } else if (verb === "CAUSAL") {
-      setCausal(result.data ?? []);
-      setView("causal");
+  useEffect(() => {
+    if (!selectedWorkerInstanceId || (view !== "llm_content" && view !== "tool_content")) {
+      return undefined;
     }
-  };
+
+    let cancelled = false;
+    const loadCapturedContent = async () => {
+      try {
+        const kind = view === "llm_content" ? "llm" : "tool";
+        const response = await api.capturedContent(
+          selectedWorkerInstanceId,
+          kind,
+          100,
+        );
+        const captured = response?.data ?? [];
+        if (!cancelled) {
+          if (view === "llm_content") {
+            setLlmContent(captured);
+          } else {
+            setToolContent(captured);
+          }
+          setBackendError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBackendError(error?.message ?? "Could not load stored content");
+        }
+      }
+    };
+
+    loadCapturedContent();
+    const timer = setInterval(loadCapturedContent, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [selectedWorkerInstanceId, view]);
 
   const runQuery = async (query) => {
-    const lower = query.toLowerCase().trim();
-    if (lower.startsWith("\\stitch") || lower.startsWith("stitch")) {
-      const id = query.split(/\s+/)[1];
+    const normalized = query.trim().replace(/^\\/, "").replace(/\s+/g, " ");
+    const upper = normalized.toUpperCase();
+    const traceCommand = normalized.match(/^(?:TRACE\s+)([A-Za-z0-9._:/-]{1,128})$/i);
+    const stitchCommand = normalized.match(/^(?:STITCH\s+)([A-Za-z0-9._:/-]{1,128})$/i);
+
+    if (stitchCommand) {
+      const id = stitchCommand[1];
       if (!id) {
-        setView("trace");
+        setView("stitch");
         return;
       }
       setLoading(true);
       try {
-        const response = await api.trace(id);
-        const stages = response?.data?.data || response?.data || [];
-        setTrace({ id, stages, source: "history" });
-        setView("trace");
-        setBackendError(null);
+        const response = await api.stitchTrace(id);
+        const stages = response?.stages ?? [];
+        setTrace({
+          id,
+          stages,
+          workersFound: response?.workers_found ?? [],
+          workersSearched: response?.workers_searched ?? [],
+          errors: response?.errors ?? [],
+          source: "stitched",
+        });
+        setView("stitch");
+        setBackendError(stages.length ? null : "No stored events found for this trace");
       } catch (error) {
         setBackendError(error?.message ?? "Trace lookup failed");
-        setView("trace");
+        setView("stitch");
       } finally {
         setLoading(false);
       }
       return;
     }
 
-    if (selectedWorkerPid) {
+    if (traceCommand) {
+      if (!selectedWorkerInstanceId) {
+        setBackendError("Select a stored worker snapshot first");
+        return;
+      }
       setLoading(true);
       try {
-        const response = await api.workerQuery(selectedWorkerPid, query);
-        applyQueryResult(workerResult(response), query);
+        const response = await api.trace(traceCommand[1], selectedWorkerInstanceId);
+        setTrace({
+          id: traceCommand[1],
+          stages: response?.data ?? [],
+          source: "history",
+        });
+        setView("trace");
         setBackendError(null);
       } catch (error) {
-        setBackendError(error?.message ?? "Worker query failed");
+        setBackendError(error?.message ?? "Stored trace lookup failed");
       } finally {
         setLoading(false);
       }
       return;
     }
 
-    setBackendError("No live OriginTracer process is available for this query");
-  };
-
-  // Content capture is intentionally user-driven. Unlike graph/events/status,
-  // it is not fetched by the five-second refresh loop: that keeps redacted
-  // prompt, response, and tool previews out of routine dashboard traffic.
-  const loadCapturedContent = async (metric) => {
-    setView(metric);
-    if (!selectedWorkerPid) {
-      setBackendError("No live OriginTracer process is available for this query");
+    if (!selectedWorkerInstanceId) {
+      setBackendError("Select a stored worker snapshot first");
       return;
     }
 
     setLoading(true);
     try {
-      const response = await api.workerQuery(
-        selectedWorkerPid,
-        `SHOW ${metric} LIMIT 100`,
-      );
-      applyQueryResult(workerResult(response), `SHOW ${metric} LIMIT 100`);
+      if (upper === "SHOW NODES" || upper === "NODES") {
+        const response = await api.nodes(selectedWorkerInstanceId);
+        setNodes(normalizeWorkerNodes(response?.data?.data ?? []));
+        setView("nodes");
+      } else if (upper === "SHOW EDGES" || upper === "EDGES") {
+        const response = await api.edges(selectedWorkerInstanceId);
+        setEdges(response?.data?.data ?? []);
+        setView("edges");
+      } else if (upper === "SHOW GRAPH" || upper === "GRAPH") {
+        const response = await api.graph(selectedWorkerInstanceId);
+        setNodes(normalizeWorkerNodes(response?.data?.nodes));
+        setEdges(response?.data?.edges ?? []);
+        setView("graph");
+      } else if (upper === "SHOW EVENTS" || upper === "EVENTS") {
+        const response = await api.events(selectedWorkerInstanceId, 100);
+        setEvents(response?.data ?? []);
+        setView("events");
+      } else if (upper === "SHOW LLM_CONTENT" || upper === "SHOW LLM CONTENT") {
+        const response = await api.capturedContent(selectedWorkerInstanceId, "llm");
+        setLlmContent(response?.data ?? []);
+        setView("llm_content");
+      } else if (upper === "SHOW TOOL_CONTENT" || upper === "SHOW TOOL CONTENT") {
+        const response = await api.capturedContent(selectedWorkerInstanceId, "tool");
+        setToolContent(response?.data ?? []);
+        setView("tool_content");
+      } else if (upper === "SHOW STATUS" || upper === "STATUS") {
+        setStatus(await api.status(selectedWorkerInstanceId));
+        setView("status");
+      } else if (upper === "CAUSAL" || upper === "SHOW CAUSAL") {
+        const response = await api.causal(selectedWorkerInstanceId);
+        setCausal(response?.data ?? []);
+        setView("causal");
+      } else if (upper.startsWith("DIFF")) {
+        const since = normalized.match(/^DIFF(?:\s+SINCE\s+(.+))?$/i)?.[1] ?? "deployment";
+        const response = await api.diff(selectedWorkerInstanceId, since);
+        setDiff(normalizeWorkerDiff(response?.data));
+        setView("diff");
+      } else {
+        throw new Error("This view supports stored API queries only; use the REPL for arbitrary live DSL queries.");
+      }
       setBackendError(null);
     } catch (error) {
-      setBackendError(error?.message ?? "Worker query failed");
+      setBackendError(error?.message ?? "Stored query failed");
     } finally {
       setLoading(false);
     }
   };
 
-  const selectedWorker = workers.find(
-    (worker) => String(worker.pid) === String(selectedWorkerPid),
+  // Captured content is polled only while its view is selected.
+  const loadCapturedContent = (metric) => {
+    setView(metric);
+  };
+
+  const selectedWorker = snapshots.find(
+    (snapshot) => snapshot.worker_instance_id === selectedWorkerInstanceId,
   );
-  const noLiveWorker = workerInventoryLoaded && workers.length === 0;
-  const showingHistoricalData = view === "history"
-    || (view === "trace" && trace?.source === "history");
+  const noReportingWorkers = snapshotInventoryLoaded && snapshots.length === 0;
   const badge = {
     nodes: `${nodes.length} nodes`,
     edges: `${edges.length} edges`,
     trace: trace ? `${trace.stages.length} stages` : "—",
+    stitch: trace?.source === "stitched"
+      ? `${trace.workersFound.length} workers · ${trace.stages.length} stages`
+      : "—",
     events: `${events.length} events`,
     diff: diff
       ? `${(diff.added_nodes?.length || 0) + (diff.added_edges?.length || 0)} changes`
@@ -282,7 +351,7 @@ export default function App() {
     llm_content: `${llmContent.length} entries`,
     tool_content: `${toolContent.length} entries`,
     causal: `${causal.length} patterns`,
-    status: selectedWorker ? "live" : noLiveWorker ? "no worker" : "…",
+    status: selectedWorker ? "reporting" : noReportingWorkers ? "no reporting workers" : "…",
     history: `${causalHistory.length} snapshots`,
   };
 
@@ -295,11 +364,19 @@ export default function App() {
             <div
               key={item}
               className={`nav-item ${view === item ? "active" : ""}`}
-              onClick={() => (
-                item === "llm_content" || item === "tool_content"
-                  ? loadCapturedContent(item)
-                  : setView(item)
-              )}
+              onClick={() => {
+                if (
+                  (item === "stitch" && trace?.source !== "stitched")
+                  || (item === "trace" && trace?.source === "stitched")
+                ) {
+                  setTrace(null);
+                }
+                if (item === "llm_content" || item === "tool_content") {
+                  loadCapturedContent(item);
+                } else {
+                  setView(item);
+                }
+              }}
             >
               <span className="nav-dot" />
               {item.replace("_", " ")}
@@ -307,21 +384,27 @@ export default function App() {
           ))}
         </nav>
 
-        {workers.length > 0 && (
-          <div className="sockets">
-            <div className="socket-title">LIVE PROCESSES</div>
-            {workers.map((worker) => {
-              const active = String(worker.pid) === String(selectedWorkerPid);
+        {snapshots.length > 0 && (
+          <div className="snapshots">
+            <div className="snapshot-title">CURRENTLY REPORTING ({snapshots.length})</div>
+            {snapshots.map((snapshot) => {
+              const active = snapshot.worker_instance_id === selectedWorkerInstanceId;
               return (
                 <button
                   type="button"
-                  key={worker.pid}
-                  className={`worker-option ${active ? "active" : ""}`}
-                  onClick={() => setSelectedWorkerPid(String(worker.pid))}
-                  title={worker.socket}
+                  key={snapshot.worker_instance_id}
+                  className={`worker-option ${active ? "active" : ""} is-reporting`}
+                  onClick={() => {
+                    setSelectedWorkerInstanceId(snapshot.worker_instance_id);
+                    window.localStorage.setItem(
+                      "origintracer.selected_worker_instance_id",
+                      snapshot.worker_instance_id,
+                    );
+                  }}
+                  title={`Currently reporting process instance ${snapshot.worker_instance_id}`}
                 >
                   <span className="socket-dot" />
-                  pid {worker.pid}
+                  pid {snapshot.worker_pid ?? "unknown"} · {snapshot.nodes ?? 0} nodes · {formatSnapshotTime(snapshot.received_at)}
                 </button>
               );
             })}
@@ -333,7 +416,9 @@ export default function App() {
         <div className="toolbar">
           <span className="toolbar-title">{view.replace("_", " ")}</span>
           {selectedWorker && (
-            <span className="worker-badge">pid {selectedWorker.pid}</span>
+            <span className={`worker-badge ${selectedWorker.online ? "is-reporting" : "is-stale"}`}>
+              {selectedWorker.online ? "reporting" : "stale snapshot"} · pid {selectedWorker.worker_pid ?? "unknown"}
+            </span>
           )}
           <span className="badge">{badge[view]}</span>
           {backendError && (
@@ -343,18 +428,15 @@ export default function App() {
         <QueryBar onRun={runQuery} loading={loading} />
         <div className="content">
           <ErrorBoundary key={view}>
-            {noLiveWorker && !showingHistoricalData ? (
+            {noReportingWorkers ? (
               <div className="no-worker-state">
                 <div className="no-worker-title">
-                  No live OriginTracer processes
+                  No currently reporting workers
                 </div>
                 <div>
-                  Start an instrumented process to expose an OriginTracer
-                  worker socket. This dashboard will select it automatically.
-                </div>
-                <div className="no-worker-history">
-                  Historical causal history and explicit \stitch queries remain
-                  available.
+                  Start an instrumented process configured to upload snapshots
+                  to this FastAPI backend and wait for its heartbeat. The REPL
+                  remains available for live inspection.
                 </div>
               </div>
             ) : (
@@ -362,6 +444,9 @@ export default function App() {
                 {view === "nodes" && <NodeTable nodes={nodes} />}
                 {view === "edges" && <EdgeTable edges={edges} />}
                 {view === "trace" && <TraceTimeline trace={trace} />}
+                {view === "stitch" && (
+                  <TraceTimeline trace={trace} mode="stitch" />
+                )}
                 {view === "events" && <EventLog events={events} />}
                 {view === "diff" && <DiffView diff={diff} />}
                 {view === "graph" && <GraphView nodes={nodes} edges={edges} />}
@@ -375,7 +460,9 @@ export default function App() {
                     worker={selectedWorker}
                   />
                 )}
-                {view === "history" && <CausalHistory history={causalHistory} />}
+                {view === "history" && (
+                  <CausalHistory history={causalHistory} currentMatches={causal} />
+                )}
                 {view === "llm_content" && (
                   <ContentView kind="llm" rows={llmContent} />
                 )}
@@ -392,7 +479,7 @@ export default function App() {
           events={events}
           status={status}
           worker={selectedWorker}
-          workerInventoryLoaded={workerInventoryLoaded}
+          snapshotInventoryLoaded={snapshotInventoryLoaded}
         />
       </div>
     </div>

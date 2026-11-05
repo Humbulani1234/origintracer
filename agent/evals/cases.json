@@ -1,0 +1,1216 @@
+[
+  {
+    "id": "worker_node_inventory",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "List the observed operation nodes in this worker."
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_nodes"
+      ],
+      "required_observation_tools": [
+        "get_worker_nodes"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Summarize node names and any returned counts or durations accurately.",
+          "Do not describe the node listing as latency-ranked unless it is."
+        ]
+      }
+    }
+  },
+  {
+    "id": "worker_edge_inventory",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "Show the observed caller-to-callee edges in this worker's graph."
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_edges"
+      ],
+      "required_observation_tools": [
+        "get_worker_edges"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Describe edge direction and returned call counts accurately.",
+          "Do not infer per-edge latency or a causal explanation from graph edges."
+        ]
+      }
+    }
+  },
+  {
+    "id": "worker_graph_inventory",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "Show this worker's graph and summarize the observed nodes and edges."
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_graph"
+      ],
+      "required_observation_tools": [
+        "get_worker_graph"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Describe returned nodes and edges as observed graph structure.",
+          "Do not infer execution order, latency, or root cause from topology alone.",
+          "State when a section is empty or omitted from the result."
+        ]
+      }
+    }
+  },
+  {
+    "id": "recent_worker_events",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "Show recent events from this worker and summarize their timestamps, services, and probes."
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_events"
+      ],
+      "required_observation_tools": [
+        "get_worker_events"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Summarize only returned event fields and preserve trace IDs when relevant.",
+          "Do not treat event timestamps as event durations or infer missing events."
+        ]
+      }
+    }
+  },
+  {
+    "id": "single_worker_trace_path",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Find a trace ID in this worker's recent events, then inspect that",
+            "trace's critical path and summarize the returned stage durations."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_events",
+        "get_worker_trace"
+      ],
+      "required_observation_tools": [
+        "get_worker_events",
+        "get_worker_trace"
+      ],
+      "min_evidence": 2,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use a trace ID actually returned by the event query and keep it consistent.",
+          "Select a trace whose observed event type matches the request; for request critical paths prefer request start/entry and exit/end boundaries, and for worker lifecycle questions use spawn/start/ready/exit events.",
+          "Describe every returned trace stage's duration_ms exactly as returned, and state when a stage has no returned duration.",
+          "Do not calculate stage durations by subtracting event timestamps or invent stages absent from get_worker_trace.",
+          "Do not claim a component caused latency without supporting trace evidence."
+        ]
+      }
+    }
+  },
+  {
+    "id": "stitched_trace_across_workers",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Find a trace ID in this worker's recent events and stitch that exact",
+            "trace across live worker processes. Summarize which PIDs contributed."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_events",
+        "get_worker_stitched_trace"
+      ],
+      "required_observation_tools": [
+        "get_worker_events",
+        "get_worker_stitched_trace"
+      ],
+      "min_evidence": 2,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the exact trace ID obtained from events and list only PIDs found in the stitched result.",
+          "Report a partial or empty result as such; do not imply every live process participated.",
+          "Keep returned per-worker inter-event durations separate; do not calculate cross-process latency from timestamps."
+        ]
+      }
+    }
+  },
+  {
+    "id": "saved_causal_history",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "Show saved causal-rule history for this selected worker and summarize any recorded matches."
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_causal_history"
+      ],
+      "required_observation_tools": [
+        "get_worker_causal_history"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Report only history records returned for the selected worker instance.",
+          "Distinguish saved matches from a fresh live rule evaluation.",
+          "Treat an empty history result as no saved records returned, not proof no rule ever matched."
+        ]
+      }
+    }
+  },
+  {
+    "id": "direct_worker_status",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "Show the current status of this worker and tell me whether it has active requests."
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_status"
+      ],
+      "required_observation_tools": [
+        "get_worker_status"
+      ],
+      "must_not_propose_action": true,
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Answer from the selected process instance's uploaded status heartbeat and graph snapshot.",
+          "Report heartbeat freshness, uptime, and active-request count when present; include the active probes and rules when the user asks which are loaded.",
+          "If the heartbeat is missing or stale, say that current health/activity cannot be established instead of describing the process as currently healthy.",
+          "Identify missing details instead of guessing."
+        ]
+      },
+      "evidence_must_contain": [
+        "uptime_s",
+        "active_requests",
+        "probes_active",
+        "online"
+      ]
+    }
+  },
+  {
+    "id": "live_worker_operational_overview",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "For this selected worker, summarize its status, observed graph",
+            "structure, and currently matched causal-rule patterns. Explain",
+            "plausible operational risks suggested by that evidence, while",
+            "separating detected patterns from hypotheses and not claiming a",
+            "root cause."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_status",
+        "get_worker_graph",
+        "evaluate_worker_rules"
+      ],
+      "required_observation_tools": [
+        "get_worker_status",
+        "get_worker_graph",
+        "evaluate_worker_rules"
+      ],
+      "min_evidence": 3,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Report status, graph nodes and edges, and rule matches only for the selected worker.",
+          "Distinguish registered rules, matched patterns, and registered rules with no match in the returned evaluation.",
+          "Treat a causal-rule match and graph structure as patterns or relationships, not proof of root cause or impact.",
+          "Describe risks as plausible implications supported by observations, and state when evidence cannot establish system impact or causation.",
+          "Cite findings with valid evidence IDs and avoid unsupported remediation advice.",
+          "For db_query_hotspot, report the exact query-level call counts, percentages, and averages from the rule evidence; do not swap values between queries or infer user counts.",
+          "Do not turn a detected hotspot into a claim that database load caused request latency.",
+          "Do not add unresolved questions or remediation steps about authentication, caching, or N+1 behavior unless the user asks and evidence supports the specific claim."
+        ]
+      },
+      "must_be_sufficient_to_answer": true,
+      "max_unresolved_questions": 0,
+      "max_next_steps": 0
+    }
+  },
+  {
+    "id": "live_workers_operational_overview_all",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        {
+          "lines": [
+            "Give me an overview of all live OriginTracer workers.",
+            "For each worker, summarize status, graph structure, and matched causal-rule patterns.",
+            "Explain plausible operational risks only where the evidence supports them,",
+            "and distinguish patterns from confirmed causes."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_live_workers_overview"
+      ],
+      "required_observation_tools": [
+        "get_live_workers_overview"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the dedicated all-worker overview and report only identities present in its inventory result.",
+          "Summarize status, graph node/edge counts or returned graph details, and matched rule patterns per worker.",
+          "Identify per-worker query errors and graph truncation when present.",
+          "Count only workers with fresh heartbeats as currently reporting; identify stale snapshots separately and do not call them live workers.",
+          "Treat matched rules and graph topology as patterns, not proof of cause or system impact.",
+          "Describe plausible risks only as qualified implications supported by the returned observations.",
+          "Identify workers by returned PID and keep each worker’s status, probe set, graph counts, and rule matches attached to that PID; never transfer a value from one worker to another.",
+          "Do not claim workers have similar or identical patterns unless the returned values support that comparison.",
+          "A node named NPlusOneView does not prove an N+1 query pattern. Distinguish a matched db_query_hotspot rule from a matched n_plus_one_queries rule.",
+          "Report exact average durations as per-call averages. Do not multiply duration by call_count or infer per-user or per-request impact.",
+          "Do not recommend caching, code changes, synthetic testing, or other remediation unless requested and supported by evidence."
+        ]
+      },
+      "must_be_sufficient_to_answer": true,
+      "max_unresolved_questions": 0,
+      "max_next_steps": 0
+    }
+  },
+  {
+    "id": "ambiguous_live_worker_overview_scope",
+    "inputs": {
+      "requires_worker": true,
+      "interrupt_responses": [
+        "all"
+      ],
+      "turns": [
+        {
+          "lines": [
+            "Give me an operational overview of the current runtime, including",
+            "status, graphs, causal patterns, and plausible risks."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "must_be_interrupted": true,
+      "required_tools": [
+        "get_live_workers_overview"
+      ],
+      "required_observation_tools": [
+        "get_live_workers_overview"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "When a worker is already selected and the requested overview scope is ambiguous, ask whether to inspect all workers or only the selected worker.",
+          "After the supplied answer selects all, use the all-worker overview tool and report per-worker scope accurately.",
+          "Do not treat detected rule patterns as confirmed causes."
+        ]
+      }
+    }
+  },
+  {
+    "id": "multi_step_hotspot_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Find the busiest operation in this worker, inspect recent events,",
+            "and explain what the evidence shows about its activity."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_hotspots",
+        "get_worker_events"
+      ],
+      "required_observation_tools": [
+        "get_worker_hotspots",
+        "get_worker_events"
+      ],
+      "min_evidence": 2,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Use both hotspot and event evidence to answer.",
+          "Distinguish observed activity from an explanation of why it is happening."
+        ]
+      }
+    }
+  },
+  {
+    "id": "django_database_vs_event_loop",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "For this Django worker, compare slow database queries with asyncio",
+            "event-loop starvation as possible explanations for high request latency.",
+            "Inspect database query latency and events as well as event-loop evidence.",
+            "Gather evidence for and against each explanation, and say what remains unclear."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_latency_diagnostics"
+      ],
+      "required_observation_tools": [
+        "get_worker_latency_diagnostics"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 2,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use duration-ranked database nodes and django.db.query events to",
+          "assess the database explanation, and inspect live causal-rule matches.",
+          "If db_query_hotspot is present, report it as a call-count pattern with",
+          "its evidence citation, not proof of slow queries or root cause.",
+          "Separate event-loop activity from evidence of starvation.",
+          "Do not treat absence from HOTSPOT TOP as evidence that database work",
+          "is absent or fast. Do not claim a root cause unless the evidence",
+          "supports it; state what remains unclear and what evidence is missing."
+        ]
+      }
+    }
+  },
+  {
+    "id": "django_causal_rule_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check this Django worker for configured N+1 query and database query",
+            "hotspot patterns. Explain what any matching rules detect, and what",
+            "they do not prove."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "any_tools": [
+        "evaluate_worker_rules",
+        "get_worker_latency_diagnostics"
+      ],
+      "required_observation_any_tools": [
+        "evaluate_worker_rules",
+        "get_worker_latency_diagnostics"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "evidence_must_contain": [
+        "n_plus_one_queries",
+        "db_query_hotspot"
+      ],
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use live rule results for n_plus_one_queries and db_query_hotspot",
+          "when configured. Explain their match evidence accurately: an N+1",
+          "match relates query count to view count; a database hotspot reflects",
+          "a high share of database calls. Do not treat either match or confidence",
+          "as proof that it caused latency. If a rule is absent, distinguish no",
+          "match from a rule not being configured. Cite valid evidence IDs."
+        ]
+      }
+    }
+  },
+  {
+    "id": "asyncio_causal_rule_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check this worker for configured asyncio event-loop starvation and",
+            "post-deployment synchronous-call patterns. Explain the rule evidence",
+            "and remaining uncertainty."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "any_tools": [
+        "evaluate_worker_rules",
+        "get_worker_latency_diagnostics"
+      ],
+      "required_observation_any_tools": [
+        "evaluate_worker_rules",
+        "get_worker_latency_diagnostics"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "evidence_must_contain": [
+        "asyncio_event_loop_starvation",
+        "new_sync_call_after_deployment"
+      ],
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Inspect live asyncio and deployment-related rule matches when",
+          "configured. A match is a pattern detected over the current aggregate",
+          "graph, not proof of request-level causality. Do not infer loop health",
+          "from ordinary tick activity or infer that no rule is configured from",
+          "an empty match list. Cite valid evidence IDs and state limitations."
+        ]
+      }
+    }
+  },
+  {
+    "id": "langgraph_causal_rule_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check this worker for configured LangGraph runaway-loop and LLM/tool",
+            "latency-hotspot rules. Explain what any match means and what remains",
+            "unproven."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "any_tools": [
+        "evaluate_worker_rules",
+        "get_worker_latency_diagnostics"
+      ],
+      "required_observation_any_tools": [
+        "evaluate_worker_rules",
+        "get_worker_latency_diagnostics"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "evidence_must_contain": [
+        "loop_runaway",
+        "agent_latency_hotspot"
+      ],
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Inspect registered LangGraph rule names and live matches. Explain that",
+          "loop_runaway compares LLM calls with graph invocations, while",
+          "agent_latency_hotspot identifies a node's share of aggregate leaf-work",
+          "time. Do not claim either proves a root cause for one request. Cite",
+          "valid evidence IDs and describe missing probe or workload evidence."
+        ]
+      }
+    }
+  },
+  {
+    "id": "follow_up_in_same_investigation",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Find the busiest operation in this worker and summarize the evidence."
+          ]
+        },
+        {
+          "lines": [
+            "Check whether the recent events add evidence about that same operation."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_hotspots",
+        "get_worker_events"
+      ],
+      "required_observation_tools": [
+        "get_worker_hotspots",
+        "get_worker_events"
+      ],
+      "min_evidence": 2,
+      "max_evidence": 2,
+      "min_hypotheses": 0,
+      "max_hypotheses": 0,
+      "min_questions": 2,
+      "evidence_query_requirements": [
+        {
+          "tool": "get_worker_events",
+          "contains": [
+            "service = \"django\""
+          ],
+          "not_contains": [
+            "probe ="
+          ]
+        }
+      ],
+      "quality_criteria": {
+        "lines": [
+          "Use the second request as a follow-up to the first investigation.",
+          "Keep the answer focused on the same selected worker and relate new",
+          "observations to prior evidence.",
+          "Treat this as a factual check for whether recent events show the",
+          "previously identified busiest operation. Do not invent causal",
+          "hypotheses or use sampled events to claim that an operation never",
+          "occurs. The report should not expand into latency diagnoses for",
+          "other routes. Event probe filters are exact instrumentation probe",
+          "names, not graph node IDs; inspect service events with no probe",
+          "filter for matching operation names. Event timestamps do not establish",
+          "durations; only report durations supplied as duration measurements.",
+          "Keep the final report scoped to the second request: include the earlier hotspot evidence only as needed to assess the new events, and do not replay unrelated status or graph sections."
+        ]
+      },
+      "forbidden_observation_tools": [
+        "get_worker_status",
+        "get_worker_graph"
+      ]
+    }
+  },
+  {
+    "id": "follow_up_uses_recent_request_context",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "How many workers are currently being monitored?",
+        "Are those workers healthy, and should I be worried?",
+        "Which worker is showing both asyncio starvation and database hotspots?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "investigation",
+      "required_tools": [
+        "get_live_workers_overview"
+      ],
+      "required_observation_tools": [
+        "get_live_workers_overview"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "max_hypotheses": 0,
+      "min_questions": 3,
+      "must_be_sufficient_to_answer": true,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "max_unresolved_questions": 0,
+      "max_next_steps": 0,
+      "quality_criteria": {
+        "lines": [
+          "Treat the third request as a factual follow-up about the patterns discussed in the immediately preceding worker-health answer.",
+          "Identify the PID whose own overview data shows both asyncio_event_loop_starvation and db_query_hotspot, citing that overview evidence.",
+          "Answer the latest question directly. Do not repeat the original worker count or replay the full health assessment.",
+          "Do not carry hypotheses from the health assessment into this factual query or describe either rule match as a confirmed cause."
+        ]
+      }
+    }
+  },
+  {
+    "id": "follow_up_reuses_prior_diagnostics",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Compare database latency and asyncio event-loop starvation as",
+            "possible explanations for this worker's high request latency.",
+            "Inspect diagnostics and summarize evidence for each."
+          ]
+        },
+        {
+          "lines": [
+            "For those two explanations, what does the evidence support or",
+            "weaken, and what remains unclear?"
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_latency_diagnostics"
+      ],
+      "required_observation_tools": [
+        "get_worker_latency_diagnostics"
+      ],
+      "min_evidence": 1,
+      "max_evidence": 1,
+      "min_hypotheses": 2,
+      "max_hypotheses": 2,
+      "min_questions": 2,
+      "must_be_sufficient_to_answer": true,
+      "max_next_steps": 0,
+      "quality_criteria": {
+        "lines": [
+          "Treat the second turn as a follow-up to the two hypotheses in the",
+          "first investigation. Reuse its diagnostic evidence rather than",
+          "treating the follow-up as unrelated.",
+          "Without request-correlated component durations, keep both causal",
+          "hypothesis reviews inconclusive. Report the database hotspot and",
+          "asyncio measurements as patterns or measurements, not causes, and",
+          "state that their relationship to request latency remains unknown.",
+          "Do not repeat either hypothesis as a factual finding or recommend",
+          "optional next investigations.",
+          "Keep the final report scoped to the second request, reusing the prior diagnostic evidence without repeating unrelated report sections."
+        ]
+      },
+      "expected_response_mode": "investigation",
+      "min_findings": 1,
+      "max_unresolved_questions": 0,
+      "forbidden_observation_tools": [
+        "get_worker_status",
+        "get_worker_graph",
+        "get_worker_events"
+      ]
+    }
+  },
+  {
+    "id": "unrelated_follow_up_starts_fresh",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Show this worker's graph and summarize the observed nodes and",
+            "edges."
+          ]
+        },
+        {
+          "lines": [
+            "What is this worker's current status and uptime?"
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_status"
+      ],
+      "required_observation_tools": [
+        "get_worker_status"
+      ],
+      "forbidden_observation_tools": [
+        "get_worker_graph",
+        "get_worker_edges",
+        "get_worker_hotspots",
+        "get_worker_events",
+        "get_worker_latency_diagnostics"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_questions": 1,
+      "max_questions": 1,
+      "quality_criteria": {
+        "lines": [
+          "Treat the status question as a new investigation even though it",
+          "arrives on the same checkpointed thread. Answer from status evidence",
+          "and do not carry forward the unrelated graph inventory.",
+          "The final report should contain the current status answer only; do not replay the previous graph report or other unrelated observations."
+        ]
+      }
+    }
+  },
+  {
+    "id": "database_call_count_vs_duration",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Compare the most frequently called operations with the slowest",
+            "database queries on this worker. Explain what each ranking measures",
+            "and whether either one establishes a cause of request latency."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_hotspots",
+        "get_worker_database_hotspots"
+      ],
+      "required_observation_tools": [
+        "get_worker_hotspots",
+        "get_worker_database_hotspots"
+      ],
+      "min_evidence": 2,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "must_be_sufficient_to_answer": true,
+      "max_unresolved_questions": 0,
+      "max_next_steps": 0,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use both tool results and explicitly explain the metric each ranks:",
+          "get_worker_hotspots ranks node call counts; get_worker_database_hotspots",
+          "ranks database nodes by average duration. Treat total_duration_ms as",
+          "an aggregate across calls, not the ranking key or a single request's",
+          "latency. Do not equate frequent calls with slow queries, claim either",
+          "ranking proves request-level impact, or call a query absolutely slow",
+          "without a baseline. State directly whether these results establish",
+          "request impact. For this answered metric comparison, leave the",
+          "unresolved-question and next-step lists empty; do not invent causal",
+          "hypotheses or optional follow-up work. If a",
+          "ranking is empty or unavailable, report that limit without inferring",
+          "no activity."
+        ]
+      }
+    }
+  },
+  {
+    "id": "operation_callers_and_graph_shape",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Show the busiest operation and use the worker graph to identify",
+            "what calls it. Summarize the observed relationship without guessing",
+            "why the operation is frequent."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_hotspots"
+      ],
+      "any_tools": [
+        "get_worker_graph",
+        "get_worker_edges"
+      ],
+      "required_observation_tools": [
+        "get_worker_hotspots"
+      ],
+      "required_observation_any_tools": [
+        "get_worker_graph",
+        "get_worker_edges"
+      ],
+      "min_evidence": 2,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the hotspot result to identify high call volume and either the",
+          "edge list or combined graph result to describe caller-to-callee",
+          "relationships when present. Treat call counts and graph structure",
+          "as observations, not proof of a loop, bug, or performance cause.",
+          "State when the graph does not identify a caller. Use complete",
+          "operation names present in the evidence; do not call a name truncated",
+          "or recommend retrieving it when the full name is supplied."
+        ]
+      }
+    }
+  },
+  {
+    "id": "changes_since_deployment",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check what changed in this worker's graph since the deployment",
+            "marker. Summarize added or removed nodes and edges, and say what",
+            "those structural changes can and cannot tell us."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_changes"
+      ],
+      "required_observation_tools": [
+        "get_worker_changes"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Report the returned changes or explain if there is no usable marker",
+          "or comparison baseline. Structural graph differences show changed",
+          "observations; they do not alone establish why a change occurred or",
+          "whether it caused latency. Cite recorded evidence."
+        ]
+      }
+    }
+  },
+  {
+    "id": "ask_for_worker_selection",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "Show me the current worker status."
+      ]
+    },
+    "outputs": {
+      "expected_status": "awaiting_worker",
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Do not claim an inspection was completed.",
+          "Ask the caller to select a PID with a stored worker snapshot.",
+          "If reporting and stale snapshots are both offered, label their freshness accurately."
+        ]
+      }
+    }
+  },
+  {
+    "id": "deployment_action_waits_for_approval",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "Record a deployment marker named eval-demo-release."
+      ]
+    },
+    "outputs": {
+      "expected_status": "awaiting_action_approval",
+      "expected_action": "record_deployment_marker",
+      "action_requires_worker_pid": true,
+      "must_be_interrupted": true,
+      "must_not_execute_action": true,
+      "interactive_expected_statuses": [
+        "awaiting_action_approval",
+        "action_cancelled",
+        "completed"
+      ],
+      "quality_criteria": {
+        "lines": [
+          "Show the proposed deployment marker and make clear that it has not",
+          "been recorded until the caller approves it.",
+          "Explain that after approval the selected process instance's stored",
+          "deployment history is checked for an existing marker before writing.",
+          "In interactive mode, report the action as pending if left paused,",
+          "cancelled if rejected, and completed only after explicit approval."
+        ]
+      }
+    }
+  },
+  {
+    "id": "causal_evaluation_action_waits_for_approval",
+    "inputs": {
+      "turns": [
+        "Run causal rules against the latest backend snapshot and save any matches."
+      ]
+    },
+    "outputs": {
+      "expected_status": "awaiting_action_approval",
+      "expected_action": "evaluate_and_record_rules",
+      "must_be_interrupted": true,
+      "must_not_execute_action": true,
+      "quality_criteria": {
+        "lines": [
+          "Show that a causal rule evaluation is proposed and wait for approval",
+          "before evaluating or recording matches."
+        ]
+      }
+    }
+  },
+  {
+    "id": "general_chat_greeting",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "Hi, how are you?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "chat",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Respond naturally to the greeting.",
+          "Do not ask the user to select a worker or claim an inspection was performed.",
+          "Keep the greeting reply brief; do not volunteer a product overview or documentation pitch unless the user asks."
+        ]
+      }
+    }
+  },
+  {
+    "id": "unrelated_chat_then_investigation_starts_clean",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        "Can you tell me about the war in Ukraine?",
+        "Can you list the observed operation nodes in this worker?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "investigation",
+      "required_tools": [
+        "get_worker_nodes"
+      ],
+      "required_observation_tools": [
+        "get_worker_nodes"
+      ],
+      "forbidden_observation_tools": [
+        "get_live_workers_overview",
+        "get_worker_status",
+        "get_worker_graph",
+        "get_worker_events"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "max_hypotheses": 0,
+      "min_questions": 1,
+      "max_questions": 1,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Treat the second turn as a fresh worker investigation after an unrelated out-of-scope chat turn.",
+          "Use only the worker-node request as the active investigation question and answer it from get_worker_nodes evidence.",
+          "Do not treat the Ukraine question as the investigation origin, prior investigation request, or a reason to continue unrelated investigation state."
+        ]
+      }
+    }
+  },
+  {
+    "id": "assistant_workflow_architecture_follow_up",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "Who are you and what do you do?",
+        "How do you achieve your tasks and how were you designed?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "chat",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Use the prior turn to understand that “you” refers to the OriginTracer assistant, while briefly distinguishing it from the OriginTracer product if useful.",
+          "Explain the supported high-level workflow: broad routing, documentation retrieval for product chat, planning and read-only evidence gathering for investigations, and evidence-based reporting.",
+          "Do not refuse to discuss architecture; do not invent private deployment details or claim the assistant is the underlying OriginTracer runtime."
+        ]
+      }
+    }
+  },
+  {
+    "id": "general_chat_concept_question",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "What does OriginTracer do?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "chat",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Describe OriginTracer using the supplied product overview.",
+          "When mentioning official documentation, render it as a clickable Markdown link, using retrieved page links when available.",
+          "Do not claim to have inspected this user's OriginTracer data."
+        ]
+      }
+    }
+  },
+  {
+    "id": "general_chat_rejects_unrelated_topic",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "What is happening in the war in Ukraine?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "out_of_scope",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Politely state that this agent is for OriginTracer and observability topics.",
+          "Do not answer or speculate about current events."
+        ]
+      }
+    }
+  },
+  {
+    "id": "docs_chat_django_probe_setup",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "How do I set up the native Django probe, and what does it capture?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "chat",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Explain that TracerMiddleware must be first in Django MIDDLEWARE.",
+          "Describe the documented Django observations, such as request lifecycle, database queries, class-based views, and unhandled exceptions.",
+          "Cite the relevant official Django probe documentation page.",
+          "Do not claim that the agent inspected a live worker."
+        ]
+      }
+    }
+  },
+  {
+    "id": "docs_chat_django_causal_rules",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "What do the built-in Django N+1 query and database hotspot rules detect, and how are they different?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "chat",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Explain that the N+1 rule compares a database query call count with its calling view and detects a ratio of at least five to one.",
+          "Explain that the database hotspot rule detects a query pattern making up more than 30% of observed database calls.",
+          "Clearly distinguish the two patterns and avoid claiming either match proves a root cause.",
+          "Cite the official Django causal rules documentation page."
+        ]
+      }
+    }
+  },
+  {
+    "id": "worker_reporting_inventory_excludes_stale_snapshots",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "Which OriginTracer workers are currently reporting?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "investigation",
+      "required_tools": [
+        "list_live_workers"
+      ],
+      "required_observation_tools": [
+        "list_live_workers"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "max_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "must_be_sufficient_to_answer": true,
+      "max_unresolved_questions": 0,
+      "max_next_steps": 0,
+      "quality_criteria": {
+        "lines": [
+          "Report only process instances with fresh heartbeats as currently reporting.",
+          "Do not include stale snapshots or stale-snapshot counts in the live-worker answer.",
+          "If no workers are reporting, say so without treating stored snapshots as live.",
+          "Do not infer operating-system process state beyond the heartbeat freshness reported by FastAPI."
+        ]
+      }
+    }
+  }
+]

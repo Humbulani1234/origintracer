@@ -1,0 +1,11 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": [".", ".."],
+  "graphs": {
+    "origintracer_investigator": "./src/origintracer_agent/graph.py:agent"
+  },
+  "env": ".env.example",
+  "http": {
+    "app": "./src/origintracer_agent/webapp.py:app"
+  }
+}

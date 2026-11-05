@@ -252,6 +252,8 @@ class TestUploaderHTTPFlush:
         )
         headers = requests_made[0]["kwargs"]["headers"]
         assert headers["Authorization"] == "Bearer sk_test"
+        assert headers["X-OriginTracer-Worker-PID"].isdigit()
+        assert headers["X-OriginTracer-Worker-Instance-ID"]
 
     def test_flush_snapshot_posts_to_correct_endpoint(
         self, monkeypatch
@@ -260,7 +262,7 @@ class TestUploaderHTTPFlush:
         requests_made = []
 
         def mock_post(url, **kwargs):
-            requests_made.append(url)
+            requests_made.append({"url": url, "kwargs": kwargs})
             # We need a valid response object for the Uploader logic to continue
             return httpx.Response(
                 200,
@@ -296,8 +298,33 @@ class TestUploaderHTTPFlush:
         # This should now run without crashing
         u._flush_snapshot()
         assert any(
-            "/api/v1/graph/snapshot" in url
-            for url in requests_made
+            "/api/v1/graph/snapshot" in request["url"]
+            for request in requests_made
+        )
+        snapshot_request = next(
+            request
+            for request in requests_made
+            if "/api/v1/graph/snapshot" in request["url"]
+        )
+        headers = snapshot_request["kwargs"]["headers"]
+        assert headers["X-OriginTracer-Worker-PID"].isdigit()
+        assert headers["X-OriginTracer-Worker-Instance-ID"]
+        diff_request = next(
+            request
+            for request in requests_made
+            if "/api/v1/graph/diff" in request["url"]
+        )
+        assert (
+            diff_request["kwargs"]["headers"][
+                "X-OriginTracer-Worker-PID"
+            ]
+            == headers["X-OriginTracer-Worker-PID"]
+        )
+        assert (
+            diff_request["kwargs"]["headers"][
+                "X-OriginTracer-Worker-Instance-ID"
+            ]
+            == headers["X-OriginTracer-Worker-Instance-ID"]
         )
 
     def test_flush_events_skips_when_buffer_empty(

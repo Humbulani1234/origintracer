@@ -1,0 +1,15 @@
+# OriginTracer configuration for observing this LangGraph Agent Server.
+probes:
+  - langgraph
+
+rules:
+  - loop_runaway
+  - agent_latency_hotspot
+
+semantic:
+  - label: investigator
+    description: OriginTracer investigator model and tool calls
+    services:
+      - langgraph
+    node_patterns:
+      - "langgraph::.*"

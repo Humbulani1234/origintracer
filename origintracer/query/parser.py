@@ -60,6 +60,10 @@ from typing import (
     Union,
 )
 
+from origintracer.core.worker_identity import (
+    current_worker_identity,
+)
+
 if TYPE_CHECKING:
     from origintracer.core.engine import Engine
 
@@ -451,6 +455,10 @@ def _show_llm_content(
                 "name": event.name,
                 "trace_id": event.trace_id,
                 "span_id": event.span_id,
+                "parent_span_id": event.parent_span_id,
+                "investigation_id": metadata.get(
+                    "investigation_id"
+                ),
                 "content": content,
                 "truncated": bool(
                     metadata.get(f"{field}_truncated")
@@ -500,6 +508,10 @@ def _show_tool_content(
                 "name": event.name,
                 "trace_id": event.trace_id,
                 "span_id": event.span_id,
+                "parent_span_id": event.parent_span_id,
+                "investigation_id": metadata.get(
+                    "investigation_id"
+                ),
                 "kind": kind,
                 "content": content,
                 "truncated": bool(
@@ -605,6 +617,7 @@ def _show_status(engine: Engine) -> Dict:
     Engine health snapshot.
     """
     graph = engine.graph
+    worker_instance_id, worker_pid = current_worker_identity()
     tracker = getattr(engine, "tracker", None)
     started = getattr(engine, "_started_at", None)
     event_log = getattr(engine, "_event_log", [])
@@ -634,8 +647,9 @@ def _show_status(engine: Engine) -> Dict:
         "verb": "STATUS",
         "data": {
             # Process
-            "pid": os.getpid(),
-            "socket": f"/tmp/origintracer-{os.getpid()}.sock",
+            "pid": worker_pid,
+            "worker_instance_id": worker_instance_id,
+            "socket": f"/tmp/origintracer-{worker_pid}.sock",
             "uptime_s": uptime_s,
             "uptime": uptime_human,
             # Graph

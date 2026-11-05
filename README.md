@@ -13,10 +13,6 @@
 ![License](https://img.shields.io/badge/license-MIT-red?style=flat-square)
 ![eBPF](https://img.shields.io/badge/Kernel-eBPF_Powered-blueviolet?style=flat-square)
 
-
-![WSL2](https://img.shields.io/badge/WSL2-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
-
 </div>
 
 **Live causal graph for async services.**
@@ -74,6 +70,7 @@ pip install -e .
 ## Quick Start - Django application
 
 Navigate to the `applications/django` directory for this specific application.
+This is a fully OriginTracer already configured `Django` example application. The following steps detail how it was configured and the steps to follow for your application.
 
 **1. Add middleware** (must be first in `settings.py`):
 
@@ -139,6 +136,12 @@ Similar to the `Django` application above. Navigate to the `applications/celery`
 Similar to the `Django` and `Celery` applications above. Navigate to the `applications/langgraph` directory for this specific application, and follow the steps.
 
 The example runs a supervisor and two specialist agents through LangGraph's production Agent Server packaging path. It uses Ollama for local model inference, initializes OriginTracer through the server's FastAPI lifespan, and includes an `invoke.py` script for sending requests to the running application.
+
+## Agentic Investigation Layer
+
+OriginTracer also includes an optional agentic layer for natural-language investigations of live worker evidence. It plans and runs read-only observations through OriginTracer's tools, then returns findings grounded in that evidence, along with remaining uncertainty. The agent complements the graph, REPL, and UI; it does not replace them. Any action that changes OriginTracer state requires explicit approval.
+
+For the agent's architecture, setup, and operating details, see the [agent README](agent/README.md).
 
 ## Core Strengths
 
@@ -250,7 +253,6 @@ This level of stability gives strong confidence for running OriginTracer alongsi
 pip install -e ".[dev]"
 pytest origintracer/tests/ -q
 pre-commit install
-```
 
 See `docs/` for full architecture, probe internals, and contribution guidelines.
 

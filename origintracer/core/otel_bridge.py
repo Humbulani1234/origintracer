@@ -37,16 +37,16 @@ OTel SDK (Django)
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence, cast
 
 import origintracer
 
 logger = logging.getLogger("origintracer.bridge.otel")
 
 if TYPE_CHECKING:
-    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.sdk.trace import ReadableSpan  # type: ignore[arg-type]
 
-    from .core.event_schema import NormalizedEvent
+    from .core.event_schema import NormalizedEvent  # type: ignore[arg-type]
 
 
 # Probe type mapping from OTel SpanKind
@@ -113,7 +113,7 @@ def _extract_name(span: "ReadableSpan") -> str:
         return f"{attrs['db.operation']} {attrs['db.sql.table']}"
     # Messaging
     if "messaging.destination.name" in attrs:
-        return attrs["messaging.destination.name"]
+        return str(attrs["messaging.destination.name"])
     # Fall back to span name
     return span.name or "unknown"
 
@@ -157,13 +157,9 @@ def span_to_event(
         else None
     )
 
+    kind_value = getattr(span.kind, "value", span.kind)
     probe = _SPAN_KIND_TO_PROBE.get(
-        (
-            span.kind.value
-            if hasattr(span.kind, "value")
-            else span.kind
-        ),
-        "otel.internal",
+        cast(int, kind_value), "otel.internal"
     )
     service = _extract_service(span)
     name = _extract_name(span)
@@ -240,7 +236,7 @@ class OriginTracerSpanExporter:
 
     def export(self, spans: Sequence["ReadableSpan"]) -> object:
         try:
-            from opentelemetry.sdk.trace.export import (
+            from opentelemetry.sdk.trace.export import (  # type: ignore[arg-type]
                 SpanExportResult,
             )
         except ImportError:

@@ -27,19 +27,27 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  nodes: () => request("/api/v1/nodes"),
-  edges: () => request("/api/v1/edges"),
-  events: (limit = 30) => request(`/api/v1/events?limit=${limit}`),
-  trace: (id) => request(`/api/v1/traces/${id}`),
-  status: () => request("/api/v1/status"),
-  // hardcoded label for testing
-  diff: (label = "deployment") => request(`/api/v1/graph/diff?since=${label}`),
-  graph: () => request("/api/v1/graph"),
-  causal: (tags) => request(`/api/v1/causal${tags ? `?tags=${tags}` : ''}`),
-  workers: () => request("/api/v1/workers"),
-  workerQuery: (pid, query) => request(
-    `/api/v1/workers/${encodeURIComponent(pid)}/query`,
-    { method: "POST", data: { query } },
+  nodes: (workerInstanceId) => request(`/api/v1/nodes?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
+  edges: (workerInstanceId) => request(`/api/v1/edges?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
+  events: (workerInstanceId, limit = 30) => request(
+    `/api/v1/events?worker_instance_id=${encodeURIComponent(workerInstanceId)}&limit=${limit}`,
   ),
-  causalHistory: (limit = 50) => request(`/api/v1/causal/history?limit=${limit}`),
+  capturedContent: (workerInstanceId, kind, limit = 100) => request(
+    `/api/v1/events/content?worker_instance_id=${encodeURIComponent(workerInstanceId)}&kind=${encodeURIComponent(kind)}&limit=${limit}`,
+  ),
+  trace: (id, workerInstanceId) => request(
+    `/api/v1/traces/${encodeURIComponent(id)}?worker_instance_id=${encodeURIComponent(workerInstanceId)}`,
+  ),
+  stitchTrace: (id) => request(`/api/v1/traces/${encodeURIComponent(id)}/stitch`),
+  status: (workerInstanceId) => request(`/api/v1/status?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
+  // hardcoded label for testing
+  diff: (workerInstanceId, label = "deployment") => request(`/api/v1/graph/diff?worker_instance_id=${encodeURIComponent(workerInstanceId)}&since=${encodeURIComponent(label)}`),
+  graph: (workerInstanceId) => request(`/api/v1/graph?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
+  causal: (workerInstanceId, tags) => request(`/api/v1/causal?worker_instance_id=${encodeURIComponent(workerInstanceId)}${tags ? `&tags=${encodeURIComponent(tags)}` : ''}`),
+  hotspots: (workerInstanceId, top = 10) => request(
+    `/api/v1/hotspots?worker_instance_id=${encodeURIComponent(workerInstanceId)}&top=${top}`,
+  ),
+  causalHistory: (workerInstanceId, limit = 50) => request(`/api/v1/causal/history?worker_instance_id=${encodeURIComponent(workerInstanceId)}&limit=${limit}`),
+  snapshots: () => request("/api/v1/snapshots"),
+  snapshot: (workerInstanceId) => request(`/api/v1/snapshots/${encodeURIComponent(workerInstanceId)}`),
 };

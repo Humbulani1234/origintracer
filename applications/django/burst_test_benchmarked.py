@@ -13,9 +13,9 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1"  # adjust
+DEFAULT_BASE_URL = "http://127.0.0.1:8000"  # adjust
 DEFAULT_WAVES = 6
-DEFAULT_BURST_SIZE = 100
+DEFAULT_BURST_SIZE = 150
 DEFAULT_WORKERS = 15
 DEFAULT_QUIET_S = 5.0
 
@@ -85,11 +85,11 @@ def _print_engine_health(
 
 def build_pool(base: str) -> list:
     return (
-        [(f"{base}/", "GET")] * 25
-        + [(f"{base}/db/", "GET")] * 20
-        + [(f"{base}/async/", "GET")] * 30
+        [(f"{base}/", "GET")] * 20
+        + [(f"{base}/db/", "GET")] * 40
+        + [(f"{base}/async/", "GET")] * 25
         + [(f"{base}/n1/", "GET")] * 20
-        # + [(f"{base}/slow/", "GET")] * 5
+        + [(f"{base}/slow/", "GET")] * 45
     )
 
 

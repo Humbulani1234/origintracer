@@ -76,7 +76,7 @@ class SlowView(View):
     OS thread. Every other coroutine waits for the full duration.
 
     This is the canonical example of event loop starvation.
-    OriginTracer's loop_starvation causal rule will fire after a few requests.
+    OriginTracer's event-loop starvation rule should detect the long task step.
 
     In the REPL:
         CAUSAL WHERE tags = "blocking" << fires with 80% confidence
@@ -86,7 +86,7 @@ class SlowView(View):
 
     async def get(self, request):
         # This blocks the event loop for 200ms.
-        time.sleep(20)
+        time.sleep(0.2)
 
         return JsonResponse(
             {
@@ -94,8 +94,8 @@ class SlowView(View):
                 "blocked_ms": 200,
                 "note": (
                     "time.sleep() blocked the event loop. "
-                    "Run CAUSAL in the OriginTracer REPL to detect it. "
-                    "asyncio.loop.tick avg_duration_ns will be: 10ms."
+                    "Run CAUSAL in the OriginTracer REPL to inspect the "
+                    "measured asyncio task-step duration."
                 ),
             }
         )

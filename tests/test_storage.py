@@ -10,7 +10,24 @@ from origintracer.storage.base import (
     InMemoryRepository,
 )
 
-from .conftest import evt
+TEST_CUSTOMER = "test_customer"
+TEST_WORKER_PID = "12345"
+
+
+def evt(**kwargs):
+    from tests.conftest import evt as _evt
+
+    # inject as direct kwargs so they land in event.metadata
+    kwargs.setdefault("customer_id", TEST_CUSTOMER)
+    kwargs.setdefault("worker_pid", TEST_WORKER_PID)
+    # remove metadata dict if someone passed it, unpack it instead
+    metadata = kwargs.pop("metadata", {})
+    kwargs.update(metadata)
+    return _evt(**kwargs)
+
+
+INSTANCE = "instance-a"
+OTHER_INSTANCE = "instance-b"
 
 
 def run_event_contract(repo: BaseRepository):
@@ -20,10 +37,16 @@ def run_event_contract(repo: BaseRepository):
         service="django",
         name="/api/orders/",
         trace_id="t-001",
+        customer_id=TEST_CUSTOMER,
+        worker_pid=TEST_WORKER_PID,
     )
     repo.insert_event(e)
 
-    results = repo.query_events(trace_id="t-001")
+    results = repo.query_events(
+        customer_id=TEST_CUSTOMER,
+        worker_pid=TEST_WORKER_PID,
+        trace_id="t-001",
+    )
     assert len(results) == 1
     assert results[0]["probe"] == "request.entry"
     assert results[0]["service"] == "django"
@@ -34,12 +57,14 @@ def run_snapshot_contract(repo: BaseRepository):
     data = b"\x82\xa5nodes\x91\xa3foo"  # fake msgpack bytes
     repo.insert_snapshot(
         customer_id="acme",
+        worker_instance_id=INSTANCE,
+        worker_pid=123,
         data=data,
         content_type="application/msgpack",
         node_count=42,
         edge_count=17,
     )
-    row = repo.get_latest_snapshot("acme")
+    row = repo.get_latest_snapshot("acme", INSTANCE)
     assert row is not None
     assert row["data"] == data
     assert row["content_type"] == "application/msgpack"
@@ -47,7 +72,9 @@ def run_snapshot_contract(repo: BaseRepository):
 
 
 def run_marker_contract(repo: BaseRepository):
-    repo.insert_deployment_marker("acme", "deploy:v1.0.0")
+    repo.insert_deployment_marker(
+        "acme", INSTANCE, "deploy:v1.0.0"
+    )
     # No query API for markers — just verify it doesn't raise
 
 
@@ -66,7 +93,11 @@ class TestInMemoryRepository:
         self.repo.insert_event(
             evt(probe="db.query.start", trace_id="t1")
         )
-        results = self.repo.query_events(probe="request.entry")
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            probe="request.entry",
+        )
         assert all(
             r["probe"] == "request.entry" for r in results
         )
@@ -78,21 +109,33 @@ class TestInMemoryRepository:
         self.repo.insert_event(
             evt(service="postgres", name="SELECT", trace_id="t1")
         )
-        results = self.repo.query_events(service="postgres")
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            service="postgres",
+        )
         assert all(r["service"] == "postgres" for r in results)
 
     def test_filter_by_since(self):
         time.time()
         self.repo.insert_event(evt(trace_id="t1"))
         after = time.time()
-        results = self.repo.query_events(since=after + 1)
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            since=after + 1,
+        )
         # No events after a future timestamp
         assert len(results) == 0
 
     def test_limit_respected(self):
         for i in range(20):
             self.repo.insert_event(evt(trace_id=f"t{i}"))
-        results = self.repo.query_events(limit=5)
+        results = self.repo.query_events(
+            customer_id=TEST_CUSTOMER,
+            worker_pid=TEST_WORKER_PID,
+            limit=5,
+        )
         assert len(results) == 5
 
     def test_maxlen_evicts_oldest(self):
@@ -102,14 +145,11 @@ class TestInMemoryRepository:
         assert len(repo) == 10
 
     def test_insert_event_silent_on_bad_input(self):
-        """Repository must never raise — probes call insert_event on the hot path."""
-        # NormalizedEvent.to_dict() should always work, but test robustness
+        """insert_event raises on None metadata - metadata is required."""
         e = evt()
-        e.metadata = None  # type: ignore — simulate corrupted event
-        try:
+        e.metadata = None  # type: ignore
+        with pytest.raises((KeyError, TypeError)):
             self.repo.insert_event(e)
-        except Exception:
-            pytest.fail("insert_event raised on bad input")
 
     def test_snapshot_contract(self):
         run_snapshot_contract(self.repo)
@@ -117,44 +157,139 @@ class TestInMemoryRepository:
     def test_get_latest_snapshot_returns_none_before_insert(
         self,
     ):
-        assert self.repo.get_latest_snapshot("nobody") is None
+        assert (
+            self.repo.get_latest_snapshot("nobody", INSTANCE)
+            is None
+        )
 
     def test_snapshot_overwrites_per_customer(self):
         """Only the most recent snapshot per customer is retained."""
         self.repo.insert_snapshot(
-            "acme", b"first", "application/msgpack"
+            "acme",
+            INSTANCE,
+            123,
+            b"first",
+            "application/msgpack",
         )
         self.repo.insert_snapshot(
-            "acme", b"second", "application/msgpack"
+            "acme",
+            INSTANCE,
+            123,
+            b"second",
+            "application/msgpack",
         )
-        row = self.repo.get_latest_snapshot("acme")
+        row = self.repo.get_latest_snapshot("acme", INSTANCE)
         assert row["data"] == b"second"
+
+    def test_snapshots_are_isolated_per_process_instance(self):
+        self.repo.insert_snapshot(
+            "acme", INSTANCE, 123, b"worker-a"
+        )
+        self.repo.insert_snapshot(
+            "acme", OTHER_INSTANCE, 456, b"worker-b"
+        )
+        assert (
+            self.repo.get_latest_snapshot("acme", INSTANCE)[
+                "data"
+            ]
+            == b"worker-a"
+        )
+        assert (
+            self.repo.get_latest_snapshot(
+                "acme", OTHER_INSTANCE
+            )["data"]
+            == b"worker-b"
+        )
+        assert {
+            row["worker_instance_id"]
+            for row in self.repo.list_latest_snapshots("acme")
+        } == {INSTANCE, OTHER_INSTANCE}
 
     def test_snapshots_isolated_per_customer(self):
         self.repo.insert_snapshot(
-            "acme", b"acme-data", "application/msgpack"
+            "acme",
+            INSTANCE,
+            123,
+            b"acme-data",
+            "application/msgpack",
         )
         self.repo.insert_snapshot(
-            "other", b"other-data", "application/msgpack"
+            "other",
+            INSTANCE,
+            456,
+            b"other-data",
+            "application/msgpack",
         )
         assert (
-            self.repo.get_latest_snapshot("acme")["data"]
+            self.repo.get_latest_snapshot("acme", INSTANCE)[
+                "data"
+            ]
             == b"acme-data"
         )
         assert (
-            self.repo.get_latest_snapshot("other")["data"]
+            self.repo.get_latest_snapshot("other", INSTANCE)[
+                "data"
+            ]
             == b"other-data"
         )
+
+    def test_worker_runtime_status_is_scoped_and_updated(self):
+        self.repo.upsert_worker_runtime(
+            "acme",
+            INSTANCE,
+            "123",
+            {"uptime_s": 12, "probes_active": ["django"]},
+            100.0,
+        )
+        self.repo.upsert_worker_runtime(
+            "acme",
+            INSTANCE,
+            "123",
+            {
+                "uptime_s": 20,
+                "probes_active": ["django", "asyncio"],
+            },
+            108.0,
+        )
+
+        current = self.repo.get_worker_runtime("acme", INSTANCE)
+        assert current == {
+            "worker_pid": "123",
+            "observed_at": 108.0,
+            "status": {
+                "uptime_s": 20,
+                "probes_active": ["django", "asyncio"],
+            },
+        }
+        assert (
+            self.repo.get_worker_runtime("other", INSTANCE)
+            is None
+        )
+        assert self.repo.list_worker_runtime("acme") == [
+            {
+                "worker_instance_id": INSTANCE,
+                "worker_pid": "123",
+                "observed_at": 108.0,
+                "status": {
+                    "uptime_s": 20,
+                    "probes_active": ["django", "asyncio"],
+                },
+            }
+        ]
 
     def test_marker_contract(self):
         run_marker_contract(self.repo)
 
     def test_multiple_markers_stored(self):
-        self.repo.insert_deployment_marker("acme", "deploy:v1")
-        self.repo.insert_deployment_marker("acme", "deploy:v2")
+        self.repo.insert_deployment_marker(
+            "acme", INSTANCE, "deploy:v1"
+        )
+        self.repo.insert_deployment_marker(
+            "acme", INSTANCE, "deploy:v2"
+        )
 
         # Check the number of markers for the 'acme' customer specifically
-        assert len(self.repo._markers["acme"]) == 2
+        assert len(self.repo._markers[("acme", INSTANCE)]) == 2
 
 
 #
@@ -184,9 +319,6 @@ class TestBaseRepositoryInterface:
             ), f"InMemoryRepository is missing abstract method: {method_name}"
 
 
-#
-
-
 @pytest.mark.integration
 @pytest.mark.skipif(
     not os.getenv("STACKTRACER_TEST_DB_DSN"),
@@ -198,16 +330,13 @@ class TestEventRepositoryPostgres:
     def pg_repo(self):
         import psycopg2
 
-        from origintracer.storage.base import (
-            PGEventRepository,
-        )
+        from origintracer.storage.base import PGEventRepository
 
         conn = psycopg2.connect(
             os.environ["STACKTRACER_TEST_DB_DSN"]
         )
         repo = PGEventRepository(conn)
         yield repo
-        # Cleanup test data
         with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM st_events    WHERE customer_id = 'test'"
@@ -231,12 +360,22 @@ class TestEventRepositoryPostgres:
         self, pg_repo
     ):
         pg_repo.insert_snapshot(
-            "test", b"v1", "application/msgpack", node_count=10
+            "test",
+            INSTANCE,
+            123,
+            b"v1",
+            "application/msgpack",
+            node_count=10,
         )
         pg_repo.insert_snapshot(
-            "test", b"v2", "application/msgpack", node_count=20
+            "test",
+            INSTANCE,
+            123,
+            b"v2",
+            "application/msgpack",
+            node_count=20,
         )
-        row = pg_repo.get_latest_snapshot("test")
+        row = pg_repo.get_latest_snapshot("test", INSTANCE)
         # PostgreSQL returns most recent by received_at DESC
         assert row["data"] in (
             b"v1",

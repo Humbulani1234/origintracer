@@ -1,7 +1,7 @@
 // src/components/NodeTable.jsx
 export const SVC_COLORS = {
   gunicorn: "#5a8a5a", uvicorn: "#4a7fa5", django: "#e8a020",
-  asyncio:  "#8060c0", celery:  "#c06040", redis: "#409060",
+  asyncio:  "#8060c0", celery:  "#c06040", langgraph: "#7b61a8", redis: "#409060",
   nginx: "#507090", db: "#705080",
 };
 
