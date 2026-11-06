@@ -49,7 +49,7 @@ Inputs and outputs are not copied into events by default; the probe records inpu
 ### Optional content capture
 
 Prompt and response text can be captured by setting
-`ORIGINTRACER_CAPTURE_LLM_CONTENT=1`. Tool arguments and results can be captured separately with `ORIGINTRACER_CAPTURE_TOOL_CONTENT=1`. And both options are off bydefault.
+`ORIGINTRACER_CAPTURE_LLM_CONTENT=1`. Tool arguments and results can be captured separately with `ORIGINTRACER_CAPTURE_TOOL_CONTENT=1`. Both options are off by default.
 
 Captured values are bounded and common credential patterns are redacted, but application content may still be sensitive, and for security reasons enable capture only for data you are allowed to inspect.
 

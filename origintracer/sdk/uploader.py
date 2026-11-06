@@ -86,24 +86,36 @@ def _serialize_graph(graph: Any) -> tuple:
 
 
 class Uploader:
-    """
-    Ships probe events and graph snapshots to the OriginTracer backend.
+    """Upload probe events and worker state to an OriginTracer backend.
 
     Implements the ``BaseRepository.insert_event()`` interface so
-    ``Engine.process()`` can call it as a repository without knowing about
-    HTTP transport.
+    ``Engine.process()`` can use it without knowing about HTTP transport.
 
-    Usage
+    Parameters
+    ----------
+    endpoint : str
+        Base URL of the OriginTracer backend.
+    api_key : str
+        Bearer token used to authenticate uploads.
+    flush_interval : int, optional
+        Seconds between event batch uploads.
+    snapshot_interval : float, optional
+        Seconds between graph snapshot uploads. Runtime heartbeats use a
+        shorter independent interval.
+    max_batch_size : int, optional
+        Maximum number of events sent in one batch.
+
+    Examples
+    --------
+    >>> uploader = Uploader(endpoint="http://localhost:8001", api_key="token")
+    >>> uploader.start()
+    >>> uploader.bind_engine(engine)
+    >>> engine.repository = uploader
+
+    Notes
     -----
-    ::
-
-        uploader = Uploader(endpoint=..., api_key=...)
-        uploader.start()
-        uploader.bind_engine(engine) # must be called after start()
-        engine.repository = uploader # Engine calls insert_event() per event
-
-    Call ``uploader.stop()`` on shutdown to flush the queue and close the
-    background thread cleanly.
+    Call ``stop()`` during shutdown to flush pending events and a final graph
+    snapshot, then join the background threads.
     """
 
     def __init__(
@@ -114,6 +126,22 @@ class Uploader:
         snapshot_interval: float = 60,  # seconds between graph snapshot flushes
         max_batch_size: int = 500,
     ) -> None:
+        """Configure backend uploads and background flush intervals.
+
+        Parameters
+        ----------
+        endpoint : str
+            Base URL of the OriginTracer backend.
+        api_key : str
+            Bearer token used to authenticate requests.
+        flush_interval : int, optional
+            Seconds between event batch flushes.
+        snapshot_interval : float, optional
+            Seconds between graph snapshot flushes and the upper bound used to
+            derive the runtime heartbeat cadence.
+        max_batch_size : int, optional
+            Maximum number of events included in one upload batch.
+        """
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._flush_interval = flush_interval
@@ -151,10 +179,24 @@ class Uploader:
         self._failed_diffs_sends: int = 0
 
     def insert_event(self, event: Any) -> None:
-        """
-        Repository interface. Called by Engine.process() for every event.
-        Converts NormalizedEvent to dict and queues for batch upload.
-        Never raises - must not disrupt the drain thread.
+        """Queue a probe event for batch upload.
+
+        Called by ``Engine.process()`` for each event. The event is converted
+        to a mapping and added to the bounded upload queue.
+
+        Parameters
+        ----------
+        event : NormalizedEvent
+            Probe event to serialize and upload.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Serialization errors are suppressed so an upload problem does not
+        interrupt event processing.
         """
         try:
             self._event_buffer.push(event.to_dict())
@@ -162,9 +204,16 @@ class Uploader:
             pass
 
     def bind_engine(self, engine: Any) -> None:
-        """
-        Wire the engine so the uploader can serialise its graph for snapshots.
-        Call this after start() from origintracer/__init__.py _init_uploader().
+        """Attach the engine whose graph and runtime state will be uploaded.
+
+        Parameters
+        ----------
+        engine : Engine
+            Engine instance supplying graph snapshots and runtime status.
+
+        Returns
+        -------
+        None
         """
         self._engine = engine
 
@@ -179,29 +228,24 @@ class Uploader:
         }
 
     def start(self) -> None:
-        """
-        Start the uploader background thread.
+        """Start background event, snapshot, and heartbeat uploads.
 
-        The main thread wakes every ``snapshot_interval`` seconds to perform
-        event and graph uploads. A second thread sends runtime heartbeats on
-        an independent cadence:
+        Returns
+        -------
+        None
 
-        **Events** - drains the event buffer and posts to
-        ``POST /api/v1/events``. Best-effort: failures are silently discarded.
-        Probe events are not critical path.
+        Notes
+        -----
+        The event and snapshot thread periodically sends event batches to
+        ``POST /api/v1/events`` and graph snapshots to
+        ``POST /api/v1/graph/snapshot``. It also sends incremental graph diffs
+        when available. Event uploads are best effort; failed batches are
+        discarded.
 
-        **Snapshots** - serializes the current ``RuntimeGraph`` and posts to
-        ``POST /api/v1/graph/snapshot`` (full replacement) and
-        ``POST /api/v1/graph/diff`` (incremental, if available).
-        **Runtime status** - posts a heartbeat on its own thread, independent
-        of graph snapshots, so an idle or temporarily un-snapshotable graph
-        does not make a live worker appear offline.
-        Serialization failures abort the snapshot cycle for that interval.
-        Snapshot and diff uploads are tracked independently.
-
-        No exceptions escape the thread - all errors are logged at
-        debug/warning level. Call ``stop()`` on shutdown to flush and join
-        cleanly.
+        A second thread posts runtime heartbeats independently of graph
+        snapshots, so a worker can report liveness if its graph cannot be
+        serialized. Upload errors are logged and do not escape the background
+        threads. Call ``stop()`` during shutdown.
         """
         if self._running:
             return
@@ -226,9 +270,16 @@ class Uploader:
         )
 
     def stop(self) -> None:
-        """
-        Stop the background thread and perform one final flush of both
-        events and snapshot before returning. Called by origintracer.shutdown().
+        """Stop background uploads and make a final event and graph flush.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        This method joins the upload and heartbeat threads, waiting up to five
+        seconds for each. It is called by ``origintracer.shutdown()``.
         """
         self._running = False
         # Final flushes on the calling thread
@@ -609,6 +660,22 @@ class Uploader:
                 node.metadata["semantic_labels"] = labels
 
     def send_deployment_marker(self, label: str) -> None:
+        """Send a deployment marker to the configured backend.
+
+        Parameters
+        ----------
+        label : str
+            Name identifying the deployment event.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        The request uses the current worker identity and logs upload failures
+        without raising them to the application.
+        """
         try:
             response = httpx.post(
                 f"{self._endpoint}/api/v1/deployment",
@@ -646,6 +713,14 @@ class Uploader:
             )
 
     def stats(self) -> Dict[str, Any]:
+        """Return counters describing uploader activity.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Mapping containing event and snapshot totals, failed upload
+            counts, queue size, engine binding state, and running state.
+        """
         return {
             "events_sent_total": self._events_sent_total,
             "snapshots_sent": self._snapshots_sent,

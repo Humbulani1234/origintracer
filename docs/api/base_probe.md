@@ -1,12 +1,18 @@
-# sdk.base_probe
+# SDK Base Probe
+
+`BaseProbe` defines the lifecycle contract for runtime instrumentation. `ProbeRegistry` registers probe classes and creates configured instances.
 
 ::: origintracer.sdk.base_probe.BaseProbe
-	options:
+    options:
       members:
         - start
         - stop
 
 ::: origintracer.sdk.base_probe.ProbeRegistry
-	options:
+    options:
       members:
         - register
+        - get
+        - instantiate
+        - available
+        - load_from_config

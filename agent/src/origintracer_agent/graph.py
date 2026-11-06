@@ -2026,11 +2026,22 @@ def _candidate_investigation_id(
 async def classify_request(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Classify the newest user message as research or a proposed action.
+    """Classify the newest user message and prepare its route.
 
-    Investigation requests continue through worker preparation. Explicit
-    write requests are converted into a typed proposal tied to the selected
-    stored process instance; this node never executes the proposed action.
+    Ordinary conversation, investigation requests, and supported write requests are
+    separated here. A write request becomes a typed proposal tied to the selected stored
+    process instance; this node never executes it.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Current conversation, worker selection, and saved investigation state.
+
+    Returns
+    -------
+    dict[str, Any]
+        State updates for chat, investigation planning, an approval proposal, or a no-op
+    when there is no new message.
     """
 
     # import pdb
@@ -2185,11 +2196,20 @@ async def classify_request(
 def route_after_classification(
     state: InvestigationState,
 ) -> Literal["chat", "plan", "approval", "end"]:
-    """Route a new message into research, action approval, or the end state.
+    """Choose the next branch after request classification.
 
-    Classification is the only input here: investigation requests proceed to
-    planning, write proposals pause for approval, and duplicate/no-op
-    messages stop without running another branch.
+    Investigation requests proceed to planning, write proposals pause for approval, and
+    duplicate or no-op messages stop without running another branch.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        State returned by request classification.
+
+    Returns
+    -------
+    str
+        One of ``chat``, ``plan``, ``approval``, or ``end``.
     """
     if state.get("status") == "awaiting_action_approval":
         return "approval"
@@ -2206,10 +2226,20 @@ def route_after_classification(
 async def answer_general_chat(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Answer general chat with relevant live-doc excerpts when available.
+    """Answer general conversation with relevant documentation when available.
 
-    Documentation retrieval is best-effort and does not expose worker tools;
-    the product overview remains fallback context when no excerpts are found.
+    Documentation retrieval is best-effort and does not expose worker tools. When no
+    relevant excerpts are found, the model uses the product overview context.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Conversation messages used to prepare the chat response.
+
+    Returns
+    -------
+    dict[str, Any]
+        State update containing the assistant response and completed chat status.
     """
     conversation: list[BaseMessage] = []
     for message in state.get("messages", []):
@@ -2297,11 +2327,20 @@ async def answer_general_chat(
 def request_action_approval(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Interrupt the graph and wait for an explicit action decision.
+    """Pause the graph until the caller approves or rejects a proposed action.
 
-    The proposal is exposed to the caller for review. Rejection records a
-    cancelled status and message; approval only permits the separate action
-    execution node to run.
+    The proposal and its arguments are exposed for review. Rejection records a cancelled
+    status and response; approval only permits the separate execution node to run.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        State containing the proposed action and its arguments.
+
+    Returns
+    -------
+    dict[str, Any]
+        State update recording whether the action was approved or cancelled.
     """
     proposal = state.get("proposed_action", {})
     message = "Approve this OriginTracer action before it runs."
@@ -2341,7 +2380,18 @@ def request_action_approval(
 def route_after_approval(
     state: InvestigationState,
 ) -> Literal["execute", "end"]:
-    """Run only an explicitly approved action."""
+    """Route only approved proposals to action execution.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        State containing the caller's approval decision.
+
+    Returns
+    -------
+    str
+        ``execute`` when approved; otherwise ``end``.
+    """
     return (
         "execute"
         if state.get("action_status") == "approved"
@@ -2352,10 +2402,20 @@ def route_after_approval(
 async def execute_approved_action(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Execute the approved allow-listed write and record its outcome.
+    """Execute an approved allow-listed write and record its outcome.
 
-    The action result is kept in action state and user-facing output; it is
-    not added to the read-only evidence set used for investigation findings.
+    The action result is retained in action state and user-facing output. It is not
+    added to the read-only evidence used to support investigation findings.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        State containing the approved proposal and its arguments.
+
+    Returns
+    -------
+    dict[str, Any]
+        State update with the action result, outcome status, and response message.
     """
     proposal = state.get("proposed_action", {})
     name = proposal.get("name")
@@ -2392,11 +2452,22 @@ async def execute_approved_action(
 async def prepare_investigation(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Resolve the plan's worker scope against uploaded snapshot inventory.
+    """Resolve the planned worker scope against uploaded snapshot inventory.
 
-    The planner interprets whether an overview is selected-worker or fleet
-    scope. This node resolves stable process identity and prevents evidence
-    from crossing workers.
+    The planner decides whether a worker overview covers all live workers or the
+    selected worker. This node resolves stable process identity and prevents evidence
+    from crossing worker instances.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Current request, plan scope, selected PID, and any saved investigation.
+
+    Returns
+    -------
+    dict[str, Any]
+        State update with verified worker identity and prepared investigation data, or a
+    status explaining why preparation cannot continue.
     """
     messages = state.get("messages", [])
     latest = _latest_human_message(messages)
@@ -2548,12 +2619,23 @@ async def prepare_investigation(
 async def plan_investigation(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Ask the planner for a bounded read plan and useful competing claims.
+    """Create a bounded evidence plan for the current request.
 
-    The planner receives a compact capability catalog and relevant prior
-    context, then its proposed tool names are filtered against that catalog.
-    Follow-ups retain the existing investigation only when the planner says
-    the new request depends on it; otherwise the investigation starts clean.
+    The planner receives a compact tool catalog and relevant conversation context.
+    Proposed tool names are filtered against the available catalog. A follow-up reuses
+    the existing investigation only when the planner determines that the new request
+    depends on it.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Current request, selected worker context, and saved investigation state.
+
+    Returns
+    -------
+    dict[str, Any]
+        State update with the plan, requested deliverables, hypotheses, and continuation
+    decision.
     """
     previous = bool(state.get("question")) and not state.get(
         "new_investigation"
@@ -3067,15 +3149,23 @@ def _normalize_read_tool_calls(
 async def gather_evidence(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Request read-only observations using tools selected for this plan.
+    """Request read-only observations using tools selected for the plan.
 
-    The planner's valid suggestions for pending, unobserved steps determine
-    which full schemas are bound. If the plan contains no usable tool name,
-    the complete read-only set remains available as a fallback. Repeated calls
-    that cannot advance a pending step are retried once with a focused
-    instruction, then stopped for assessment. Before execution, the graph
-    removes an empty object sent in place of the optional rule-tag list. The
-    ToolNode executes the normalized calls next.
+    Valid tool suggestions for pending, unobserved steps determine which schemas are
+    bound. If no usable tool is selected, the read-only tool set for the current scope
+    remains available as a fallback. Calls that cannot advance a pending step are
+    retried once with focused guidance, then the graph proceeds to assessment.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Current plan, evidence collected so far, and read-only tool results.
+
+    Returns
+    -------
+    dict[str, Any]
+        State update containing the tool calls for the next ToolNode, or an empty call
+    set when no further read is needed.
     """
     request = str(state.get("current_request", ""))
     suggested_names = [
@@ -3234,12 +3324,21 @@ def _tool_payload(content: Any) -> Any:
 
 
 def record_evidence(state: InvestigationState) -> dict[str, Any]:
-    """Convert new ToolMessages into deduplicated evidence records.
+    """Convert new tool messages into deduplicated evidence records.
 
-    Successful results retain their source, worker identity, query, and
-    observation time under stable evidence IDs. Tool failures are recorded
-    separately so the assessor can distinguish missing observations from
-    successful empty results.
+    Successful results retain their source, worker identity, query, and observation time
+    under stable evidence IDs. Failures are recorded separately so the assessor can
+    distinguish missing observations from successful empty results.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Conversation messages, existing evidence, and previously recorded tool-call IDs.
+
+    Returns
+    -------
+    dict[str, Any]
+        Updated evidence, tool results, deduplication IDs, and assessment status.
     """
     evidence = list(state.get("evidence", []))
     results = list(state.get("tool_results", []))
@@ -3398,16 +3497,24 @@ def _assessment_context(
 async def assess_evidence(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Validate the assessment and decide whether evidence gathering continues.
+    """Validate the assessment and decide whether evidence gathering should continue.
 
-    Model-supplied evidence and plan IDs are resolved against current state;
-    hypothesis reviews are matched to stored claims by list position. The
-    review field is absent from the model schema when there are no hypotheses.
-    Plan completion is reconciled with observed tool results. Semantic contract
-    violations return a structured ``assessment_failed`` state that preserves
-    evidence and stops before report synthesis. Unexpected runtime errors still
-    raise. The node also prevents premature trace conclusions before a planned
-    trace read returns.
+    Model-supplied evidence and plan IDs are resolved against current state, and
+    hypothesis reviews are matched to stored claims by position. The node reconciles
+    completed plan steps with observed tool results. Semantic contract violations
+    preserve gathered evidence and stop report synthesis; unexpected runtime errors
+    still raise. A trace conclusion is also withheld until a planned trace read returns.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Plan, evidence, tool outcomes, and hypotheses to assess.
+
+    Returns
+    -------
+    dict[str, Any]
+        Validated findings and routing status, or a structured assessment failure that
+    prevents report synthesis.
     """
 
     def semantic_failure(
@@ -4206,7 +4313,18 @@ def _has_request_correlated_latency(
 def route_after_prepare(
     state: InvestigationState,
 ) -> Literal["research", "plan", "end"]:
-    """Continue to research, replan after identity changes, or stop."""
+    """Choose whether to gather evidence, replan, or stop after worker preparation.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        State produced by worker-scope and identity preparation.
+
+    Returns
+    -------
+    str
+        One of ``research``, ``plan``, or ``end``.
+    """
     status = state.get("status")
     if status == "gathering_evidence":
         return "research"
@@ -4218,7 +4336,18 @@ def route_after_prepare(
 def route_after_research(
     state: InvestigationState,
 ) -> Literal["tools", "assess"]:
-    """Run requested tools or assess the evidence already gathered."""
+    """Choose whether to execute requested tools or assess current evidence.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        State returned by the research model.
+
+    Returns
+    -------
+    str
+        ``tools`` when the response contains tool calls; otherwise ``assess``.
+    """
     return (
         "tools"
         if state.get("last_research_had_tools")
@@ -4229,11 +4358,21 @@ def route_after_research(
 def route_after_recorded_evidence(
     state: InvestigationState,
 ) -> Literal["research", "assess"]:
-    """Choose another research turn when planned tools remain unobserved.
+    """Choose another research round when planned reads remain.
 
-    Tool errors go directly to assessment so the failure can be reported;
-    otherwise, the graph gathers pending reads before asking the assessor to
-    evaluate sufficiency.
+    Tool errors go directly to assessment so failures can be reported. Otherwise the
+    graph gathers still-pending reads before asking the assessor to evaluate whether the
+    evidence is sufficient.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Updated plan, recorded evidence, and tool outcomes.
+
+    Returns
+    -------
+    str
+        ``research`` when a planned read remains; otherwise ``assess``.
     """
     if any(
         item.get("status") == "error"
@@ -4260,12 +4399,21 @@ def route_after_recorded_evidence(
 def route_after_assessment(
     state: InvestigationState,
 ) -> Literal["research", "synthesize", "end"]:
-    """Continue research only when planned work can make forward progress.
+    """Continue research only when planned work can make progress.
 
-    A research response with no tool calls has already received one focused
-    retry in ``gather_evidence``. Do not repeat the same no-progress attempt.
-    Assessment sufficiency and the research-round limit also prevent open-ended
-    loops; when continuation stops, the graph builds the report.
+    A research response with no tool calls has already received one focused retry. The
+    graph stops when the evidence is sufficient, a semantic failure occurred, or no
+    planned read remains.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Validated assessment and current research-round state.
+
+    Returns
+    -------
+    str
+        One of ``research``, ``synthesize``, or ``end``.
     """
     if state.get("status") == "assessment_failed":
         return "end"
@@ -4895,11 +5043,22 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
 def synthesize_findings(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Build a report for the latest turn from its findings and evidence.
+    """Build an evidence-linked report for the latest turn.
 
-    Prior evidence remains available to assessment, but only observations newly
-    gathered this turn or cited by its direct answer, findings, or hypothesis
-    reviews are shown. Earlier conclusions and deliverables remain in history.
+    Prior evidence remains available to assessment, but the response includes only
+    observations gathered this turn or cited by its direct answer, findings, or
+    hypothesis reviews. Earlier conclusions and deliverables remain in investigation
+    history.
+
+    Parameters
+    ----------
+    state : InvestigationState
+        Current-turn findings, evidence, and prior investigation history.
+
+    Returns
+    -------
+    dict[str, Any]
+        Final report, user-facing response, and completed investigation status.
     """
     evidence = [
         item
