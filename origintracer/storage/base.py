@@ -15,11 +15,24 @@ logger = logging.getLogger("origintracer.storage")
 
 
 class BaseRepository(ABC):
+    """Abstract persistence interface for events and worker state.
+
+    Implementations provide storage for probe events, graph snapshots, runtime
+    heartbeats, deployment markers, graph diffs, and causal rule matches.
+    """
 
     @abstractmethod
     def insert_event(self, event: NormalizedEvent) -> None:
-        """
-        Store one probe event.
+        """Store one normalized probe event.
+
+        Parameters
+        ----------
+        event : NormalizedEvent
+            Event emitted by a runtime probe.
+
+        Returns
+        -------
+        None
         """
         ...
 
@@ -36,10 +49,32 @@ class BaseRepository(ABC):
         since: Optional[float] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieve events matching filters, newest first. ``worker_instance_id``
-        filters the uploader identity stored in event metadata, distinguishing
-        process instances even when an OS PID is reused.
+        """Retrieve matching events, newest first.
+
+        Parameters
+        ----------
+        customer_id : str or None, optional
+            Customer namespace to filter by.
+        worker_pid : str or None, optional
+            Operating-system process ID to filter by.
+        worker_instance_id : str or None, optional
+            Process-instance identity stored in event metadata. This separates
+            process lifetimes when an operating-system PID is reused.
+        trace_id : str or None, optional
+            Trace identifier to filter by.
+        probe : str or None, optional
+            Probe name to filter by.
+        service : str or None, optional
+            Service name to filter by.
+        since : float or None, optional
+            Earliest event wall time, as a Unix timestamp.
+        limit : int, optional
+            Maximum number of events to return.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            Matching event records, ordered from newest to oldest.
         """
         ...
 
@@ -54,11 +89,32 @@ class BaseRepository(ABC):
         node_count: int = 0,
         edge_count: int = 0,
     ) -> None:
-        """
-        Persist a serialised RuntimeGraph snapshot.
-        Called by FastAPI on every POST /api/v1/graph/snapshot.
-        Only the most recent snapshot per customer needs to be queryable -
-        older ones can be overwritten or retained for audit.
+        """Persist a serialized graph snapshot for a worker instance.
+
+        Parameters
+        ----------
+        customer_id : str
+            Customer namespace that owns the snapshot.
+        worker_instance_id : str
+            Identity of the process instance that produced the snapshot.
+        worker_pid : int
+            Operating-system process ID of the worker.
+        data : bytes
+            Serialized graph payload.
+        content_type : str, optional
+            MIME type of ``data``.
+        node_count : int, optional
+            Number of graph nodes represented by the snapshot.
+        edge_count : int, optional
+            Number of graph edges represented by the snapshot.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Implementations may replace older snapshots or retain them for audit.
         """
         ...
 
@@ -68,10 +124,20 @@ class BaseRepository(ABC):
         customer_id: str,
         worker_instance_id: str,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Return the latest snapshot for this customer, or None.
-        Return dict keys: data (bytes), content_type (str), received_at (float).
-        Called by FastAPI on startup to restore graph without waiting for agent.
+        """Return the latest snapshot for a worker instance.
+
+        Parameters
+        ----------
+        customer_id : str
+            Customer namespace that owns the snapshot.
+        worker_instance_id : str
+            Process-instance identity to look up.
+
+        Returns
+        -------
+        Dict[str, Any] or None
+            Snapshot record containing ``data``, ``content_type``, and
+            ``received_at``, or ``None`` when no snapshot is stored.
         """
         ...
 
@@ -79,7 +145,18 @@ class BaseRepository(ABC):
     def list_latest_snapshots(
         self, customer_id: str
     ) -> List[Dict[str, Any]]:
-        """Return one latest snapshot record per worker instance."""
+        """List the latest snapshot for each worker instance.
+
+        Parameters
+        ----------
+        customer_id : str
+            Customer namespace whose snapshots are requested.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            Snapshot records, each associated with its worker instance.
+        """
         ...
 
     @abstractmethod
@@ -93,17 +170,23 @@ class BaseRepository(ABC):
     ) -> None:
         """Insert or replace the latest runtime heartbeat for one instance.
 
-        A heartbeat contains status values that cannot be reconstructed from a
-        graph snapshot, including uptime, active requests, active probes, and
-        the observation time. Implementations key the record by customer and
-        worker instance so PID reuse cannot merge separate process lifetimes.
+        A heartbeat contains status values that cannot be reconstructed from a graph snapshot,
+        including uptime, active requests, active probes, and observation time. Implementations
+        key records by customer and worker instance so PID reuse cannot merge separate process
+        lifetimes.
 
-        Args:
-            customer_id: Owner namespace for the stored process data.
-            worker_instance_id: Stable ID identifying one process lifetime.
-            worker_pid: Operating-system PID associated with the snapshot.
-            status: Runtime status payload reported by the uploader.
-            observed_at: Unix timestamp when the status was observed.
+        Parameters
+        ----------
+        customer_id : str
+            Owner namespace for the stored process data.
+        worker_instance_id : str
+            Stable ID identifying one process lifetime.
+        worker_pid : str
+            Operating-system PID associated with the snapshot.
+        status : Dict[str, Any]
+            Runtime status payload reported by the uploader.
+        observed_at : float
+            Unix timestamp when the status was observed.
         """
         ...
 
@@ -111,15 +194,20 @@ class BaseRepository(ABC):
     def get_worker_runtime(
         self, customer_id: str, worker_instance_id: str
     ) -> Optional[Dict[str, Any]]:
-        """Return one process instance's latest runtime heartbeat.
+        """Return the latest runtime heartbeat for one process instance.
 
-        Args:
-            customer_id: Owner namespace for the stored process data.
-            worker_instance_id: Stable ID identifying the process lifetime.
+        Parameters
+        ----------
+        customer_id : str
+            Owner namespace for the stored process data.
+        worker_instance_id : str
+            Stable ID identifying the process lifetime.
 
-        Returns:
-            A mapping with ``worker_pid``, ``observed_at``, and ``status``, or
-            ``None`` when no heartbeat has been uploaded for this instance.
+        Returns
+        -------
+        Dict[str, Any] or None
+            Mapping with ``worker_pid``, ``observed_at``, and ``status``, or ``None``
+            when no heartbeat has been uploaded for this instance.
         """
         ...
 
@@ -129,20 +217,27 @@ class BaseRepository(ABC):
     ) -> List[Dict[str, Any]]:
         """List the latest runtime heartbeat for each owned process instance.
 
-        Args:
-            customer_id: Owner namespace whose heartbeat records are requested.
+        Parameters
+        ----------
+        customer_id : str
+            Owner namespace whose heartbeat records are requested.
 
-        Returns:
-            Rows containing ``worker_instance_id``, ``worker_pid``,
-            ``observed_at``, and the reported ``status`` mapping. An empty list
-            means no runtime heartbeat is stored for this customer.
+        Returns
+        -------
+        List[Dict[str, Any]]
+            Rows containing ``worker_instance_id``, ``worker_pid``, ``observed_at``,
+            and the reported ``status`` mapping. An empty list means no heartbeat is
+            stored for this customer.
         """
         ...
 
     @abstractmethod
     def close(self) -> None:
-        """
-        Release any open connections.
+        """Release resources held by the repository.
+
+        Returns
+        -------
+        None
         """
         ...
 
@@ -154,8 +249,22 @@ class BaseRepository(ABC):
         label: str,
         worker_pid: Optional[str] = None,
     ) -> None:
-        """
-        Store a deployment marker with the current timestamp.
+        """Store a deployment marker for a worker instance.
+
+        Parameters
+        ----------
+        customer_id : str
+            Customer namespace that owns the marker.
+        worker_instance_id : str
+            Identity of the process instance being marked.
+        label : str
+            Deployment label to record.
+        worker_pid : str or None, optional
+            Operating-system process ID associated with the marker.
+
+        Returns
+        -------
+        None
         """
         ...
 
@@ -168,13 +277,19 @@ class BaseRepository(ABC):
     ) -> Optional[float]:
         """Return the newest timestamp for a named deployment marker.
 
-        Args:
-            customer_id: Owner namespace for the stored process data.
-            worker_instance_id: Stable identity of the marked process.
-            label: Deployment marker label to resolve.
+        Parameters
+        ----------
+        customer_id : str
+            Owner namespace for the marker.
+        worker_instance_id : str
+            Stable identity of the marked process.
+        label : str
+            Deployment marker label to find.
 
-        Returns:
-            Marker creation time as Unix seconds, or ``None`` if it is absent.
+        Returns
+        -------
+        float or None
+            Newest marker timestamp, or ``None`` when no matching marker exists.
         """
         ...
 
@@ -186,8 +301,22 @@ class BaseRepository(ABC):
         diff: Dict,
         worker_pid: Optional[str] = None,
     ) -> None:
-        """
-        Store one graph diff snapshot from the agent.
+        """Store one incremental graph diff from a worker.
+
+        Parameters
+        ----------
+        customer_id : str
+            Customer namespace that owns the diff.
+        worker_instance_id : str
+            Identity of the process instance that produced the diff.
+        diff : Dict
+            Incremental graph changes.
+        worker_pid : str or None, optional
+            Operating-system process ID associated with the diff.
+
+        Returns
+        -------
+        None
         """
         ...
 
@@ -200,8 +329,24 @@ class BaseRepository(ABC):
         timestamp: float,
         worker_pid: Optional[str] = None,
     ) -> None:
-        """
-        Persist causal rule matches for historical review.
+        """Persist a causal rule evaluation for historical review.
+
+        Parameters
+        ----------
+        customer_id : str
+            Customer namespace that owns the matches.
+        worker_instance_id : str
+            Identity of the process instance evaluated.
+        matches : List[Dict]
+            Rule matches produced by the evaluation.
+        timestamp : float
+            Evaluation time as a Unix timestamp.
+        worker_pid : str or None, optional
+            Operating-system process ID associated with the matches.
+
+        Returns
+        -------
+        None
         """
         ...
 
@@ -212,8 +357,21 @@ class BaseRepository(ABC):
         worker_instance_id: str,
         limit: int = 50,
     ) -> List[Dict]:
-        """
-        Return most recent causal match snapshots.
+        """Return recent causal match snapshots for a worker instance.
+
+        Parameters
+        ----------
+        customer_id : str
+            Customer namespace that owns the history.
+        worker_instance_id : str
+            Process-instance identity to query.
+        limit : int, optional
+            Maximum number of snapshots to return.
+
+        Returns
+        -------
+        List[Dict]
+            Match snapshots ordered from newest to oldest.
         """
         ...
 

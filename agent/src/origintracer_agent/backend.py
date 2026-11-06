@@ -82,19 +82,22 @@ async def _request(
 
 
 async def list_workers() -> list[dict[str, Any]]:
-    """List stored process snapshots and their heartbeat freshness.
+    """List stored worker snapshots and heartbeat freshness.
 
-    This inventory uses FastAPI's snapshot route rather than discovering
-    worker sockets. Each valid row is normalized to a PID label, stable
-    process-instance ID, snapshot receipt time, heartbeat last-seen time, and
-    the backend's freshness decision. Stale snapshots are retained in the
-    returned inventory so callers can still inspect their stored data.
+    The inventory uses FastAPI's snapshot route rather than discovering
+    worker sockets. Each valid row contains a PID, stable process-instance
+    ID, snapshot receipt time, heartbeat time, and backend freshness
+    decision. Stale snapshots remain available for inspection.
 
-    Returns:
-        Snapshot rows for the authenticated customer, newest first.
+    Returns
+    -------
+    list[dict[str, Any]]
+        Snapshot rows for the authenticated customer, ordered newest first.
 
-    Raises:
-        ToolException: If the backend request fails or returns an invalid list.
+    Raises
+    ------
+    ToolException
+        If the backend request fails or returns an invalid worker list.
     """
     payload = await _request("GET", "/api/v1/snapshots")
     workers = payload.get("data", [])
@@ -126,7 +129,27 @@ async def list_workers() -> list[dict[str, Any]]:
 async def record_deployment_marker(
     label: str, worker_instance_id: str, worker_pid: int
 ) -> dict[str, Any]:
-    """Record an approved deployment marker in the backend repository."""
+    """Record an approved deployment marker for one worker instance.
+
+    Parameters
+    ----------
+    label : str
+        Deployment label to record.
+    worker_instance_id : str
+        Stable identity of the selected process instance.
+    worker_pid : int
+        PID label associated with the selected instance.
+
+    Returns
+    -------
+    dict[str, Any]
+        Backend response describing the recorded marker.
+
+    Raises
+    ------
+    ToolException
+        If the label is invalid or the backend request fails.
+    """
     if not label or len(label) > 200:
         raise ToolException(
             "The deployment marker label must be 1 to 200 characters."
@@ -146,7 +169,26 @@ async def evaluate_and_record_rules(
     tags: list[str] | None = None,
     worker_instance_id: str = "",
 ) -> dict[str, Any]:
-    """Run rules on the selected worker instance snapshot and store its matches."""
+    """Evaluate rules on one saved worker snapshot and store the matches.
+
+    Parameters
+    ----------
+    tags : list[str], optional
+        Rule categories to evaluate. An empty or omitted list evaluates all
+        registered rules.
+    worker_instance_id : str
+        Stable identity of the selected process instance.
+
+    Returns
+    -------
+    dict[str, Any]
+        Backend response containing evaluation matches.
+
+    Raises
+    ------
+    ToolException
+        If the tags are invalid or the backend request fails.
+    """
     if tags is not None and (
         len(tags) > 20 or any(not tag for tag in tags)
     ):
@@ -166,7 +208,23 @@ async def evaluate_and_record_rules(
 async def get_worker_snapshot(
     worker_instance_id: str,
 ) -> dict[str, Any]:
-    """Read the saved graph snapshot for one selected worker process instance."""
+    """Read the saved graph snapshot for one worker process instance.
+
+    Parameters
+    ----------
+    worker_instance_id : str
+        Stable identity of the worker process to read.
+
+    Returns
+    -------
+    dict[str, Any]
+        Saved graph snapshot returned by the backend.
+
+    Raises
+    ------
+    ToolException
+        If the backend request fails or the instance is unavailable.
+    """
     return await _request(
         "GET", f"/api/v1/snapshots/{worker_instance_id}"
     )
@@ -175,7 +233,25 @@ async def get_worker_snapshot(
 async def get_causal_history(
     worker_instance_id: str, limit: int = 50
 ) -> dict[str, Any]:
-    """Read saved causal-rule history for one worker process instance."""
+    """Read saved causal-rule matches for one worker process instance.
+
+    Parameters
+    ----------
+    worker_instance_id : str
+        Stable identity of the worker process to read.
+    limit : int, default=50
+        Maximum number of history entries to return, capped at 100.
+
+    Returns
+    -------
+    dict[str, Any]
+        Saved causal-rule history returned by the backend.
+
+    Raises
+    ------
+    ToolException
+        If the instance ID is invalid or the backend request fails.
+    """
     if not worker_instance_id or len(worker_instance_id) > 200:
         raise ToolException(
             "A valid worker instance ID is required."
@@ -191,21 +267,26 @@ async def get_causal_history(
 
 
 async def stitch_stored_trace(trace_id: str) -> dict[str, Any]:
-    """Retrieve one trace assembled from uploaded events across instances.
+    """Retrieve one trace assembled from uploaded events across process instances.
 
     The backend searches persisted event rows for this exact trace ID and
-    returns stages with their originating worker identities. This read does
-    not contact live workers and does not calculate a cross-process end-to-end
-    duration.
+    returns stages with their originating worker identities. It does not
+    contact live workers or calculate a cross-process end-to-end duration.
 
-    Args:
-        trace_id: Trace identifier observed in previously captured events.
+    Parameters
+    ----------
+    trace_id : str
+        Trace identifier observed in previously captured events.
 
-    Returns:
+    Returns
+    -------
+    dict[str, Any]
         Backend trace details, including matching stages and worker IDs.
 
-    Raises:
-        ToolException: If the backend request fails or the trace ID is rejected.
+    Raises
+    ------
+    ToolException
+        If the backend request fails or rejects the trace ID.
     """
     return await _request(
         "GET", f"/api/v1/traces/{trace_id}/stitch"
@@ -213,7 +294,23 @@ async def stitch_stored_trace(trace_id: str) -> dict[str, Any]:
 
 
 def validate_pid(value: Any) -> int:
-    """Check the selected PID before constructing a worker API request."""
+    """Validate a selected worker PID before constructing an API request.
+
+    Parameters
+    ----------
+    value : Any
+        PID value supplied in trusted run state.
+
+    Returns
+    -------
+    int
+        Positive integer process ID.
+
+    Raises
+    ------
+    ToolException
+        If the value is not a positive integer PID.
+    """
     if isinstance(value, bool) or not str(value or "").isdigit():
         raise ToolException(
             "No valid worker is selected. Ask the caller to choose a live PID "
@@ -246,14 +343,20 @@ async def _snapshot_for_pid(pid: int) -> dict[str, Any]:
     use the returned instance ID for the actual request. The inventory is
     ordered newest first by the backend.
 
-    Args:
-        pid: Selected positive process ID supplied in trusted run state.
+    Parameters
+    ----------
+    pid : int
+        Selected positive process ID supplied in trusted run state.
 
-    Returns:
-        The matching snapshot inventory row, including its instance ID.
+    Returns
+    -------
+    dict[str, Any]
+        Matching snapshot inventory row, including its instance ID.
 
-    Raises:
-        ToolException: If no uploaded snapshot currently matches the PID.
+    Raises
+    ------
+    ToolException
+        If no uploaded snapshot currently matches the PID.
     """
     for worker in await list_workers():
         if str(worker.get("pid")) == str(pid):
@@ -279,17 +382,25 @@ async def query_worker(
     socket proxy and never falls back to it when a stored route is unsupported.
     Tool results are bounded before being returned to the model.
 
-    Args:
-        pid: Selected process ID used to resolve the stored instance.
-        query: Supported read-only OriginTracer DSL query.
-        worker_instance_id: Optional already-resolved stable instance ID.
+    Parameters
+    ----------
+    pid : int
+        Selected process ID used to resolve the stored instance.
+    query : str
+        Supported read-only OriginTracer DSL query.
+    worker_instance_id : str, optional
+        Stable instance ID already resolved from the snapshot inventory.
 
-    Returns:
+    Returns
+    -------
+    dict[str, Any]
         Query source, worker identity, observation time, and API result.
 
-    Raises:
-        ToolException: If the PID has no snapshot, the DSL metric is
-            unsupported, or the backend request fails.
+    Raises
+    ------
+    ToolException
+        If the PID has no snapshot, the DSL metric is unsupported, or the
+        backend request fails.
     """
     from origintracer.query.parser import parse
 
@@ -539,7 +650,24 @@ def build_event_query(
     service: str | None = None,
     probe: str | None = None,
 ) -> str:
-    """Build a bounded event query from validated filter values."""
+    """Build a bounded event query from validated filter values.
+
+    Parameters
+    ----------
+    limit : int
+        Maximum event count, clamped to 1–100.
+    trace_id : str, optional
+        Trace identifier filter.
+    service : str, optional
+        Service-name filter.
+    probe : str, optional
+        Exact event-probe filter.
+
+    Returns
+    -------
+    str
+        Read-only OriginTracer DSL query.
+    """
     limit = max(1, min(limit, 100))
     filters = []
     for field, value in (
@@ -556,8 +684,17 @@ def build_event_query(
 
 
 def build_causal_query(tags: list[str] | None) -> str:
-    """
-    Build a causal rules query with optional tag filtering.
+    """Build a causal-rules query with optional tag filtering.
+
+    Parameters
+    ----------
+    tags : list[str], optional
+        Rule categories to include. Empty or omitted tags select all rules.
+
+    Returns
+    -------
+    str
+        Read-only OriginTracer DSL causal query.
     """
     if not tags:
         return "CAUSAL"
@@ -568,10 +705,32 @@ def build_causal_query(tags: list[str] | None) -> str:
 
 
 def build_trace_query(trace_id: str) -> str:
-    """Build a trace query from a validated trace identifier."""
+    """Build a trace query from a trace identifier.
+
+    Parameters
+    ----------
+    trace_id : str
+        Trace identifier to inspect.
+
+    Returns
+    -------
+    str
+        Read-only OriginTracer DSL trace query.
+    """
     return f"TRACE {_safe_filter(trace_id, 'trace_id')[1:-1]}"
 
 
 def build_diff_query(since: str) -> str:
-    """Build a temporal diff query for a marker or timestamp."""
+    """Build a temporal diff query for a marker or timestamp.
+
+    Parameters
+    ----------
+    since : str
+        Deployment marker or timestamp for the comparison baseline.
+
+    Returns
+    -------
+    str
+        Read-only OriginTracer DSL diff query.
+    """
     return f"DIFF SINCE {_safe_filter(since, 'since')}"

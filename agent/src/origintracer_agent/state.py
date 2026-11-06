@@ -6,81 +6,112 @@ from langchain.agents import AgentState
 
 
 class InvestigationState(AgentState):
-    """
-    Conversation state plus the structured work for an investigation.
+    """Conversation state and structured investigation work for one thread.
 
-    Agent Server checkpoints this state with the conversation thread. The
-    process ID is supplied by the caller and is never selected by the model.
+    LangGraph checkpoints this state with the conversation. A new thread can
+    begin with inherited conversation messages and an optional worker selection.
+    The caller supplies the worker PID; the model does not choose it.
 
-    State fields
-    ------------
-    ``messages`` is inherited from ``AgentState`` and holds the conversation.
-    The fields below are optional so a new thread can start with only a user
-    message and a selected worker.
-    * ``worker_pid`` is the worker selected for the current run. The caller
-      supplies it; tools use it to query that worker.
-    * ``worker_instance_id`` identifies the selected worker process instance.
-      It distinguishes a restarted worker that happens to reuse the same PID.
-    * ``investigation_pid`` is the worker attached to the saved investigation.
-      A change starts a new investigation so evidence from different workers
-      is not combined.
-    * ``investigation_instance_id`` identifies the worker instance attached to
-      the saved investigation and is checked alongside ``investigation_pid``
-      before prior evidence is reused.
-    * ``investigation_id`` is a stable grouping ID for one investigation. It
-      persists across related turns and changes when a fresh investigation
-      starts; LangGraph events carry it as metadata alongside their trace IDs.
-    * ``prior_investigation_id`` temporarily holds the saved ID while the graph
-      decides whether the current request continues that investigation. The
-      planner clears it after making that decision.
-    * ``planned_continuation`` records the planner's continuity decision until
-        the graph has verified the current worker process instance.
-    * ``new_investigation`` asks the graph to clear prior investigation work
-        before handling the current request.
-    * ``scope`` records the planner's operational scope decision, including
-        whether an overview covers all live workers or the selected worker.
-    * ``last_user_message_id`` records the last user message handled by the
-        graph so the same message is not processed twice.
-    * ``question`` is the original question for the active investigation.
-      ``current_request`` is the newest request being handled, and
-      ``questions`` keeps the requests added to this investigation.
-    * ``scope`` records what the investigation covers, including its worker.
-    * ``plan`` contains the evidence gathering steps and their status.
-    * ``deliverables`` lists outputs requested in the current turn, and
-      ``deliverable_status`` records whether each output is answered or unanswered.
-      ``investigation_deliverables`` retains prior turn outputs.
-      ``investigation_level`` records whether the plan is a direct query, a multi-step
-        investigation, or a check of competing explanations.
-    * ``hypotheses`` contains possible explanations and the evidence found for
-      or against each one.
-    * ``evidence`` contains tool observations with IDs and source details.
-      ``tool_results`` keeps the corresponding tool calls and their outcomes.
-      ``recorded_tool_call_ids`` prevents a tool result from being recorded
-      more than once.
-    * ``direct_answer`` contains the assessor's concise answer to the latest
-      request and the evidence IDs that support it. ``findings`` contains
-      current-turn observations linked to evidence IDs;
-      ``investigation_findings`` retains conclusions from earlier turns.
-      ``turn_evidence_baseline`` marks evidence already present when this turn
-      began so the response can include new observations and relevant cited
-      prior observations without repeating the entire investigation.
-      ``unresolved_questions`` lists what the evidence has not answered;
-      ``limitations`` records limits in the available data; and
-      ``next_steps`` lists useful follow-up checks.
-    * ``research_round`` counts evidence gathering and assessment rounds.
-      ``assessment_sufficient`` says whether the evidence supports a report;
-      ``last_research_had_tools`` tells the graph whether tool results need
-      recording before assessment.
-    * ``assessment_failure`` records a semantic-validation failure that stops
-      report synthesis while preserving gathered evidence.
-    * ``response_mode`` records whether the latest turn is general chat,
-      an investigation, or an action proposal.
-    * ``status`` records the current stage or outcome of the investigation.
-      ``final_report`` contains the completed, evidence-linked response.
-    * ``proposed_action`` holds an action and its arguments while it waits for
-      approval. ``action_result`` records the outcome after approval, and
-      ``action_status`` records whether it was awaiting approval, approved,
-      cancelled, or failed.
+    Attributes
+    ----------
+    messages : list[BaseMessage]
+        Conversation history inherited from ``AgentState``.
+    worker_pid : str or int, optional
+        Worker selected for the current run. The caller supplies this PID, and
+        worker tools use it to resolve the stored snapshot to inspect.
+    worker_instance_id : str, optional
+        Stable identity of the selected worker process. This distinguishes a
+        restarted process that reuses a PID.
+    investigation_pid : str, optional
+        PID attached to the saved investigation. A change starts a new
+        investigation so evidence from different workers is not combined.
+    investigation_instance_id : str, optional
+        Worker instance attached to the saved investigation. The graph checks
+        it alongside ``investigation_pid`` before reusing prior evidence.
+    investigation_id : str, optional
+        Stable grouping ID for one investigation. It persists across related
+        turns and changes when a fresh investigation starts. LangGraph events
+        include it as metadata alongside their trace IDs.
+    prior_investigation_id : str, optional
+        Saved investigation ID held temporarily while the graph decides
+        whether the current request continues that investigation.
+    planned_continuation : bool, optional
+        Planner's continuity decision, retained until the graph verifies the
+        selected worker process instance.
+    new_investigation : bool, optional
+        Requests that prior investigation work be cleared before the current
+        request is handled.
+    scope : dict, optional
+        Operational scope selected by the planner, including whether a worker
+        overview covers all live workers or only the selected worker.
+    last_user_message_id : str, optional
+        ID of the last user message handled by the graph, used to avoid
+        processing the same message twice.
+    question : str, optional
+        Original question for the active investigation.
+    current_request : str, optional
+        Newest user request being handled.
+    questions : list[str], optional
+        Requests added to the current investigation across related turns.
+    plan : list[dict], optional
+        Evidence-gathering steps and their status.
+    deliverables : list[dict], optional
+        Outputs requested in the current turn.
+    deliverable_status : list[dict], optional
+        Whether each current-turn output has been answered.
+    investigation_deliverables : list[dict], optional
+        Requested outputs retained from earlier turns in the investigation.
+    investigation_level : str, optional
+        Plan type: a direct query, a multi-step investigation, or a comparison
+        of competing explanations.
+    hypotheses : list[dict], optional
+        Possible explanations and the evidence found for or against each one.
+    evidence : list[dict], optional
+        Tool observations with evidence IDs and source details.
+    tool_results : list[dict], optional
+        Tool calls and their success or failure outcomes.
+    recorded_tool_call_ids : list[str], optional
+        Tool call IDs already recorded, used to prevent duplicate results.
+    direct_answer : dict, optional
+        Concise answer to the latest request and the evidence IDs that support it.
+    findings : list[dict], optional
+        Current-turn observations linked to evidence IDs.
+    investigation_findings : list[dict], optional
+        Conclusions retained from earlier turns.
+    turn_evidence_baseline : list[str], optional
+        Evidence IDs already present when the current turn began. The report
+        uses this baseline to include new observations and relevant cited prior
+        observations without repeating the full investigation.
+    unresolved_questions : list[str], optional
+        Questions the available evidence has not answered.
+    limitations : list[str], optional
+        Limits in the available data that affect the conclusions.
+    next_steps : list[str], optional
+        Useful follow-up checks.
+    research_round : int, optional
+        Number of evidence-gathering and assessment rounds completed.
+    assessment_sufficient : bool, optional
+        Whether the gathered evidence supports a report.
+    last_research_had_tools : bool, optional
+        Whether the latest research step returned tool calls that must be
+        recorded before assessment.
+    assessment_failure : dict, optional
+        Semantic-validation failure that stops report synthesis while
+        preserving the gathered evidence.
+    response_mode : str, optional
+        Whether the latest turn is general chat, an investigation, or an action
+        proposal.
+    status : str, optional
+        Current stage or outcome of the investigation.
+    final_report : dict, optional
+        Completed response with findings and evidence references.
+    proposed_action : dict, optional
+        Action and arguments awaiting caller approval.
+    action_result : dict, optional
+        Result returned after an approved action executes.
+    action_status : str, optional
+        Whether the proposed action is awaiting approval, approved, cancelled,
+        or failed.
     """
 
     worker_pid: NotRequired[str | int]

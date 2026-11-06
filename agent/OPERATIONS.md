@@ -1,9 +1,10 @@
 # Agent Setup and Operations
 
-This guide covers installation, model configuration, local services, and
-example requests. For graph behavior and state flow, see
-[Agent Architecture](ARCHITECTURE.md). For full evaluation instructions, see
-[Agent graph evaluations](evals/README.md).
+This guide takes you from installing the Agent Server through configuring a
+model, starting the services it depends on, and sending a test investigation.
+It also explains how to approve a supported write action. For a closer look at
+the graph's state and routing, see [Agent Architecture](ARCHITECTURE.md); the
+[evaluation guide](evals/README.md) covers the end-to-end evaluation cases.
 
 ## Install
 
@@ -15,10 +16,11 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-The Agent Server, Python configuration, and evaluation runner read
-`agent/.env.example` directly. Edit it for machine-specific service addresses,
-model settings, and API keys. Already-exported shell variables take
-precedence; Python settings have localhost fallbacks when a value is absent.
+The Agent Server, its Python configuration, and the evaluation runner read
+`agent/.env.example` directly, so use it to set machine-specific service
+addresses, model choices, and API keys. Values already exported in the shell
+take precedence over the file, while Python settings fall back to localhost
+when a value is not provided.
 
 To install development tools and run source checks:
 
@@ -42,48 +44,52 @@ the agent source and tests.
 
 ## Configure a model
 
-The agent supports local Ollama, GroqCloud, and Mistral through LangChain
-provider integrations. Ollama remains the default. The default model is `qwen3:4b`,
-which supports tool calling and structured responses used by the investigation
-graph.
+The agent can use local Ollama or the GroqCloud and Mistral services through
+their LangChain provider integrations. Ollama is the default provider, and its
+default model, `qwen3:4b`, supports the tool calls and structured responses
+required by the investigation graph.
 
 ### Ollama
 
-Pull the default model on the computer running Ollama:
+If you are using Ollama, first pull the default model on the computer that
+runs the Ollama service:
 
 ```bash
 ollama pull qwen3:4b
 ```
 
-Set `ORIGINTRACER_AGENT_MODEL` to a provider-prefixed model such as
-`ollama:qwen3:4b`. Set `ORIGINTRACER_EVAL_JUDGE_MODEL` to the model used for
-evaluation judging; it accepts the same provider-prefixed format. Set
-`OLLAMA_BASE_URL` to the Ollama server address. If Ollama is on another
-computer, use its LAN address, for example `http://192.168.1.50:11434`. The
-Ollama server must accept connections from the agent computer, and the network
-firewall must allow port `11434`. Check the connection from the agent computer:
+In `agent/.env.example`, set `ORIGINTRACER_AGENT_MODEL` to a provider-prefixed
+model such as `ollama:qwen3:4b`. The evaluation runner uses
+`ORIGINTRACER_EVAL_JUDGE_MODEL`, which accepts the same format. Set
+`OLLAMA_BASE_URL` to the address where Ollama is listening; when it runs on a
+different computer, use that computer's LAN address, such as
+`http://192.168.1.50:11434`. The Ollama host must accept connections from the
+agent computer, and its firewall must allow port `11434`. You can check
+connectivity from the agent computer with:
 
 ```bash
 curl http://192.168.1.50:11434/api/tags
 ```
 
-Ollama listens only on localhost by default. On the computer running Ollama,
-set `OLLAMA_HOST=0.0.0.0:11434` and restart Ollama so it accepts LAN requests.
-For a Linux system service, add this under `[Service]` with
-`sudo systemctl edit ollama.service`:
+By default, Ollama listens only on localhost. To allow connections over your
+LAN, configure the Ollama computer to listen on `0.0.0.0:11434` and restart
+the service. On Linux systems that run Ollama as a service, open its override
+file with `sudo systemctl edit ollama.service` and add:
 
 ```ini
 [Service]
 Environment="OLLAMA_HOST=0.0.0.0:11434"
 ```
 
-Then run `sudo systemctl daemon-reload` and
-`sudo systemctl restart ollama.service`. Use the Ollama computer's LAN IP in
-`OLLAMA_BASE_URL` and keep this port limited to your trusted LAN.
+After saving the override, reload systemd and restart Ollama with
+`sudo systemctl daemon-reload` and `sudo systemctl restart ollama.service`.
+Point `OLLAMA_BASE_URL` at the Ollama computer's LAN IP, and keep port `11434`
+accessible only on a trusted network.
 
 ### GroqCloud
 
-For a cloud-backed demo, create a Groq API key and edit `agent/.env.example`:
+For a cloud-backed demo, create a Groq API key and add it to
+`agent/.env.example` alongside the model settings:
 
 ```dotenv
 GROQ_API_KEY=your-groq-api-key
@@ -91,43 +97,44 @@ ORIGINTRACER_AGENT_MODEL=groq:openai/gpt-oss-20b
 ORIGINTRACER_EVAL_JUDGE_MODEL=groq:openai/gpt-oss-20b
 ```
 
-The Groq integration package is installed with the agent dependencies. Restart
-the Agent Server after changing its environment. The eval runner also reads
-`agent/.env.example`, so it will use Groq for its quality judge with this
-configuration. `.env.example` is tracked in the repository; keep your API key
-private and do not commit your local key change. Prompts and investigation
-evidence sent to the model provider leave your machine when using Groq.
-Free-tier limits depend on the selected model and account; check the
+The Groq integration is installed with the agent dependencies, so after
+changing these settings, restart the Agent Server to apply them. Because the
+evaluation runner reads the same file, it will also use Groq for quality
+judging. The example environment file is tracked in the repository: keep your
+key private and do not commit a local change containing it. When you use Groq,
+prompts and investigation evidence are sent to the provider. Free-tier limits
+vary by model and account, so check the
 [Groq rate-limit page](https://console.groq.com/docs/rate-limits) before a
 demo. If requests return HTTP 429, wait for the limit window to reset or reduce
 the number of demo requests.
 
 ### Mistral
 
-Set `MISTRAL_API_KEY` in `agent/.env.example`, then set both
-`ORIGINTRACER_AGENT_MODEL` and `ORIGINTRACER_EVAL_JUDGE_MODEL` to a Mistral
-model using the `mistral:<model-id>` form, for example
-`mistral:mistral-small-latest`. The Mistral integration supports tool calling
-through LangChain. Restart the Agent Server after changing the model settings.
+To use Mistral, add `MISTRAL_API_KEY` to `agent/.env.example` and set both
+`ORIGINTRACER_AGENT_MODEL` and `ORIGINTRACER_EVAL_JUDGE_MODEL` to a model in
+the `mistral:<model-id>` format, such as `mistral:mistral-small-latest`.
+LangChain's Mistral integration supports the tool calls the agent needs. Restart
+the Agent Server after changing the provider or model settings.
 
 ## Start and observe the services
 
-Run the backend, the target app, and this Agent Server as separate processes.
-For the in-memory backend, start it from the repository's `backend/` directory:
+The backend, the instrumented target application, and the Agent Server run as
+separate processes. Start the backend first; for local development with the
+in-memory store, run this command from the repository's `backend/` directory:
 
 ```bash
 ORIGINTRACER_API_KEYS=test-key-123:local-dev \
   uvicorn main:app --host 0.0.0.0 --port 8001
 ```
 
-Set `ORIGINTRACER_API_URL` and `ORIGINTRACER_API_KEY` in
-`agent/.env.example` to match the running OriginTracer backend. The backend
-key is used by this server when it queries workers.
+Next, set `ORIGINTRACER_API_URL` and `ORIGINTRACER_API_KEY` in
+`agent/.env.example` to match the backend you started. The Agent Server uses
+that key to query worker data.
 
-Start the target app using its normal command. It must call `origintracer.init`
-with a config that enables the `langgraph` probe in the same process that runs
-the LangGraph model and tools. For the Django example, see
-[`applications/django/README.md`](../applications/django/README.md). To capture
+Now start the target application with its usual command. In the process that
+runs the LangGraph model and tools, initialize OriginTracer with the
+`langgraph` probe enabled. The [Django example](../applications/django/README.md)
+shows one way to configure this. If you also want the React UI to display LLM
 prompt/response and tool previews, set these variables **before starting the
 target process**:
 
@@ -136,51 +143,53 @@ export ORIGINTRACER_CAPTURE_LLM_CONTENT=1
 export ORIGINTRACER_CAPTURE_TOOL_CONTENT=1
 ```
 
-Then start the Agent Server with `langgraph dev` as described below. Its
-FastAPI lifespan starts a separate OriginTracer worker to observe the
-investigator itself. The target app and investigator have different PIDs and
-can be inspected independently. The backend must share their host/container
-PID and Unix socket namespace to discover both.
+With the backend and target running, start the Agent Server as described below.
+Its FastAPI lifespan starts its own OriginTracer worker, so the investigator
+and target appear under different PIDs and can be inspected independently. For
+the backend to discover both workers through local socket discovery, all three
+processes must share the relevant host or container PID and Unix socket
+namespace.
 
 ## Run the Agent Server
 
-Start the local LangGraph server from the `agent/` directory:
+From the `agent/` directory, start the local LangGraph development server:
 
 ```bash
 langgraph dev --n-jobs-per-worker 1
 ```
 
-`--n-jobs-per-worker 1` limits the development server to one active graph run
-per worker process, which helps when stepping through the graph in a debugger.
-Use a larger number, such as `4`, to run more graph jobs at once. This limits
-graph jobs; it does not control how many requests the OriginTracer application
-handles.
+The `--n-jobs-per-worker 1` setting allows one graph run at a time in each
+server worker, which is useful when stepping through the graph in a debugger.
+You can raise it, for example to `4`, when you want that worker to handle more
+graph jobs concurrently; this setting controls the agent's graph runs rather
+than requests served by the instrumented OriginTracer application.
 
-The graph ID is `origintracer_investigator`. The LangChain Chat UI fork can
-connect to this Agent Server and send normal thread and run requests. Local API
-documentation is available at `http://127.0.0.1:2024/docs` with the current
-CLI default port. Use the address printed by `langgraph dev` if you set a
-different port.
+The graph is registered as `origintracer_investigator`, which the LangChain
+Chat UI fork can select when sending thread and run requests. The development
+server exposes API documentation at `http://127.0.0.1:2024/docs` by default;
+if you configured another port, use the address printed by `langgraph dev`.
 
-The Agent Server's `.env.example` enables content capture for its own calls.
-Shell values take precedence, so make sure they are not set to `0` when you
-start the server. Check which worker snapshots the backend has received:
+The Agent Server's `.env.example` also enables content capture for calls made
+by the investigator itself. Since exported shell values take precedence, make
+sure the capture settings are not set to `0` in the server's environment. Once
+the processes have had time to upload their snapshots, check the backend
+inventory:
 
 ```bash
 curl -H "Authorization: Bearer test-key-123" \
     http://127.0.0.1:8001/api/v1/snapshots
 ```
 
-Choose a row with `online: true` and use its PID as `worker_pid` in an
-investigation. The response also includes `worker_instance_id`; the agent
-resolves and scopes reads to that process instance. The React interface uses
-the same uploaded snapshot inventory. To inspect the investigator's own LLM
-and tool calls, choose the Agent Server worker; after a run, inspect LLM Content
-or Tool Content in React.
+Choose a row whose `online` value is `true`, then pass its PID as `worker_pid`
+when you start an investigation. The agent resolves that PID to the associated
+`worker_instance_id` and scopes its reads to that process instance. The React
+interface uses the same uploaded inventory, so to inspect the investigator's
+own LLM or tool calls, select the Agent Server worker and open LLM Content or
+Tool Content after a run.
 
 ## Send a test request
 
-Create a thread:
+The API expects each run to belong to a thread. Create one first:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:2024/threads \
@@ -188,8 +197,8 @@ curl -sS -X POST http://127.0.0.1:2024/threads \
     -d '{}'
 ```
 
-Copy the returned `thread_id` and set it below. Replace `12345` with a reporting
-worker PID from `GET /api/v1/snapshots`:
+Copy the returned `thread_id` into the variable below, and replace `12345` with
+the PID of an online worker from `GET /api/v1/snapshots`:
 
 ```bash
 THREAD_ID="paste-thread-id-here"
@@ -209,22 +218,23 @@ curl -sS -X POST \
     }'
 ```
 
-The response includes the assistant message and final investigation state.
-To continue the investigation, send another run to the same thread. Send a
-different `worker_pid` to switch workers; this starts a new investigation so
-evidence from two processes is never mixed. Set `new_investigation` to `true`
-in a later run to clear the current investigation and start another on the same
-worker. The thread keeps its worker selection for follow-up questions.
+The run response includes the assistant's message and the final investigation
+state. To ask a follow-up, send another run to the same thread; the thread
+retains its worker selection. If you provide a different `worker_pid`, the
+agent starts a fresh investigation so evidence from separate processes is not
+mixed. You can also set `new_investigation` to `true` to clear the current
+investigation and start over with the same worker.
 
-The Agent Server manages conversations, runs, and thread checkpoints. The
-investigation fields live in graph state saved with each thread; this service
-does not add a separate conversation or evidence database.
+LangGraph manages the conversation, runs, and thread checkpoints. It saves the
+investigation fields as part of each thread's graph state, so the Agent Server
+does not maintain a separate conversation or evidence database.
 
 ## Approve or reject an action
 
-For a deployment marker, ask: “Record a deployment marker named
-demo-release.” The run pauses with an approval request containing the action
-and label. Resume that thread to approve:
+To record a deployment marker, ask the agent something like “Record a
+deployment marker named demo-release.” The run pauses and returns an approval
+request that identifies the proposed action and label. Resume the same thread
+with approval to execute it:
 
 ```bash
 curl -sS -X POST \
@@ -236,15 +246,14 @@ curl -sS -X POST \
     }'
 ```
 
-To reject the action, resume with `{"approved": false}`. For the other
-supported action, ask: “Run causal rules on the selected worker snapshot and
-save any matches.” It uses the same approval step.
+To reject the proposal instead, resume the thread with
+`{"approved": false}`. Evaluating and saving causal-rule matches is the other
+supported write action, and it follows the same approval step.
 
 ## Evaluate the graph
 
-For end-to-end evidence-gathering, follow-up, missing-worker, and action
-approval cases, see [Agent graph evaluations](evals/README.md).
-
-This first version uses one backend API key for every agent run. Keep the
-Agent Server on a trusted network until caller authentication and per-user
-authorization are configured for the deployment.
+The [evaluation guide](evals/README.md) describes end-to-end cases for evidence
+gathering, follow-up questions, missing workers, and approval handling. Before
+deploying the service, account for its current authorization model: every run
+uses the same backend API key, so keep the Agent Server on a trusted network
+until caller authentication and per-user authorization are configured.

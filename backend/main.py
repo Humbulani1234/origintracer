@@ -351,20 +351,23 @@ def get_repository() -> Any:
 def _worker_runtime_view(
     runtime: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Normalize runtime data and derive whether its heartbeat is fresh.
+    """Normalize runtime data and determine whether its heartbeat is fresh.
 
-    Freshness is based on the uploader's observation timestamp and its
-    configured snapshot interval. The accepted age is at least 30 seconds and
-    at most 300 seconds, with three snapshot intervals as the normal window.
-    This is an ingestion-freshness signal, not an operating-system liveness
-    check.
+    Freshness is based on the uploader's observation timestamp and configured snapshot
+    interval. The accepted age is at least 30 seconds and at most 300 seconds, with three
+    snapshot intervals as the normal window. This signals ingestion freshness; it is not an
+    operating-system liveness check.
 
-    Args:
-        runtime: Stored heartbeat mapping, or ``None`` if no heartbeat exists.
+    Parameters
+    ----------
+    runtime : dict[str, Any] or None
+        Stored heartbeat mapping, or ``None`` when no heartbeat is available.
 
-    Returns:
-        A mapping containing ``online``, ``runtime_status``, ``last_seen``,
-        and ``heartbeat_age_s``. Missing or invalid timestamps produce an
+    Returns
+    -------
+    dict[str, Any]
+        Normalized ``online``, ``runtime_status``, ``last_seen``, and
+        ``heartbeat_age_s`` values. Missing or invalid timestamps produce an
         offline signal and a null age.
     """
     if not runtime:
@@ -513,25 +516,34 @@ async def receive_worker_runtime(
 ) -> Dict[str, Any]:
     """Store a worker's latest runtime heartbeat beside its graph snapshot.
 
-    The uploader sends process health fields that are not part of the
-    serialised RuntimeGraph, such as uptime, active-request count, and active
-    probes. The heartbeat is associated with the authenticated customer and
-    exact worker instance, and is accepted only after that instance's graph
-    snapshot has been received and its PID matches the snapshot metadata.
+    The uploader sends process-health fields that are not part of the serialized
+    ``RuntimeGraph``, including uptime, active-request count, and active probes. The backend
+    associates the heartbeat with the authenticated customer and exact worker instance, and
+    accepts it only after the graph snapshot is stored and its PID matches the snapshot
+    metadata.
 
-    Args:
-        body: Runtime status fields and the worker's observation timestamp.
-        authorization: Customer authentication credential.
-        worker_instance_id_header: Stable process-instance ID from the uploader.
-        worker_pid_header: PID that must match the stored graph snapshot.
-        repository: Configured persistence layer for runtime status.
+    Parameters
+    ----------
+    body : WorkerRuntimeRequest
+        Runtime status fields and the worker's observation timestamp.
+    authorization : str, optional
+        Customer authentication credential from the request header.
+    worker_instance_id_header : str, optional
+        Stable process-instance ID supplied by the uploader.
+    worker_pid_header : int, optional
+        PID that must match the stored graph snapshot.
+    repository : Any
+        Configured persistence layer for runtime status.
 
-    Returns:
-        Confirmation and the worker instance ID whose heartbeat was updated.
+    Returns
+    -------
+    Dict[str, Any]
+        Confirmation and the worker-instance ID whose heartbeat was updated.
 
-    Raises:
-        HTTPException: If identity, timestamp, status fields, or snapshot
-            association is invalid.
+    Raises
+    ------
+    HTTPException
+        If worker identity, timestamp, status fields, or snapshot association is invalid.
     """
     customer_id = _authenticate(authorization)
     instance_id = _require_instance_id(worker_instance_id_header)
@@ -1570,24 +1582,31 @@ async def status(
     authorization: Optional[str] = Header(None),
     repository: InMemoryRepository = Depends(get_repository),
 ) -> Dict:
-    """Return graph availability and runtime freshness for one process.
+    """Return graph availability and runtime freshness for one process instance.
 
-    The response combines the selected instance's in-memory graph metadata
-    with its most recently stored runtime heartbeat. ``online`` is a
-    heartbeat-freshness signal, not an operating-system process check; a
-    missing or stale heartbeat cannot establish current health or activity.
+    The response combines the selected instance's in-memory graph metadata with its latest
+    stored heartbeat. ``online`` reflects heartbeat freshness rather than an
+    operating-system process check, so a missing or stale heartbeat cannot establish current
+    process health or activity.
 
-    Args:
-        worker_instance_id: Stable process-instance ID to inspect.
-        authorization: Customer authentication credential.
-        repository: Configured persistence layer used to load runtime status.
+    Parameters
+    ----------
+    worker_instance_id : str
+        Stable process-instance ID to inspect.
+    authorization : str, optional
+        Customer authentication credential from the request header.
+    repository : InMemoryRepository
+        Persistence layer used to load runtime status.
 
-    Returns:
-        Customer, snapshot and runtime status metadata, storage type, and
-        response timestamp.
+    Returns
+    -------
+    Dict
+        Customer, snapshot, and runtime metadata, storage type, and response time.
 
-    Raises:
-        HTTPException: If authentication fails or the instance ID is invalid.
+    Raises
+    ------
+    HTTPException
+        If authentication fails or the instance ID is invalid.
     """
     customer_id = _authenticate(authorization)
     worker_instance_id = _require_instance_id(worker_instance_id)
@@ -1709,18 +1728,22 @@ async def list_snapshots(
 ) -> Dict[str, Any]:
     """List stored process snapshots with their heartbeat freshness.
 
-    Returns one row per worker instance that has uploaded a graph snapshot.
-    Rows include snapshot receipt time and graph size, plus runtime status and
-    an ``online`` freshness signal when a heartbeat is available. Stale
-    snapshots remain in the result so clients can inspect stored graph data;
-    they must not be counted as currently reporting workers.
+    The endpoint returns one row for each worker instance that uploaded a graph snapshot.
+    Rows include snapshot receipt time and graph size, plus runtime status and an ``online``
+    freshness signal when a heartbeat is available. Stale snapshots remain available for
+    inspection, but clients must not count them as currently reporting workers.
 
-    Args:
-        authorization: Customer authentication credential.
-        repository: Configured persistence layer for runtime heartbeats.
+    Parameters
+    ----------
+    authorization : str, optional
+        Customer authentication credential from the request header.
+    repository : Any
+        Persistence layer used to load runtime heartbeats.
 
-    Returns:
-        Snapshot rows for the authenticated customer, newest snapshot first.
+    Returns
+    -------
+    Dict[str, Any]
+        Snapshot rows for the authenticated customer, ordered by newest snapshot.
     """
     customer_id = _authenticate(authorization)
     with _graphs_lock:
@@ -1770,24 +1793,31 @@ async def get_process_snapshot(
 ) -> Dict[str, Any]:
     """Return stored graph content and metadata for one process instance.
 
-    The instance ID is required so callers cannot accidentally mix snapshots
-    from different process lifetimes that reused the same PID. The response
-    contains the graph's nodes and edges, snapshot metadata, and the latest
-    heartbeat-derived runtime status and freshness signal. A stale heartbeat
-    does not prevent access to the stored graph.
+    Requiring an instance ID prevents callers from mixing snapshots from process lifetimes
+    that reused the same PID. The response includes graph nodes and edges, snapshot
+    metadata, and the latest heartbeat-derived runtime status. A stale heartbeat does not
+    prevent access to the saved graph.
 
-    Args:
-        worker_instance_id: Stable process-instance ID to retrieve.
-        authorization: Customer authentication credential.
-        repository: Configured persistence layer for runtime status.
+    Parameters
+    ----------
+    worker_instance_id : str
+        Stable process-instance ID to retrieve.
+    authorization : str, optional
+        Customer authentication credential from the request header.
+    repository : Any
+        Persistence layer used to load runtime status.
 
-    Returns:
-        The selected instance ID, snapshot metadata, runtime freshness, and
-        serialized node and edge rows.
+    Returns
+    -------
+    Dict[str, Any]
+        Selected instance ID, snapshot metadata, runtime freshness, and serialized
+        node and edge rows.
 
-    Raises:
-        HTTPException: If authentication fails, the ID is invalid, or no graph
-            snapshot exists for that customer and instance.
+    Raises
+    ------
+    HTTPException
+        If authentication fails, the ID is invalid, or no graph snapshot exists
+        for that customer and process instance.
     """
     customer_id = _authenticate(authorization)
     instance_id = _require_instance_id(worker_instance_id)
