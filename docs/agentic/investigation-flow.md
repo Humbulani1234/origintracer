@@ -22,6 +22,10 @@ process instance.
    data limitations. The response does not claim causality when the evidence
    cannot distinguish possible explanations.
 
+!!! note "Investigation limits"
+    A run is scoped to one worker instance and bounded evidence rounds. Findings
+    should retain uncertainty when the available evidence cannot prove a cause.
+
 ## Thread continuity
 
 LangGraph checkpoints conversation and investigation state by thread. Related
@@ -36,6 +40,10 @@ retrieved from the backend, while investigation state is carried in the Agent
 Server thread checkpoint.
 
 ## Actions
+
+!!! warning "Writes require approval"
+    The graph pauses before a deployment marker or causal-rule evaluation is
+    recorded. The caller must resume the same thread with approval.
 
 Write actions use a separate route. The agent prepares the action and pauses;
 the caller must explicitly approve it on the same thread before execution.

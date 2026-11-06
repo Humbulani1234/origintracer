@@ -6,6 +6,11 @@ worker snapshots to the backend.
 
 ## Configure
 
+!!! warning "Protect credentials"
+    Keep backend and model-provider credentials in environment variables or a
+    secret store. Requests sent to cloud model providers include prompts and
+    worker evidence.
+
 Create an isolated environment and install the Agent Server CLI and service
 dependencies from the repository's `agent/` directory:
 

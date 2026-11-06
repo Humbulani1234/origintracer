@@ -7,6 +7,10 @@ events, while the REPL remains the interface for direct live socket queries.
 
 ## What it can do
 
+!!! info "Where evidence comes from"
+    The Agent Server investigates snapshots and events uploaded to the FastAPI
+    backend. Direct live socket queries remain the REPL's role.
+
 - Inspect reporting workers, status, graph nodes and edges, hotspots, events,
   traces, causal rules, and graph changes.
 - Plan bounded evidence gathering, assess findings against the request, cite

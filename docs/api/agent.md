@@ -9,15 +9,18 @@ important public interface.
 
 ## Reference pages
 
-- [Workflow graph](agent_graph.md): compiled LangGraph application and its
-  major nodes and routing functions.
-- [Tools](agent_tools.md): read-only worker tools, planning metadata, and
-  approval-gated actions.
-- [Backend client](agent_backend.md): stored-data client operations and
-  query builders.
-- [Data models](agent_models.md): investigation state and typed model outputs.
+| Page | What it covers |
+|---|---|
+| [Workflow graph](agent_graph.md) | Request routing, investigation stages, assessment, and approval flow. |
+| [Tools](agent_tools.md) | Read-only worker tools, planning metadata, and approved actions. |
+| [Backend client](agent_backend.md) | Stored-data reads, approved writes, and query construction. |
+| [Data models](agent_models.md) | Investigation state and typed plans, evidence, and report outputs. |
 
 ## Trust and scope contract
+
+!!! info "Worker scope and actions"
+    Reads are scoped to one resolved process instance. Writes are isolated
+    behind an explicit approval pause.
 
 The caller supplies `worker_pid`; the agent resolves it to a stable
 `worker_instance_id` and scopes reads to that process instance. Read tools use

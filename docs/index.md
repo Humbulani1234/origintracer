@@ -2,17 +2,17 @@
 
 **Probe-based Python runtime observability.**
 
-StackTracer instruments the framework hooks - Django middleware, asyncio `Task.__step`, Gunicorn fork callbacks, Uvicorn ASGI middleware - and builds a live causal graph of your running stack from the signals they emit. No code changes in your views.
+OriginTracer instruments the framework hooks - Django middleware, asyncio `Task.__step`, Gunicorn fork callbacks, Uvicorn ASGI middleware - and builds a live causal graph of your running stack from the signals they emit, and does not affect the code in your applications.
 
 ```
 gunicorn::master  ── spawned ──>  gunicorn::UvicornWorker-24861
                   ── handled ──>  uvicorn::/api/users/
                   ── calls ──>    django::/api/users/
-                  ── calls ──>    django::NPlusOneView  ×180
+                  ── calls ──>   django::NPlusOneView  ×180
                   ── calls ──>    django::SELECT "auth_user"...  ×90
 ```
 
-The N+1 pattern surfaces structurally - `NPlusOneView` has 180 calls, the query has 90. No query analysis needed.
+The N+1 pattern surfaces structurally - `NPlusOneView`has 180 calls, the query has 90. No query analysis needed.
 
 ---
 
