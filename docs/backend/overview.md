@@ -48,6 +48,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8001
 | `GET` | `/api/v1/graph` | Current graph from latest snapshot |
 | `GET` | `/api/v1/traces/{id}` | Critical path from event store |
 | `GET` | `/api/v1/causal` | Causal rules evaluated on latest snapshot |
+| `POST` | `/api/v1/causal/report` | Latest rule matches evaluated by the instrumented process |
 | `GET` | `/api/v1/causal/history` | Historical causal match snapshots |
 | `GET` | `/api/v1/hotspots` | Top N busiest nodes |
 | `GET` | `/api/v1/diff` | Graph diff since a marker |
@@ -130,7 +131,9 @@ Reconstruct the critical path for a trace from the event store.
 
 ### `GET /api/v1/causal`
 
-Evaluate all registered causal rules against the latest snapshot.
+Evaluate backend-registered rules against the latest snapshot and merge the
+latest matches reported by the instrumented process. This includes
+application-local rules that the backend does not import or execute.
 
 **Response:**
 ```json

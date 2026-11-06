@@ -30,6 +30,9 @@ The N+1 pattern surfaces structurally - `NPlusOneView` has 180 calls, the query 
 === "React UI"
     A terminal-aesthetic dashboard - nodes, edges, trace timeline, event log, deployment diffs. Connects to the FastAPI backend.
 
+=== "Agentic investigations"
+    A LangGraph agent investigates one selected worker using stored graph and event evidence. It explains findings, uncertainty, and supported approved actions.
+
 ---
 
 ## Quick start
@@ -112,3 +115,6 @@ Uvicorn run paths.
 ---
 
 See [Getting Started](getting-started/installation.md) for full instructions.
+
+For the optional natural-language investigation service, start with the
+[Agentic Investigation overview](agentic/overview.md).
