@@ -24,3 +24,4 @@ class DjangoTracerConfig(AppConfig):
         origintracer.init(
             config=str(BASE_DIR / "origintracer.yaml")
         )
+        origintracer.mark_deployment("deployment")

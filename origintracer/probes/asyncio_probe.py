@@ -74,8 +74,8 @@ STEP 6 — Verify BPF permissions
 
 BPF requires root or CAP_BPF. Test with:
     $ sudo $(which python) -c "
-        from bcc import BPF
-        b = BPF(text='int kprobe__sys_clone(void *ctx) { return 0; }')
+        from bcc import BPF;
+        b = BPF(text='int kprobe__sys_clone(void *ctx) { return 0; }');
         print('BPF compile ok')
     "
     # Expected output: BPF compile ok

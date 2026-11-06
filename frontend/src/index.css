@@ -64,6 +64,10 @@ body {
 .worker-option.is-stale .socket-dot { background: #d99a35; }
 .worker-option.active.is-reporting .socket-dot { box-shadow: 0 0 6px rgba(51,204,153,.4); }
 .worker-option.active.is-stale .socket-dot { box-shadow: 0 0 6px rgba(217,154,53,.35); }
+.worker-pagination { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 9px; }
+.worker-pagination button { padding: 2px 3px; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.worker-pagination button:hover:not(:disabled) { color: var(--text); }
+.worker-pagination button:disabled { color: #555; cursor: default; }
 .socket-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3c9; margin-right: 5px; vertical-align: middle; }
 
 /* Main */

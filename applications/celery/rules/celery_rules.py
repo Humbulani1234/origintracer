@@ -15,45 +15,31 @@ def sync_db_in_celery(
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
 ) -> tuple[bool, dict]:
-    """
-    Fires when a celery node has a direct edge to a postgres/sqlite node
-    where avg_duration_ns > 50ms.
-
-    This means the Celery task is calling the database synchronously
-    on the worker thread - not via an async path or thread pool.
-    """
+    """Match slow synchronous database calls directly from Celery tasks."""
     evidence = []
-
     for node in graph.all_nodes():
         if node.service != "celery":
             continue
         for edge in graph.neighbors(node.id):
             target = graph.get_node(edge.target)
-            if target is None:
-                continue
-
-            is_db = target.service in (
+            if target is None or target.service not in {
                 "postgres",
                 "sqlite",
                 "mysql",
+            }:
+                continue
+            if (target.avg_duration_ns or 0) <= 50_000_000:
+                continue
+            evidence.append(
+                {
+                    "task": node.id,
+                    "db_node": target.id,
+                    "avg_ms": round(
+                        (target.avg_duration_ns or 0) / 1e6, 1
+                    ),
+                    "call_count": edge.call_count,
+                }
             )
-            is_slow = (
-                target.avg_duration_ns or 0
-            ) > 50_000_000  # 50ms
-
-            if is_db and is_slow:
-                evidence.append(
-                    {
-                        "task": node.id,
-                        "db_node": target.id,
-                        "avg_ms": round(
-                            (target.avg_duration_ns or 0) / 1e6,
-                            1,
-                        ),
-                        "call_count": edge.call_count,
-                    }
-                )
-
     return bool(evidence), {
         "blocking_db_calls": evidence,
         "remediation": (
@@ -68,48 +54,48 @@ def celery_task_duration_spike(
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
 ) -> tuple[bool, dict]:
-    """
-    Fires when any celery node has avg_duration_ns more than 5× the
-    median across all celery nodes with at least 5 calls.
-
-    This detects a specific slow task standing out from the baseline,
-    which often indicates a new slow operation in a recent deployment.
-
-    Correlate with DIFF SINCE deployment to confirm.
-    """
+    """Match Celery task types averaging more than twice the task median."""
     celery_nodes = [
-        n
-        for n in graph.all_nodes()
-        if n.service == "celery"
-        and n.metadata.get("probe") == "celery.task.end"
-        and (n.call_count or 0) >= 5
-        and n.avg_duration_ns
+        node
+        for node in graph.all_nodes()
+        if node.service == "celery"
+        and (
+            node.metadata.get("last_probe") == "celery.task.end"
+            or node.metadata.get("probe") == "celery.task.end"
+        )
+        and (node.call_count or 0) >= 5
+        and node.avg_duration_ns
     ]
     if len(celery_nodes) < 2:
         return False, {}
 
-    durations = sorted(n.avg_duration_ns for n in celery_nodes)
-    median = durations[len(durations) // 2]
-
-    if median == 0:
+    durations = sorted(
+        node.avg_duration_ns for node in celery_nodes
+    )
+    middle = len(durations) // 2
+    median = (
+        durations[middle]
+        if len(durations) % 2
+        else (durations[middle - 1] + durations[middle]) / 2
+    )
+    if median <= 0:
         return False, {}
 
     spikes = [
         {
-            "task": n.id,
-            "avg_ms": round(n.avg_duration_ns / 1e6, 1),
+            "task": node.id,
+            "avg_ms": round(node.avg_duration_ns / 1e6, 1),
             "median_ms": round(median / 1e6, 1),
-            "ratio": round(n.avg_duration_ns / median, 1),
+            "ratio": round(node.avg_duration_ns / median, 1),
         }
-        for n in celery_nodes
-        if n.avg_duration_ns > median * 2
+        for node in celery_nodes
+        if node.avg_duration_ns > median * 2
     ]
-
     return bool(spikes), {
         "slow_tasks": spikes,
         "median_ms": round(median / 1e6, 1),
         "remediation": (
-            "Run 'DIFF SINCE deployment' to check if these tasks "
+            "Run 'DIFF SINCE deployment' to check whether these tasks "
             "gained new slow edges after a recent deployment."
         ),
     }
@@ -118,9 +104,8 @@ def celery_task_duration_spike(
 SYNC_DB_IN_CELERY = CausalRule(
     name="sync_db_in_celery",
     description=(
-        "A Celery task is making synchronous database calls. "
-        "In a prefork worker, this blocks the worker process thread "
-        "for the full query duration, reducing pool throughput."
+        "A Celery task directly calls a synchronous database operation "
+        "whose measured average duration exceeds 50 ms."
     ),
     tags=["celery", "blocking", "database"],
     predicate=sync_db_in_celery,
@@ -130,9 +115,8 @@ SYNC_DB_IN_CELERY = CausalRule(
 CELERY_TASK_DURATION_SPIKE = CausalRule(
     name="celery_task_duration_spike",
     description=(
-        "One or more Celery tasks have significantly higher average "
-        "duration than the rest of the task queue. Likely a new "
-        "slow operation introduced in a recent deployment."
+        "A Celery task type has an average duration more than twice the "
+        "median of task types with at least five observations."
     ),
     tags=["celery", "latency"],
     predicate=celery_task_duration_spike,
@@ -141,5 +125,6 @@ CELERY_TASK_DURATION_SPIKE = CausalRule(
 
 
 def register(registry: PatternRegistry) -> None:
+    """Register the application-local Celery causal rules."""
     registry.register(SYNC_DB_IN_CELERY)
     registry.register(CELERY_TASK_DURATION_SPIKE)

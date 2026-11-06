@@ -100,6 +100,7 @@ are sent every `snapshot_interval` seconds (default 15).
 | `POST` | `/api/v1/query` | Execute DSL query — `{"query": "SHOW nodes"}` |
 | `GET`  | `/api/v1/hotspots?worker_instance_id=...` | Top N nodes by call count for one process instance |
 | `GET`  | `/api/v1/causal?worker_instance_id=...` | Evaluate causal rules for one process instance without saving |
+| `POST` | `/api/v1/causal/report` | Receive current matches evaluated by the instrumented process |
 | `POST` | `/api/v1/causal/evaluate` | Evaluate causal rules and save matches for one process instance |
 | `GET`  | `/api/v1/causal/history?worker_instance_id=...` | Read saved causal match history |
 | `GET`  | `/api/v1/traces/{id}` | Critical path for a trace (requires event storage) |

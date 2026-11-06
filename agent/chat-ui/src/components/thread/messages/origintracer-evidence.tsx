@@ -17,6 +17,16 @@ function records(value: unknown): RecordValue[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
 }
 
+function nestedRecords(value: unknown): RecordValue[] {
+  let current = value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (Array.isArray(current)) return records(current);
+    if (!isRecord(current)) return [];
+    current = current.data ?? current.matches ?? current.result;
+  }
+  return records(current);
+}
+
 function text(value: unknown, fallback = "—"): string {
   if (value === null || value === undefined || value === "") return fallback;
   if (
@@ -210,12 +220,27 @@ function LiveWorkersOverview({ value }: { value: unknown }) {
           const graph = isRecord(worker.graph) ? worker.graph : {};
           const probes = Array.isArray(status.probes_active)
             ? status.probes_active.map((item) => text(item)).filter(Boolean)
+            : typeof status.probes_active === "string"
+              ? [status.probes_active]
             : [];
-          const matches = records(worker.matched_rules);
+          const activeRules = Array.isArray(status.rules_active)
+            ? status.rules_active.map((item) => text(item)).filter(Boolean)
+            : typeof status.rules_active === "string"
+              ? [status.rules_active]
+              : [];
+          const normalizedMatches = nestedRecords(worker.matched_rules);
+          const matches = normalizedMatches.length > 0
+            ? normalizedMatches
+            : nestedRecords(worker.causal_rule_matches);
+          const nodes = records(graph.nodes);
+          const edges = records(graph.edges);
+          const registeredRules = payloadOf(worker.registered_causal_rules);
           const sectionErrors = Array.isArray(worker.section_errors)
             ? worker.section_errors.map((item) => text(item))
             : [];
           const focused = workerPid === pid;
+          const isOnline = status.online === true;
+          const heartbeatAge = number(status.heartbeat_age_s);
 
           return (
             <article
@@ -229,16 +254,25 @@ function LiveWorkersOverview({ value }: { value: unknown }) {
                     Uptime {text(status.uptime)}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  aria-pressed={focused}
-                  onClick={() => setWorkerPid(pid)}
-                  className={"shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors " + (focused
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-border hover:bg-muted")}
-                >
-                  {focused ? "Focused" : "Focus this worker"}
-                </button>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <span className={"rounded-full border px-2 py-1 text-[11px] " + (isOnline
+                    ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                    : "border-amber-500/30 text-amber-700 dark:text-amber-300")}
+                  >
+                    {isOnline ? "Reporting" : "Stale"}
+                    {heartbeatAge !== null ? ` · ${heartbeatAge}s ago` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    aria-pressed={focused}
+                    onClick={() => setWorkerPid(pid)}
+                    className={"rounded-full border px-3 py-1.5 text-xs font-medium transition-colors " + (focused
+                      ? "border-primary bg-primary/10 text-foreground"
+                      : "border-border hover:bg-muted")}
+                  >
+                    {focused ? "Focused" : "Focus this worker"}
+                  </button>
+                </div>
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -256,6 +290,50 @@ function LiveWorkersOverview({ value }: { value: unknown }) {
                 </div>
               </div>
 
+              {(graph.nodes_truncated === true || graph.edges_truncated === true) && (
+                <p className="text-muted-foreground mt-2 text-xs">
+                  Preview shows {text(graph.nodes_preview_count, "0")} of {text(graph.node_count, "0")} nodes and {text(graph.edges_preview_count, "0")} of {text(graph.edge_count, "0")} edges, ranked by call count.
+                </p>
+              )}
+
+              {(nodes.length > 0 || edges.length > 0) && (
+                <details className="mt-3 rounded-lg border px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-medium">
+                    Show graph preview ({nodes.length} nodes, {edges.length} edges)
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    {nodes.length > 0 && (
+                      <section>
+                        <p className="text-muted-foreground mb-1 text-xs font-medium">Busiest nodes</p>
+                        <ul className="space-y-1 text-xs">
+                          {nodes.map((node, nodeIndex) => (
+                            <li key={text(node.id, String(nodeIndex))} className="flex flex-wrap justify-between gap-x-3">
+                              <span className="break-all">{text(node.id)}</span>
+                              <span className="text-muted-foreground shrink-0">
+                                {text(node.call_count)} calls{node.avg_ms != null ? ` · ${text(node.avg_ms)} ms avg` : ""}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                    {edges.length > 0 && (
+                      <section>
+                        <p className="text-muted-foreground mb-1 text-xs font-medium">Busiest edges</p>
+                        <ul className="space-y-1 text-xs">
+                          {edges.map((edge, edgeIndex) => (
+                            <li key={`${text(edge.source)}-${text(edge.target)}-${edgeIndex}`} className="flex flex-wrap justify-between gap-x-3">
+                              <span className="break-all">{text(edge.source)} → {text(edge.target)}</span>
+                              <span className="text-muted-foreground shrink-0">{text(edge.call_count)} calls</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                  </div>
+                </details>
+              )}
+
               {probes.length > 0 && (
                 <div className="mt-3">
                   <p className="text-muted-foreground mb-1.5 text-xs">Active probes</p>
@@ -272,29 +350,73 @@ function LiveWorkersOverview({ value }: { value: unknown }) {
                 </div>
               )}
 
+              {activeRules.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-muted-foreground mb-1.5 text-xs">Active rules</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeRules.map((rule) => (
+                      <span key={rule} className="bg-muted rounded-full px-2 py-1 text-xs">{rule}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="mt-3">
                 <p className="text-muted-foreground mb-1.5 text-xs">
-                  Detected rule patterns
+                  Matched causal rules ({matches.length})
                 </p>
                 {matches.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="space-y-2">
                     {matches.map((match, matchIndex) => (
-                      <span
-                        key={text(match.rule, "rule") + "-" + matchIndex}
-                        className="rounded-full border px-2 py-1 text-xs"
-                      >
-                        {text(match.rule)}
-                      </span>
+                      <article key={text(match.rule, "rule") + "-" + matchIndex} className="rounded-lg border px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-medium">{text(match.rule)}</span>
+                          {match.confidence !== undefined && (
+                            <span className="bg-muted rounded-full px-2 py-0.5 text-[11px]">
+                              Confidence {text(match.confidence)}
+                            </span>
+                          )}
+                        </div>
+                        {typeof match.explanation === "string" && (
+                          <p className="text-muted-foreground mt-1 text-xs">{match.explanation}</p>
+                        )}
+                        {records(match.hotspot_queries).length > 0 && (
+                          <ul className="text-muted-foreground mt-1 space-y-1 text-xs">
+                            {records(match.hotspot_queries).map((hotspot, hotspotIndex) => (
+                              <li key={`${text(hotspot.node)}-${hotspotIndex}`} className="break-words">
+                                {text(hotspot.node)} · {text(hotspot.call_count)} calls
+                                {hotspot.pct != null ? ` · ${text(hotspot.pct)}%` : ""}
+                                {hotspot.avg_ms != null ? ` · ${text(hotspot.avg_ms)} ms avg` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </article>
                     ))}
                   </div>
                 ) : (
                   <p className="text-muted-foreground text-xs">
                     {sectionErrors.includes("causal_rule_matches")
                       ? "Rule matches unavailable."
-                      : "No matches reported."}
+                      : "This overview check returned no matched patterns."}
                   </p>
                 )}
               </div>
+
+              {activeRules.length === 0 && worker.registered_causal_rules !== undefined && (
+                <details className="mt-3">
+                  <summary className="text-muted-foreground cursor-pointer text-xs">
+                    Rule inventory
+                  </summary>
+                  <div className="mt-2 text-xs break-words">
+                    {Array.isArray(registeredRules)
+                      ? registeredRules.map((rule) => isRecord(rule)
+                        ? text(rule.name, text(rule.rule, text(rule.id)))
+                        : text(rule)).join(", ") || "None returned"
+                      : text(registeredRules, "None returned")}
+                  </div>
+                </details>
+              )}
             </article>
           );
         })}

@@ -295,6 +295,17 @@ const MarkdownTextImpl: FC<{ children: string; compact?: boolean }> = ({
             {emphasizeTechnicalIdentifiers(children)}
           </p>
         ),
+        ul: ({ className, ...props }: { className?: string }) => (
+          <ul className={cn("my-2 ml-5 list-disc [&>li]:mt-1", className)} {...props} />
+        ),
+        ol: ({ className, ...props }: { className?: string }) => (
+          <ol className={cn("my-2 ml-5 list-decimal [&>li]:mt-1", className)} {...props} />
+        ),
+        li: ({ className, children, ...props }: { className?: string; children?: ReactNode }) => (
+          <li className={cn("mt-1 leading-6", className)} {...props}>
+            {emphasizeTechnicalIdentifiers(children)}
+          </li>
+        ),
       }
     : defaultComponents;
 

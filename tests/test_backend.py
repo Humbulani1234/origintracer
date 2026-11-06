@@ -760,6 +760,8 @@ def reset_backend_state():
 
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._reported_causal_matches.clear()
+    m._reported_causal_signatures.clear()
     with m._active_pid_lock:
         m._active_pid.clear()
     m._valid_api_keys = {"test-key-0000": "test_customer"}
@@ -767,6 +769,8 @@ def reset_backend_state():
     yield
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._reported_causal_matches.clear()
+    m._reported_causal_signatures.clear()
     with m._active_pid_lock:
         m._active_pid.clear()
 
@@ -904,6 +908,63 @@ class TestCausalTags:
         r = await client.get("/api/v1/causal", headers=AUTH)
         body = r.json()
         assert body["match_count"] == len(body["data"])
+
+    async def test_process_reported_app_rule_is_merged_and_cleared(
+        self, client
+    ):
+        import backend.main as m
+
+        match = {
+            "rule": "celery_task_duration_spike",
+            "confidence": 0.75,
+            "explanation": "Task duration exceeds the median.",
+            "evidence": {
+                "slow_tasks": [{"task": "export_data"}]
+            },
+            "timestamp": 1.0,
+        }
+        headers = {**AUTH, **PROCESS_HEADERS}
+        reported = await client.post(
+            "/api/v1/causal/report",
+            headers=headers,
+            json={
+                "worker_instance_id": TEST_INSTANCE,
+                "worker_pid": TEST_WORKER_PID,
+                "matches": [match],
+            },
+        )
+        assert reported.status_code == 200
+        assert reported.json()["match_count"] == 1
+
+        live = await client.get("/api/v1/causal", headers=AUTH)
+        assert live.status_code == 200
+        assert match["rule"] in {
+            item["rule"] for item in live.json()["data"]
+        }
+
+        cleared = await client.post(
+            "/api/v1/causal/report",
+            headers=headers,
+            json={
+                "worker_instance_id": TEST_INSTANCE,
+                "worker_pid": TEST_WORKER_PID,
+                "matches": [],
+            },
+        )
+        assert cleared.status_code == 200
+        live_after_clear = await client.get(
+            "/api/v1/causal", headers=AUTH
+        )
+        assert match["rule"] not in {
+            item["rule"]
+            for item in live_after_clear.json()["data"]
+        }
+        history = m._repository.get_causal_history(
+            "test_customer", TEST_INSTANCE, 10
+        )
+        assert len(history) == 2
+        assert history[0]["matches"] == []
+        assert history[1]["matches"][0]["rule"] == match["rule"]
 
     async def test_get_is_read_only_and_post_records_matches(
         self, client, monkeypatch

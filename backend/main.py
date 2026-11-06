@@ -81,6 +81,16 @@ class CausalEvaluationRequest(BaseModel):
     worker_instance_id: str
 
 
+class CausalReportRequest(BaseModel):
+    """Current causal matches evaluated by one instrumented process."""
+
+    worker_instance_id: str
+    worker_pid: str
+    matches: list[Dict[str, Any]] = Field(
+        default_factory=list, max_length=100
+    )
+
+
 class GraphDiffRequest(BaseModel):
     added_nodes: Optional[list] = None
     removed_nodes: Optional[list] = None
@@ -150,6 +160,11 @@ _graphs: Dict[tuple[str, str], Any] = {}
 # Receipt metadata is retained alongside each in-memory graph and enriched
 # with the latest runtime heartbeat when one arrives.
 _snapshot_metadata: Dict[tuple[str, str], Dict[str, Any]] = {}
+# Latest app-local matches are reported by the process that loaded those rules.
+_reported_causal_matches: Dict[
+    tuple[str, str], list[dict[str, Any]]
+] = {}
+_reported_causal_signatures: Dict[tuple[str, str], str] = {}
 _graphs_lock = threading.Lock()
 # PID remains the selector for event history; graph state is keyed by instance ID.
 _active_pid: Dict[str, str] = {}
@@ -934,6 +949,100 @@ async def causal_history(
     }
 
 
+@app.post("/api/v1/causal/report")
+async def report_causal_matches(
+    body: CausalReportRequest,
+    authorization: Optional[str] = Header(None),
+    worker_instance_id_header: Optional[str] = Header(
+        None, alias="X-OriginTracer-Worker-Instance-ID"
+    ),
+    worker_pid_header: Optional[int] = Header(
+        None, alias="X-OriginTracer-Worker-PID"
+    ),
+    repository: Any = Depends(get_repository),
+) -> Dict:
+    """Store the latest matches evaluated by the reporting process."""
+    customer_id = _authenticate(authorization)
+    worker_instance_id = _require_instance_id(
+        worker_instance_id_header
+    )
+    if worker_instance_id != _require_instance_id(
+        body.worker_instance_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Causal report instance ID must match its header",
+        )
+    if not worker_pid_header or worker_pid_header < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A positive X-OriginTracer-Worker-PID is required",
+        )
+    if str(worker_pid_header) != str(body.worker_pid):
+        raise HTTPException(
+            status_code=400,
+            detail="Causal report PID must match its header",
+        )
+
+    matches = []
+    for item in body.matches:
+        if not isinstance(item, dict) or not item.get("rule"):
+            continue
+        try:
+            confidence = float(item.get("confidence", 0))
+        except (TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(confidence)
+            or not 0 <= confidence <= 1
+        ):
+            continue
+        matches.append(
+            {
+                "rule": str(item["rule"]),
+                "confidence": confidence,
+                "explanation": str(item.get("explanation", "")),
+                "evidence": (
+                    item.get("evidence")
+                    if isinstance(item.get("evidence"), dict)
+                    else {}
+                ),
+                "timestamp": item.get("timestamp", time.time()),
+            }
+        )
+
+    key = (customer_id, worker_instance_id)
+    signature = json.dumps(
+        [
+            {
+                "rule": item["rule"],
+                "confidence": item["confidence"],
+                "explanation": item["explanation"],
+                "evidence": item["evidence"],
+            }
+            for item in matches
+        ],
+        sort_keys=True,
+        default=str,
+    )
+    with _graphs_lock:
+        changed = (
+            _reported_causal_signatures.get(key) != signature
+        )
+        _reported_causal_matches[key] = matches
+        _reported_causal_signatures[key] = signature
+
+    if changed:
+        repository.save_causal_matches(
+            customer_id=customer_id,
+            worker_instance_id=worker_instance_id,
+            matches=matches,
+            timestamp=time.time(),
+            worker_pid=str(worker_pid_header),
+        )
+    return {"ok": True, "match_count": len(matches)}
+
+
 @app.get("/api/v1/causal")
 async def causal(
     tags: Optional[str] = None,
@@ -1030,9 +1139,31 @@ def _evaluate_causal_rules(
                 snapshot_meta.get("worker_pid", "unknown")
             ),
         )
+    data_by_rule = {}
+    for match in matches:
+        item = match.to_dict()
+        rule_name = item.get("rule") or getattr(
+            match, "rule_name", None
+        )
+        if rule_name:
+            data_by_rule[str(rule_name)] = item
+    if tag_list is None:
+        with _graphs_lock:
+            reported_matches = list(
+                _reported_causal_matches.get(
+                    (customer_id, worker_instance_id), []
+                )
+            )
+        for reported in reported_matches:
+            data_by_rule[reported["rule"]] = reported
+    data = sorted(
+        data_by_rule.values(),
+        key=lambda item: item.get("confidence", 0),
+        reverse=True,
+    )
     return {
-        "match_count": len(matches),
-        "data": [m.to_dict() for m in matches],
+        "match_count": len(data),
+        "data": data,
     }
 
 

@@ -29,6 +29,8 @@ const VIEWS = [
   "tool_content",
 ];
 
+const WORKERS_PER_PAGE = 4;
+
 function normalizeWorkerNodes(nodes = []) {
   return nodes.map((node) => ({
     ...node,
@@ -77,6 +79,7 @@ export default function App() {
     window.localStorage.getItem("origintracer.selected_worker_instance_id"),
   );
   const [snapshots, setSnapshots] = useState([]);
+  const [workerPage, setWorkerPage] = useState(0);
   const [causalHistory, setCausalHistory] = useState([]);
   const [llmContent, setLlmContent] = useState([]);
   const [toolContent, setToolContent] = useState([]);
@@ -335,6 +338,14 @@ export default function App() {
   const selectedWorker = snapshots.find(
     (snapshot) => snapshot.worker_instance_id === selectedWorkerInstanceId,
   );
+  const workerPageCount = Math.ceil(snapshots.length / WORKERS_PER_PAGE);
+  const visibleWorkers = snapshots.slice(
+    workerPage * WORKERS_PER_PAGE,
+    (workerPage + 1) * WORKERS_PER_PAGE,
+  );
+  useEffect(() => {
+    setWorkerPage((page) => Math.min(page, Math.max(0, workerPageCount - 1)));
+  }, [workerPageCount]);
   const noReportingWorkers = snapshotInventoryLoaded && snapshots.length === 0;
   const badge = {
     nodes: `${nodes.length} nodes`,
@@ -387,7 +398,7 @@ export default function App() {
         {snapshots.length > 0 && (
           <div className="snapshots">
             <div className="snapshot-title">CURRENTLY REPORTING ({snapshots.length})</div>
-            {snapshots.map((snapshot) => {
+            {visibleWorkers.map((snapshot) => {
               const active = snapshot.worker_instance_id === selectedWorkerInstanceId;
               return (
                 <button
@@ -408,6 +419,27 @@ export default function App() {
                 </button>
               );
             })}
+            {workerPageCount > 1 && (
+              <div className="worker-pagination" aria-label="Worker pages">
+                <button
+                  type="button"
+                  onClick={() => setWorkerPage((page) => Math.max(0, page - 1))}
+                  disabled={workerPage === 0}
+                  aria-label="Previous workers"
+                >
+                  ‹ Prev
+                </button>
+                <span>{workerPage + 1} / {workerPageCount}</span>
+                <button
+                  type="button"
+                  onClick={() => setWorkerPage((page) => Math.min(workerPageCount - 1, page + 1))}
+                  disabled={workerPage >= workerPageCount - 1}
+                  aria-label="Next workers"
+                >
+                  Next ›
+                </button>
+              </div>
+            )}
           </div>
         )}
       </aside>

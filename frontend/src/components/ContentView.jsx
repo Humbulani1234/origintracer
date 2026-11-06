@@ -478,6 +478,13 @@ export default function ContentView({ kind, rows }) {
   }
   const traceGroups = [...traces.values()].map((group) => ({
     ...group,
+    // The backend returns newest-first so it can efficiently bound recent
+    // captures. Display each selected trace in execution order instead.
+    rows: [...group.rows].sort((a, b) => {
+      const aTime = Number(a.row.ts) || 0;
+      const bTime = Number(b.row.ts) || 0;
+      return aTime - bTime || a.index - b.index;
+    }),
     investigationId: group.investigationIds.size === 1
       ? [...group.investigationIds][0]
       : null,

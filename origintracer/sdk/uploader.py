@@ -401,6 +401,7 @@ class Uploader:
                     info.get("nodes", "?"),
                     info.get("edges", "?"),
                 )
+                self._flush_causal_matches()
             else:
                 self._failed_snap_sends += 1
                 logger.warning(
@@ -467,6 +468,46 @@ class Uploader:
         except Exception as exc:
             self._failed_diffs_sends += 1
             logger.debug("Diff upload error: %s", exc)
+
+    def _flush_causal_matches(self) -> None:
+        """Upload matches from this process's configured rule registry."""
+        if self._engine is None:
+            return
+        try:
+            worker_instance_id, worker_pid = (
+                current_worker_identity()
+            )
+            matches = [
+                match.to_dict()
+                for match in self._engine.evaluate()
+            ]
+            response = httpx.post(
+                f"{self._endpoint}/api/v1/causal/report",
+                json={
+                    "worker_instance_id": worker_instance_id,
+                    "worker_pid": str(worker_pid),
+                    "matches": matches,
+                },
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
+                },
+                timeout=10.0,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "Causal match upload failed: HTTP %d — %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+        except httpx.TimeoutException as exc:
+            logger.debug("Causal match upload timeout: %s", exc)
+        except httpx.ConnectError as exc:
+            logger.debug(
+                "Causal match upload connection error: %s", exc
+            )
+        except Exception as exc:
+            logger.debug("Causal match upload error: %s", exc)
 
     def _flush_runtime_status(self) -> None:
         """Upload runtime-only status so remote readers can judge freshness.

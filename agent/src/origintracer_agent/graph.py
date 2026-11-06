@@ -617,6 +617,25 @@ def _assessment_prompt(state: InvestigationState) -> str:
         parts.append(_TRACE_SELECTION_GUIDANCE)
     if "get_worker_causal_history" in observed_tools:
         parts.append(_CAUSAL_HISTORY_GUIDANCE)
+    if "get_live_workers_overview" in observed_tools:
+        parts.append("""
+
+## Format all-worker overviews for scanning
+- Start with the number of reporting workers inspected.
+- Give each worker its own bullet, headed by its PID.
+- Put uptime, heartbeat age, and active-request count on a short runtime line.
+- Put active probes and graph node/edge counts on separate labeled lines.
+- Distinguish registered/active rules from rules that matched. List matched
+  rules with their confidence when returned.
+- When a graph preview is capped, say exactly how many rows are shown, for
+  example `20 of 25 edges shown in the preview`; do not say only `edges
+  truncated`.
+- Preserve all useful worker details returned by the tools, including active
+  probes and rules, matched rules with confidence, representative nodes, and
+  relevant diagnostics. Organize these under the worker instead of omitting
+  them to make the answer shorter; keep long raw payloads readable on their
+  own labeled lines.
+""".strip())
     if _is_direct_graph_inventory(state) and any(
         item.get("tool") == "get_worker_graph"
         for item in state.get("evidence", [])
@@ -1256,8 +1275,10 @@ def _event_result_preview(result: Any) -> Any:
     return preview
 
 
-def _assessment_result_preview(tool: str, result: Any) -> Any:
-    """Keep structured diagnostic and trace evidence usable in model prompts."""
+def _assessment_result_preview(
+    tool: str, result: Any, *, graph_row_limit: int = 12
+) -> Any:
+    """Bound structured diagnostic and trace data for prompts or the UI."""
     if tool in {
         "get_worker_trace",
         "get_worker_stitched_trace",
@@ -1395,14 +1416,41 @@ def _assessment_result_preview(tool: str, result: Any) -> Any:
                 )
             graph = worker.get("graph")
             if isinstance(graph, dict):
+                node_rows = sorted(
+                    (
+                        row
+                        for row in graph.get("nodes", [])
+                        if isinstance(row, dict)
+                    ),
+                    key=lambda row: row.get("call_count", 0),
+                    reverse=True,
+                )
+                edge_rows = sorted(
+                    (
+                        row
+                        for row in graph.get("edges", [])
+                        if isinstance(row, dict)
+                    ),
+                    key=lambda row: row.get("call_count", 0),
+                    reverse=True,
+                )
+                row_limit = max(1, min(graph_row_limit, 20))
+                shown_nodes = node_rows[:row_limit]
+                shown_edges = edge_rows[:row_limit]
                 graph = {
                     "node_count": graph.get("node_count"),
                     "edge_count": graph.get("edge_count"),
-                    "nodes_truncated": graph.get(
-                        "nodes_truncated"
+                    "nodes_preview_count": len(shown_nodes),
+                    "edges_preview_count": len(shown_edges),
+                    "nodes_truncated": (
+                        graph.get("nodes_truncated")
+                        or len(shown_nodes)
+                        < (graph.get("node_count") or 0)
                     ),
-                    "edges_truncated": graph.get(
-                        "edges_truncated"
+                    "edges_truncated": (
+                        graph.get("edges_truncated")
+                        or len(shown_edges)
+                        < (graph.get("edge_count") or 0)
                     ),
                     "nodes": [
                         {
@@ -1415,17 +1463,7 @@ def _assessment_result_preview(tool: str, result: Any) -> Any:
                             )
                             if key in row
                         }
-                        for row in sorted(
-                            (
-                                row
-                                for row in graph.get("nodes", [])
-                                if isinstance(row, dict)
-                            ),
-                            key=lambda row: row.get(
-                                "call_count", 0
-                            ),
-                            reverse=True,
-                        )[:12]
+                        for row in shown_nodes
                     ],
                     "edges": [
                         {
@@ -1438,25 +1476,21 @@ def _assessment_result_preview(tool: str, result: Any) -> Any:
                             )
                             if key in row
                         }
-                        for row in sorted(
-                            (
-                                row
-                                for row in graph.get("edges", [])
-                                if isinstance(row, dict)
-                            ),
-                            key=lambda row: row.get(
-                                "call_count", 0
-                            ),
-                            reverse=True,
-                        )[:12]
+                        for row in shown_edges
                     ],
                 }
             matches = worker.get("causal_rule_matches")
-            rows = (
-                matches.get("data", [])
-                if isinstance(matches, dict)
-                else []
-            )
+            rows: Any = matches
+            for _ in range(4):
+                if isinstance(rows, list):
+                    break
+                if not isinstance(rows, dict):
+                    rows = []
+                    break
+                rows = rows.get(
+                    "data",
+                    rows.get("matches", rows.get("result", [])),
+                )
             worker_compact_matches: (
                 list[dict[str, Any]] | dict[str, Any]
             ) = []
@@ -4473,9 +4507,9 @@ def _graph_rows(
 def _tool_result_summary(tool_name: str, result: Any) -> str:
     """Render a factual summary of a read tool's returned structure.
 
-    Summaries preserve complete node and edge inventories, counts, representative
-    rows, and explicit duration fields while avoiding causal interpretation.
-    They are used in the final report's observed-evidence section.
+    Summaries preserve graph counts, representative rows, explicit duration
+    fields, and preview limits while avoiding causal interpretation. They are
+    used in the final report's observed-evidence section.
     """
     if tool_name == "get_live_workers_overview":
         workers = (
@@ -4499,13 +4533,27 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
                 status = {}
             graph = worker.get("graph")
             graph_text = "graph unavailable"
+            node_text = []
             if isinstance(graph, dict):
                 graph_text = f"graph={graph.get('node_count', 0)} nodes/{graph.get('edge_count', 0)} edges"
-                if graph.get("nodes_truncated") or graph.get(
-                    "edges_truncated"
-                ):
-                    graph_text += " (preview truncated)"
+                preview_limits = []
+                if graph.get("nodes_truncated"):
+                    preview_limits.append(
+                        f"showing {len(graph.get('nodes', []))} of {graph.get('node_count', 0)} nodes"
+                    )
+                if graph.get("edges_truncated"):
+                    preview_limits.append(
+                        f"showing {len(graph.get('edges', []))} of {graph.get('edge_count', 0)} edges"
+                    )
+                if preview_limits:
+                    graph_text += (
+                        " (preview: "
+                        + "; ".join(preview_limits)
+                        + ")"
+                    )
                 nodes = graph.get("nodes", [])
+                if not isinstance(nodes, list):
+                    nodes = []
                 top_nodes = sorted(
                     (
                         row
@@ -4516,10 +4564,12 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
                     reverse=True,
                 )[:4]
                 if top_nodes:
-                    graph_text += "; nodes=" + ", ".join(
+                    node_text = [
                         f"{row.get('id', '?')} (calls={row.get('call_count', '?')}, avg_ms={row.get('avg_ms', row.get('avg_duration_ms', '?'))})"
                         for row in top_nodes
-                    )
+                    ]
+                else:
+                    node_text = []
             matches = worker.get("causal_rule_matches")
             rows = (
                 matches.get("data", [])
@@ -4534,30 +4584,54 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
                     )
             probes = status.get("probes_active", "unavailable")
             uptime = (
-                f"uptime={status['uptime']}"
+                str(status["uptime"])
                 if status.get("uptime") is not None
-                else f"uptime_s={status.get('uptime_s', 'unavailable')}"
+                else f"{status.get('uptime_s', 'unavailable')}s uptime"
             )
-            worker_summaries.append(
-                f"pid={worker.get('pid')}, {uptime}, "
-                f"active_requests={status.get('active_requests', 'unavailable')}, probes={probes}, "
-                f"{graph_text}, matched_rules={match_text or 'none returned'}"
-                + (
-                    f", registered_rules={worker.get('registered_causal_rules')}"
-                    if worker.get("registered_causal_rules")
-                    is not None
-                    else ""
-                )
-                + (
-                    f", section_errors={[key for key, value in worker.items() if isinstance(value, dict) and 'error' in value]}"
-                    if any(
-                        isinstance(value, dict)
-                        and "error" in value
-                        for value in worker.values()
-                    )
-                    else ""
-                )
+            heartbeat = status.get("heartbeat_age_s")
+            heartbeat_text = (
+                f"{heartbeat}s ago"
+                if heartbeat is not None
+                else "unavailable"
             )
+            worker_lines = [
+                f"- Worker PID {worker.get('pid')}",
+                f"  - Runtime: {uptime}; {status.get('active_requests', 'unavailable')} active requests; heartbeat {heartbeat_text}; online={status.get('online', 'unavailable')}",
+                f"  - Active probes: {probes}",
+                f"  - Graph: {graph_text}",
+            ]
+            if node_text:
+                worker_lines.append("  - Representative nodes:")
+                worker_lines.extend(
+                    f"    - {node}" for node in node_text
+                )
+            if match_text:
+                worker_lines.append("  - Matched rules:")
+                worker_lines.extend(
+                    f"    - {match}" for match in match_text
+                )
+            else:
+                worker_lines.append(
+                    "  - Matched rules: none returned"
+                )
+            if status.get("rules_active") is not None:
+                worker_lines.append(
+                    f"  - Active rules: {status.get('rules_active')}"
+                )
+            if worker.get("registered_causal_rules") is not None:
+                worker_lines.append(
+                    f"  - Registered causal rules: {worker.get('registered_causal_rules')}"
+                )
+            section_errors = [
+                key
+                for key, value in worker.items()
+                if isinstance(value, dict) and "error" in value
+            ]
+            if section_errors:
+                worker_lines.append(
+                    f"  - Sections with errors: {', '.join(section_errors)}"
+                )
+            worker_summaries.append("\n".join(worker_lines))
         header = (
             f"{result.get('workers_shown', len(worker_summaries))} of "
             f"{result.get('total_live_workers', len(worker_summaries))} recently reporting worker(s) inspected"
@@ -4569,7 +4643,7 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
         ):
             header += f" (worker limit {result.get('worker_limit')} reached)"
         return header + (
-            ": " + "; ".join(worker_summaries)
+            ":\n" + "\n".join(worker_summaries)
             if worker_summaries
             else "; no workers returned"
         )
@@ -5150,10 +5224,14 @@ def synthesize_findings(
         )
     if observations:
         lines.append("Observed evidence:")
-        lines.extend(
-            f"- {item['tool']}: {item['summary']} [{item['evidence_id']}]"
-            for item in observations
-        )
+        for item in observations:
+            summary_lines = str(item["summary"]).splitlines()
+            lines.append(
+                f"- {item['tool']}: {summary_lines[0]} [{item['evidence_id']}]"
+            )
+            lines.extend(
+                f"  {line}" for line in summary_lines[1:]
+            )
     if hypotheses:
         lines.append("Hypotheses:")
         for hypothesis in hypotheses:
@@ -5199,9 +5277,21 @@ def synthesize_findings(
         "observations": [
             {
                 **observation,
-                "structured_data": evidence_by_id.get(
-                    str(observation.get("evidence_id")), {}
-                ).get("result"),
+                "structured_data": (
+                    _assessment_result_preview(
+                        "get_live_workers_overview",
+                        evidence_by_id.get(
+                            str(observation.get("evidence_id")),
+                            {},
+                        ).get("result"),
+                        graph_row_limit=20,
+                    )
+                    if observation.get("tool")
+                    == "get_live_workers_overview"
+                    else evidence_by_id.get(
+                        str(observation.get("evidence_id")), {}
+                    ).get("result")
+                ),
             }
             for observation in observations
         ],

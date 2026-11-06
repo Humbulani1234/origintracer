@@ -19,7 +19,6 @@ URLs:
     GET /tasks/report/<id>/  >> ReportView (baseline)
     POST /tasks/bulk-notify/ >> BulkNotifyView (fan-out amplification)
     GET /tasks/export/<id>/  >> ExportView (sync DB call)
-    GET /tasks/failing/  >> FailingJobView (retry amplification)
     GET /tasks/status/  >> StatusView (REPL: how many tasks queued)
 """
 
@@ -37,7 +36,6 @@ from .tasks import (
     export_data,
     generate_report,
     process_report,
-    risky_job,
     send_notification,
 )
 
@@ -98,10 +96,8 @@ class BulkNotifyView(View):
     Dispatches one send_notification task per user_id.
     Fan-out pattern: one HTTP request >> N tasks.
 
-    When N ≥ 5 the call_count on the dispatch edge
-    django::BulkNotifyView >> celery::send_notification
-    diverges significantly from the view call_count, which is what the
-    celery_task_amplification rule detects.
+    This demonstrates task fan-out in the graph. No fan-out causal rule is
+    currently registered for this demo.
 
     REPL after a few requests with 10 users each:
         CAUSAL
@@ -136,9 +132,10 @@ class ExportView(View):
     GET /tasks/export/<id>/
 
     Dispatches one export_data task.
-    The task makes a synchronous SQLite call on the worker thread (200-400ms).
+    The task models a slow synchronous SQLite operation on the worker thread
+    (500-700ms).
 
-    After a few requests, celery_sync_db_call fires because the graph
+    After a few requests, sync_db_in_celery fires because the graph
     shows a direct edge from celery::export_data >> sqlite node with
     avg_duration_ns > 50ms.
 
