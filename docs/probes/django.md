@@ -1,9 +1,6 @@
 # Django Probe
 
-The Django probe observes request lifecycle, database queries, class-based
-views, and unhandled exceptions using stable, version-safe extension points.
-No private APIs are touched except `View.dispatch()`, which is a single patch
-on the public CBV base class.
+The Django probe observes request lifecycle, database queries, class-based views, and unhandled exceptions using stable, version-safe extension points. In this design no private APIs are touched except `View.dispatch()`, which is a single patch on the public CBV base class.
 
 ## Setup
 
@@ -49,9 +46,7 @@ Everything else is installed automatically when `origintracer.init()` is called.
 
 ## KprobeBridge Integration
 
-When `KprobeBridge` is available, `TracerMiddleware` registers the trace
-into the BPF map so kernel-level probes (epoll, syscalls) can attribute
-events to the correct Django request:
+When `KprobeBridge` is available, `TracerMiddleware` registers the trace into the BPF map so kernel-level probes (epoll, syscalls) can attribute events to the correct Django request:
 
 ```python
 bridge.register_trace(
@@ -63,17 +58,12 @@ bridge.register_trace(
 )
 ```
 
-Both the event loop TID and the handler thread TID are registered. On
-request completion both are unregistered. If `KprobeBridge` is unavailable
-(no `CAP_BPF`), this step is silently skipped - all Python-side observations
-still function normally.
+Both the event loop TID and the handler thread TID are registered, and on request completion both are unregistered. If `KprobeBridge` is unavailable
+(no `CAP_BPF`), this step is silently skipped - all Python-side observations still function normally.
 
 ## Database Queries
 
-The DB wrapper is installed via the `connection_created` signal rather than
-iterating `connections.all()` at startup. This avoids the empty connections
-problem - Django has not opened any DB connections yet when
-`AppConfig.ready()` fires. The wrapper attaches automatically the first time
+The DB wrapper is installed via the `connection_created` signal rather than iterating `connections.all()` at startup. This avoids the empty connections problem, where Django has not opened any DB connections yet when `AppConfig.ready()` fires. The wrapper attaches automatically the first time
 each connection is opened.
 
 Each `django.db.query` event includes:
@@ -91,15 +81,12 @@ Each `django.db.query` event includes:
 
 ## Class-Based Views
 
-`View.dispatch()` is the single entry point for all CBVs. One patch captures
-every CBV automatically - `AsyncView`, `SlowView`, `DetailView` etc. — without
+`View.dispatch()` is the single entry point for all CBVs. One patch captures every CBV automatically - `AsyncView`, `SlowView`, `DetailView` etc. - without
 needing to instrument each one individually.
 
 !!! note
-    `dispatch()` itself is synchronous even for async views. Django routes
-    the request to `get()` / `post()` which may be async, but `dispatch()`
-    always returns synchronously (or returns a coroutine that Django awaits).
-    The `finally` block fires correctly in both cases at the dispatch level.
+    `dispatch()` itself is synchronous even for async views. Django routes the request to `get()` / `post()` which may be async, but `dispatch()`
+    always returns synchronously (or returns a coroutine that Django awaits). The `finally` block fires correctly in both cases at the dispatch level.
 
 ## Disabling the Probe
 

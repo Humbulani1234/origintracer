@@ -1,7 +1,6 @@
 # asyncio Probe - BCC Installation
 
-BCC is a system-level tool and cannot be installed inside a virtualenv with
-`pip`. It must be installed at the OS level and imported from there.
+BCC is a system-level tool and cannot be installed inside a python virtualenv with `pip`. It must be installed at the OS level and imported from there.
 
 ## Requirements
 
@@ -18,8 +17,7 @@ uname -r
 
 **1. Install kernel headers**
 
-BCC compiles BPF programs at runtime against your running kernel and needs
-headers for that exact version:
+BCC compiles BPF programs at runtime against your running kernel and needs headers for that exact version:
 
 ```bash
 sudo apt update
@@ -53,8 +51,7 @@ python3 -c "from bcc import BPF; print('bcc ok')"
 
 **4. Make BCC visible inside your virtualenv**
 
-BCC's Python bindings live in the system Python, not in your venv.
-A `.pth` file bridges the gap.
+BCC's Python bindings live in the system Python, not in your venv. A `.pth` file bridges the gap.
 
 Find where `python3-bpfcc` installed to:
 

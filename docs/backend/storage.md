@@ -1,7 +1,6 @@
 # Storage Backends
 
-The storage backend is the persistence layer for events, graph snapshots,
-deployment markers, graph diffs, and causal history. All backends implement
+The storage backend is the persistence layer for events, graph snapshots, deployment markers, graph diffs, and causal history. All backends implement
 `BaseRepository`.
 
 ## Choosing a Backend
@@ -13,8 +12,7 @@ deployment markers, graph diffs, and causal history. All backends implement
 
 ## InMemoryRepository
 
-No setup required. Data is lost on process restart. Use this for local
-development and integration tests.
+No setup is required, and data is lost on process restart. Use this for local development and integration tests.
 
 ```python
 from origintracer.backend.storage import InMemoryRepository
@@ -32,12 +30,9 @@ from origintracer.backend.storage import PGEventRepository
 repo = PGEventRepository(dsn="postgresql://user:pass@localhost/origintracer")
 ```
 
-Snapshots are stored per `customer_id`. Only the most recent snapshot per
-customer needs to be immediately queryable — older snapshots can be retained
-for audit or overwritten depending on your retention policy.
+Snapshots are stored per `customer_id` and `process_instance_id`. Only the most recent snapshot per customer needs to be immediately queryable - older snapshots can be retained for audit or overwritten depending on your retention policy.
 
-On FastAPI startup, `get_latest_snapshot()` is called automatically to
-restore the graph without waiting for the next agent snapshot interval.
+On FastAPI startup, `get_latest_snapshot()` is called automatically to restore the graph without waiting for the next agent snapshot interval.
 
 ## BaseRepository Interface
 
@@ -82,15 +77,13 @@ Persist a serialised `RuntimeGraph` snapshot. Called by FastAPI on every
 
 Return the latest snapshot for a customer, or `None`.
 
-Returns a dict with keys: `data` (bytes), `content_type` (str),
-`received_at` (float).
+Returns a dict with keys: `data` (bytes), `content_type` (str), `received_at` (float).
 
 ---
 
 ### `insert_deployment_marker(customer_id, label)`
 
-Store a deployment marker with the current timestamp. Used by
-`DIFF SINCE deployment` and the `new_sync_call_after_deployment` causal rule.
+Store a deployment marker with the current timestamp. Used by `DIFF SINCE deployment` and the `new_sync_call_after_deployment` causal rule.
 
 ---
 
@@ -102,18 +95,16 @@ Store one graph diff snapshot received from the agent.
 
 ### `save_causal_matches(customer_id, matches, timestamp)`
 
-Persist causal rule matches for historical review. Retrieved by
-`GET /api/v1/causal/history`.
+Persist causal rule matches for historical review. Retrieved by `GET /api/v1/causal/history`.
 
 ---
 
 ### `get_causal_history(customer_id, limit)`
 
-Return the most recent causal match snapshots, newest first.
-Default `limit` is `50`.
+Return the most recent causal match snapshots, newest first. Default `limit` is `50`.
 
 ---
 
 ### `close()`
 
-Release open connections. Called on FastAPI shutdown.
+Release open connections which is called on FastAPI shutdown.

@@ -40,6 +40,12 @@ Most observability tools show you *what* happened (spans, metrics, logs). Origin
 - **Zero blocking** of the request/response cycle via async draining and fire-and-forget buffers
 - **Extensible by design** - anyone can add custom probes and rules
 
+## Agentic Investigation Layer
+
+OriginTracer also includes an optional agentic layer for natural-language investigations of live worker evidence. It plans and runs read-only observations through OriginTracer's tools, then returns findings grounded in that evidence, along with remaining uncertainty. The agent complements the graph, REPL, and UI; it does not replace them. Any action that changes OriginTracer state requires explicit approval.
+
+For the agent's architecture, setup, and operating details, see the [agent README](agent/README.md).
+
 ## Multi-Language Support Potential
 
 OriginTracer’s core engine is **completely language-agnostic**. It only understands a clean, normalized event protocol (`NormalizedEvent`). The graph, deduplication, causal rules, REPL, and UI have no idea whether events came from Python, Node.js, or another language.
@@ -136,12 +142,6 @@ Similar to the `Django` application above. Navigate to the `applications/celery`
 Similar to the `Django` and `Celery` applications above. Navigate to the `applications/langgraph` directory for this specific application, and follow the steps.
 
 The example runs a supervisor and two specialist agents through LangGraph's production Agent Server packaging path. It uses Ollama for local model inference, initializes OriginTracer through the server's FastAPI lifespan, and includes an `invoke.py` script for sending requests to the running application.
-
-## Agentic Investigation Layer
-
-OriginTracer also includes an optional agentic layer for natural-language investigations of live worker evidence. It plans and runs read-only observations through OriginTracer's tools, then returns findings grounded in that evidence, along with remaining uncertainty. The agent complements the graph, REPL, and UI; it does not replace them. Any action that changes OriginTracer state requires explicit approval.
-
-For the agent's architecture, setup, and operating details, see the [agent README](agent/README.md).
 
 ## Core Strengths
 
@@ -253,10 +253,10 @@ This level of stability gives strong confidence for running OriginTracer alongsi
 pip install -e ".[dev]"
 pytest origintracer/tests/ -q
 pre-commit install
+```
+---
 
 See `docs/` for full architecture, probe internals, and contribution guidelines.
-
----
 
 **Made for engineers who want to move beyond "it's slow" to "here's exactly why - and how to fix it."**
 

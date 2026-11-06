@@ -4,9 +4,7 @@ The FastAPI backend is the persistence, query, and UI surface for OriginTracer.
 
 ## Architecture
 
-OriginTracer owns the graph and builds it locally inside the agent process.
-The backend receives serialised graph snapshots at every configured interval,
-deserialises them, and serves all queries from the deserialised graph.
+OriginTracer owns the graph and builds it locally inside the agent process. The backend receives serialised graph snapshots at every configured interval, deserialises them, and serves all queries from the deserialised graph.
 
 ```
 Agent process                        FastAPI backend
@@ -20,10 +18,7 @@ RuntimeGraph (live, in-memory)  ──>  POST /api/v1/graph/snapshot
                                      serve GET queries
 ```
 
-The backend does not rebuild a graph from raw events - that is the agent's
-responsibility. On startup, the latest snapshot is loaded from the storage
-backend so queries work immediately after a FastAPI restart without waiting
-for the next snapshot interval.
+The backend does not rebuild a graph from raw events - that is the agent's responsibility. On startup, the latest snapshot is loaded from the storage backend so queries work immediately after a FastAPI restart without waiting for the next snapshot interval.
 
 ## Running
 
@@ -58,8 +53,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8001
 
 # API Reference
 
-All endpoints except `/health` require an `Authorization: Bearer <key>` header.
-Keys are configured via `ORIGINTRACER_API_KEYS`.
+All endpoints except `/health` require an `Authorization: Bearer <key>` header. Keys are configured via `ORIGINTRACER_API_KEYS`.
 
 ---
 
@@ -67,8 +61,7 @@ Keys are configured via `ORIGINTRACER_API_KEYS`.
 
 ### `POST /api/v1/graph/snapshot`
 
-Receive a serialised `RuntimeGraph` from the agent. Called automatically
-by the agent at every `snapshot_interval`. Not intended for manual use.
+Receive a serialised `RuntimeGraph` from the agent. Called automatically by the agent at every `snapshot_interval`. Not intended for manual use.
 
 **Body:** `application/msgpack` or `application/json` - serialised graph bytes.
 
@@ -79,6 +72,7 @@ by the agent at every `snapshot_interval`. Not intended for manual use.
 Return the current graph from the latest snapshot.
 
 **Response:**
+
 ```json
 {
   "nodes": [...],
@@ -131,11 +125,10 @@ Reconstruct the critical path for a trace from the event store.
 
 ### `GET /api/v1/causal`
 
-Evaluate backend-registered rules against the latest snapshot and merge the
-latest matches reported by the instrumented process. This includes
-application-local rules that the backend does not import or execute.
+Evaluate backend-registered rules against the latest snapshot and merge the latest matches reported by the instrumented process. This includes application-local rules that the backend does not import or execute.
 
 **Response:**
+
 ```json
 {
   "matches": [
@@ -177,10 +170,10 @@ Receive raw `NormalizedEvent` objects for persistence.
 
 ### `POST /api/v1/deployment`
 
-Store a deployment marker. Used by `DIFF SINCE deployment` in the REPL
-and the causal rule `new_sync_call_after_deployment`.
+Store a deployment marker. Used by `DIFF SINCE deployment` in the REPL and the causal rule `new_sync_call_after_deployment`.
 
 **Body:**
+
 ```json
 {"label": "deployment"}
 ```

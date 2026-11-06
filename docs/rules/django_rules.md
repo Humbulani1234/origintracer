@@ -8,12 +8,11 @@ Two rules observe database behaviour in the RuntimeGraph.
 
 **Confidence:** 0.90  
 **Tags:** `db` `performance` `n+1`
+**Note:** numerical figures configurable
 
 ### What it detects
 
-A database query node whose `call_count` is 5x or more than the view node
-that called it - the classic ORM N+1 pattern where a query fires inside a
-loop iterating over a queryset.
+A database query node whose `call_count` is 5x or more than the view node that called it - the classic ORM N+1 pattern where a query fires inside a loop iterating over a queryset.
 
 ### Why this matters
 
@@ -29,9 +28,7 @@ SELECT * FROM books WHERE author_id=2 # N
 ... # 100 authors = 101 queries
 ```
 
-Each individual query is fast. The problem is volume - 101 queries where
-1 would do. Under load this saturates the connection pool before any single
-query looks slow in isolation.
+Each individual query is fast; the problem is volume - 101 queries where only 1 would do. Under load this saturates the connection pool before any single query looks slow in isolation.
 
 ### Firing conditions
 
@@ -84,9 +81,7 @@ queryset = Author.objects.prefetch_related("books")
 
 ### Tuning
 
-The threshold is `THRESHOLD = 5` in `_n_plus_one_queries`. Lower it to
-catch subtler patterns, raise it to reduce noise on batch endpoints that
-legitimately run multiple queries per view.
+The threshold is `THRESHOLD = 5` in `_n_plus_one_queries`, and you can lower it to catch subtler patterns, raise it to reduce noise on batch endpoints that legitimately run multiple queries per view.
 
 ---
 
@@ -94,20 +89,15 @@ legitimately run multiple queries per view.
 
 **Confidence:** 0.70  
 **Tags:** `db` `performance`
+**Note:** numerical figures configurable
 
 ### What it detects
 
-A single query pattern accounts for more than 30% of all observed database
-calls. Distinct from N+1 - fires even without a view caller, for example a
-Celery task hammering the same query in a background loop.
+A single query pattern accounts for more than 30% of all observed database calls. Distinct from N+1 pattern - it fires even without a view caller, for example a Celery task overloading the same query in a background loop.
 
 ### Why this matters
 
-A hotspot query is a single point of failure for your database. At 30% share
-it dominates connection time, lock contention, and cache eviction. The
-confidence is lower than N+1 (0.70 vs 0.90) because high share alone does
-not confirm a problem - a deliberately cached hot read is fine. The payload
-gives you the data to decide.
+A hotspot query is a single point of failure for your database, because at 30% share it dominates connection time, lock contention, and cache eviction. The confidence is lower than N+1 (0.70 vs 0.90) because high share alone does not confirm a problem - a deliberately cached hot read is fine.
 
 ### Firing conditions
 
@@ -118,8 +108,7 @@ gives you the data to decide.
 | Node share > 30% | `node.call_count / total_db_calls > 0.30` |
 
 !!! note
-    `_is_db_node()` checks `metadata.probe`, not `node_type`, because Django
-    DB query nodes carry `node_type="django"` (the probe prefix). Filtering
+    `_is_db_node()` checks `metadata.probe`, not `node_type`, because Django DB query nodes carry `node_type="django"` (the probe prefix). Filtering
     on `node_type` would miss them entirely.
 
 ### Return payload
@@ -140,9 +129,6 @@ gives you the data to decide.
 ### What to do when this fires
 
 1. Check `pct` - above 50% is severe, 30–50% warrants investigation
-2. If the query is a read - add a cache layer (`django-cache-machine`,
-   Redis) or materialise the result
-3. If the query is a write - check for missing bulk operations
-   (`bulk_create`, `bulk_update`)
-4. If it is a background task - check whether the task is being dispatched
-   too aggressively or whether results can be batched
+2. If the query is a read - add a cache layer (`django-cache-machine`, Redis) or materialise the result
+3. If the query is a write - check for missing bulk operations (`bulk_create`, `bulk_update`)
+4. If it is a background task - check whether the task is being dispatched too aggressively or whether results can be batched

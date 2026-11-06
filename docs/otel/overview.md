@@ -1,18 +1,14 @@
 # OpenTelemetry Bridge
 
-!!! warning "In Development"
-    This bridge must be thoroughly tested before use in production.
-    Native probe mode is more capable and recommended where possible.
+!!! warning "Still In Development"
+    This bridge must be thoroughly tested before use in production. Native probe mode is more capable and recommended where possible.
 
-Makes OriginTracer an optional OpenTelemetry `SpanExporter`. When active,
-OTel is the source of truth for spans - OriginTracer's native probes are
-disabled and the engine receives `NormalizedEvent` objects translated from
-OTel spans instead.
+Makes OriginTracer an optional OpenTelemetry `SpanExporter`. When active, OTel is the source of truth for spans - OriginTracer's native probes are
+disabled and the engine receives `NormalizedEvent` objects translated from OTel spans instead.
 
 ## Native Probes vs OTel Mode
 
-OTel mode gives you the graph and causal rules. Native probe mode gives you
-the graph plus kernel internals and asyncio internals.
+OTel mode gives you the graph and causal rules, and native probe mode gives you the graph plus kernel internals and asyncio internals.
 
 The following observations are **only available in native probe mode**:
 
@@ -23,8 +19,7 @@ The following observations are **only available in native probe mode**:
 | gunicorn worker lifecycle events | Not part of the OTel spec |
 | nginx correlation | No OTel instrumentation at the nginx layer |
 
-Use OTel mode when you already have OTel instrumentation and want to add
-causal graph analysis without deploying native probes. Use native probe mode
+Use OTel mode when you already have OTel instrumentation and want to add causal graph analysis without deploying native probes. Use native probe mode
 when you need the full picture.
 
 ## Architecture
@@ -36,8 +31,7 @@ OTel SDK (in Django)
                     └── engine.process() # feeds the OriginTracer graph
 ```
 
-The engine, graph, causal rules, REPL, and React UI are unchanged.
-Only the event source changes from native probes to OTel spans.
+The engine, graph, causal rules, REPL, and React UI are unchanged. Only the event source changes from native probes to OTel spans.
 
 ## Setup — Django
 
@@ -76,13 +70,11 @@ class MyAppConfig(AppConfig):
         RedisInstrumentor().instrument()
 ```
 
-This is the complete integration. OTel instruments your code, spans flow to
-`OriginTracerSpanExporter`, OriginTracer builds the causal graph, and the
+This is the complete integration. OTel instruments your code, spans flow to `OriginTracerSpanExporter`, OriginTracer builds the causal graph, and the
 REPL and React UI work as normal.
 
 !!! note
-    Use `BatchSpanProcessor`, not `SimpleSpanProcessor`. Batch export runs
-    in a background thread and does not block request handling.
+    Use `BatchSpanProcessor`, not `SimpleSpanProcessor`. Batch export runs in a background thread and does not block request handling.
 
 ## Span → NormalizedEvent Mapping
 
@@ -101,9 +93,7 @@ REPL and React UI work as normal.
 
 ## W3C Traceparent Integration
 
-If your upstream proxy injects a `traceparent` header, use
-`extract_trace_id_from_traceparent()` in `TracerMiddleware` to share the
-same `trace_id` between OTel spans and OriginTracer context:
+If your upstream proxy injects a `traceparent` header, use `extract_trace_id_from_traceparent()` in `TracerMiddleware` to share the same `trace_id` between OTel spans and OriginTracer context:
 
 ```python
 from origintracer.bridge.otel_bridge import extract_trace_id_from_traceparent
@@ -123,5 +113,4 @@ The `traceparent` format is the W3C standard:
 e.g. 00-4a3ce96-00f067aa902b7-01
 ```
 
-This ensures kernel-level events attributed via `KprobeBridge` and OTel spans
-share the same `trace_id` for correct critical path reconstruction.
+This ensures kernel-level events attributed via `KprobeBridge` and OTel spans share the same `trace_id` for correct critical path reconstruction.

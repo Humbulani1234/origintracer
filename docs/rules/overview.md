@@ -1,51 +1,54 @@
 # Causal Rules Overview
 
-Rules are plain Python predicates evaluated against the `RuntimeGraph`. Each rule returns `(matched: bool, evidence: dict)`.
+Rules are plain Python predicates evaluated against the `RuntimeGraph`, and when executed each rule returns `(matched: bool, evidence: dict)`.
 
 ## Built-in starter rules
 
 ### Loop starvation
 
-Fires when asyncio loop ticks average over 10ms. A blocking operation - CPU work, synchronous I/O, missing await - is starving other coroutines.
+Fires when asyncio loop ticks average over some pre-defined threshold. It maybe triggred by a blocking operation - CPU work, synchronous I/O, missing await - starving other coroutines.
 
 ```python
 # fires when:
-n.avg_duration_ns > 10_000_000  # >10ms per tick
+n.avg_duration_ns > (threshold) # >10ms per tick
 ```
 
 ### N+1 query
 
-Fires when a database query node is called more than 2× per view call. Classic ORM N+1 pattern.
+Fires when a database query node is called more than
+(threshold)× per view call - a classic ORM N+1 pattern.
 
 ```python
 # fires when:
-node.call_count >= caller.call_count * 2
+node.call_count >= caller.call_count * (threshold)
 ```
 
 ### Retry amplification
 
-Fires when downstream edges have high retry counts. A slow dependency is being amplified by retry loops.
+Fires when downstream edges have high retry counts. Maybe triggred by a slow dependency being amplified by retry loops.
 
 ```python
 # fires when:
-e.metadata.get("retries", 0) > 3
+e.metadata.get("retries", 0) > (threshold)
 ```
 
 ### New sync call after deployment
 
-Fires when new call edges appeared after the most recent deployment marker. A newly introduced synchronous dependency is the probable root cause of latency.
+Fires when new call edges appeared after the most recent deployment marker, and a newly introduced synchronous dependency is the probable root cause of latency.
 
 ```python
 # fires when:
 new_edges_since_deployment and ":calls" in edge_key
 ```
 
+### LangGraph rules
+
+The package also includes LangGraph rules for repeated model calls and high-latency model or tool nodes. They are enabled by adding their names to
+`rules` in `origintracer.yaml`. See [LangGraph rules](langgraph_rules.md) for their thresholds and limits.
+
 ## Running rules
 
-The package also includes LangGraph rules for repeated model calls and
-high-latency model or tool nodes. They are enabled by adding their names to
-`rules` in `origintracer.yaml`. See [LangGraph rules](langgraph_rules.md) for
-their thresholds and limits.
+In development, execute the command:
 
 ```
 › CAUSAL
@@ -63,17 +66,19 @@ Or filter by tag:
 
 # Writing Custom Rules
 
-Drop a `*_rules.py` file anywhere in your project. OriginTracer discovers it automatically at startup.
+Drop a `*_rules.py` file anywhere in your project, and OriginTracer discovers it automatically at startup.
 
 ## Minimal example
 
 ```python
-# myapp/origintracer/rules/payment_rules.py
+# yourapp/origintracer/rules/payment_rules.py
 from origintracer.core.causal import CausalRule
 
 
 def _slow_payment(graph, temporal):
-    """Fire if payment.initialize averages over 2 seconds."""
+    """
+    Fire if payment.initialize averages over 2 seconds.
+    """
     nodes = [
         n for n in graph.all_nodes()
         if n.service == "payment"
@@ -112,6 +117,6 @@ CausalRule(
 )
 ```
 
-The predicate receives the live `RuntimeGraph` and `TemporalStore`. It must never raise - exceptions are caught and logged with `confidence=0.0`.
+The predicate receives the live `RuntimeGraph` and `TemporalStore`, and designed not to raise - exceptions are caught and logged with `confidence=0.0`.
 
 ---

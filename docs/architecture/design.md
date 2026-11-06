@@ -2,39 +2,29 @@
 
 ## Emit observations, infer meaning later
 
-Probes emit raw `NormalizedEvent` objects. The engine derives meaning - graph topology, causal rules, pattern matches - from the event stream. Probes never import the engine. The engine never imports probes. The `NormalizedEvent` is the only data contract between them.
+Probes emit raw `NormalizedEvent` objects which the engine uses to derive meaning - graph topology, causal rules, pattern matches. The is a clear separation boundary between probes and engine -  probes never import the engine, and the engine never imports probes. The `NormalizedEvent` is the only data contract between them.
 
 ## The graph converges
 
-The `RuntimeGraph` converges to a stable topology after warmup. At 100 req/s hitting 5 routes, the graph reaches ~24 nodes after the first few requests and stays there. `upsert_node` and `upsert_edge` update call counts and durations on existing nodes - the graph does not grow without bound.
+The `RuntimeGraph` converges to a stable topology after warmup, for example at 100 req/s hitting 5 routes, the graph reaches ~24 nodes after the first few requests and stays there. `upsert_node` and `upsert_edge` update call counts and durations on existing nodes - the graph does not grow without bound.
 
 ## Decouple emission from processing
 
-Probes call `emit()` which appends to `EventBuffer` - a thread-safe bounded deque. The drain thread processes the buffer asynchronously. Request handlers never wait for graph processing.
+Probes call `emit()` which appends to `EventBuffer` - a thread-safe bounded deque. The drain thread processes the buffer asynchronously, so that request handlers never wait for graph processing.
 
 ## Connect concurrent operations by span ID
 
-`trace_id` groups observations from one execution. `span_id` identifies one
-operation in that execution, and `parent_span_id` identifies the operation
-that directly caused it. The engine looks up parents by both trace and span ID.
-One parent can therefore have several children, even when their events arrive
+`trace_id` groups observations from one execution, `span_id` identifies one operation in that execution, and `parent_span_id` identifies the operation
+that directly caused it. The engine looks up parents by both trace and span ID, therefore one parent can have several children, even when their events arrive
 in a different order.
 
-The engine treats events with the same `(trace_id, span_id)` as observations
-of one operation. For example, a callback's start and finish events update one
-graph call and its duration rather than counting two calls. If a child arrives
-before its declared parent, the engine holds the relationship and connects it
-when the parent arrives. Unresolved lineage is kept for a limited time.
+The engine treats events with the same `(trace_id, span_id)` as observations of one operation. For example, a callback's start and finish events update one graph call and its duration rather than counting two calls. If a child arrives before its declared parent, the engine holds the relationship and connects it when the parent arrives, while unresolved lineage is kept for a limited time.
 
-Events without a `parent_span_id` use the sequential fallback: the most
-recent event in that trace becomes the next event's parent. This works for
-ordered event streams, but producers must provide explicit parent IDs when
-they observe concurrent branches. Arrival order alone cannot identify which
-parallel operation caused another.
+Events without a `parent_span_id` use the sequential fallback: the most recent event in that trace becomes the next event's parent. This works for ordered event streams, but producers must provide explicit parent IDs when they observe concurrent branches. Arrival order alone cannot identify which parallel operation caused another.
 
 ## One init per process
 
-After `os.fork()`, threads do not survive. The drain thread is dead in the child. `_restart_drain_thread()` revives it. `AppConfig.ready()` is the correct and only place to call `stacktracer.init()` in a gunicorn worker - never in gunicorn hooks.
+After `os.fork()`, threads do not survive, and therefore the drain thread is dead in the child, and `_restart_drain_thread()` revives it.  AppConfig.ready()` is the correct and only place to call `stacktracer.init()` in a gunicorn worker - never in gunicorn hooks.
 
 ## Lifecycle events bypass the buffer
 
@@ -65,10 +55,8 @@ class NormalizedEvent:
     metadata: Dict # probe-specific details
 ```
 
-The engine scopes a span by `(trace_id, span_id)`. A producer should reuse the
-same span ID for lifecycle observations of one operation and set the direct
-parent's ID for child operations. This is how the graph can represent multiple
-concurrent children without guessing from event arrival order.
+The engine scopes a span by `(trace_id, span_id)`. A producer should reuse the same span ID for lifecycle observations of one operation and set the direct
+parent's ID for child operations. This is how the graph can represent multiple concurrent children without guessing from event arrival order.
 
 ## Factory
 
@@ -87,13 +75,11 @@ event = NormalizedEvent.now(
 ---
 # Architecture: Normalisation
 
-Before a `NormalizedEvent` enters the `RuntimeGraph`, the `(service, name)`
-pair is normalised to its structural form.
+Before a `NormalizedEvent` enters the `RuntimeGraph`, the `(service, name)` pair is normalised to its structural form.
 
 ## The problem
 
-`RuntimeGraph` keys nodes by `"service::name"`. High-cardinality names cause
-unbounded graph growth:
+`RuntimeGraph` keys nodes by `"service::name"`. High-cardinality names cause unbounded graph growth:
 
 ```
 django::/api/users/1234/profile # one node per user
@@ -110,9 +96,7 @@ django::/api/users/1234/profile --> django::/api/users/{id}/profile
 django::/api/users/5678/profile --> django::/api/users/{id}/profile (same node)
 ```
 
-The graph has one node per structural pattern. `call_count` accumulates across
-all individual user requests. This is almost always what you want for causal
-reasoning - the endpoint is slow, not user 1234 specifically.
+The graph has one node per structural pattern. `call_count` accumulates across all individual user requests. This is almost always what you want for causal reasoning - the endpoint is slow, not user 1234 specifically.
 
 ## Normalisation order
 
@@ -147,28 +131,23 @@ origintracer.init(
 ---
 # Architecture: Compaction
 
-The `RuntimeGraph` is bounded by two mechanisms running on the background
-snapshot loop.
+The `RuntimeGraph` is bounded by two mechanisms running on the background snapshot loop.
 
-## Mechanism 1 — Node TTL
+## Mechanism 1 - Node TTL
 
-Nodes not seen for longer than `node_ttl_s` seconds are evicted. This handles
-services that appear temporarily - a feature flag endpoint that was removed,
-a task type no longer dispatched.
+Nodes not seen for longer than `node_ttl_s` seconds are evicted. This handles services that appear temporarily - a feature flag endpoint that was removed, a task type no longer dispatched.
 
 Default TTL: `3600` seconds.
 
 ## Mechanism 2 - Node cap with LRU eviction
 
-When node count exceeds `max_nodes`, the least recently seen nodes are evicted
-until the count reaches `max_nodes * evict_to_ratio`.
+When node count exceeds `max_nodes`, the least recently seen nodes are evicted until the count reaches `max_nodes * evict_to_ratio`.
 
 Default: cap `5000` nodes, evict to 80% (`4000` nodes) when exceeded.
 
 ## Edge handling
 
-When a node is evicted, all edges incident to it are also removed. Dangling
-edges pointing to evicted nodes are invalid for causal reasoning and must not
+When a node is evicted, all edges incident to it are also removed. Dangling edges pointing to evicted nodes are invalid for causal reasoning and must not
 persist.
 
 ## Compaction stats
@@ -195,8 +174,7 @@ origintracer.init(
 ---
 # Architecture: Active Request Tracking
 
-`ActiveRequestTracker` maintains a live registry of in-flight requests —
-requests that have started but not yet completed.
+`ActiveRequestTracker` maintains a live registry of in-flight requests - requests that have started but not yet completed.
 
 ## What it tracks
 
@@ -222,8 +200,7 @@ engine.tracker.start(trace_id=trace_id, service="django", pattern=pattern)
 span = engine.tracker.complete(trace_id)
 ```
 
-`complete()` records `duration_ms` and removes the span from the active set.
-Spans that never complete are evicted after `ttl_s` seconds.
+`complete()` records `duration_ms` and removes the span from the active set. Spans that never complete are evicted after `ttl_s` seconds.
 
 ## What causal rules get from it
 
@@ -238,8 +215,7 @@ def _my_rule(
     ...
 ```
 
-The `request_duration_anomaly` rule uses it to compare recent P99 against
-historical average - it needs live span durations, not just graph node averages.
+The `request_duration_anomaly` rule uses it to compare recent P99 against historical average - it needs live span durations, not just graph node averages.
 
 ## Tuning
 
