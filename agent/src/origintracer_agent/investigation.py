@@ -33,7 +33,9 @@ class DeliverableDraft(BaseModel):
 
 
 class DeliverableQuestion(BaseModel):
-    """A material unanswered question attached to a requested output."""
+    """
+    A material unanswered question attached to a requested output.
+    """
 
     deliverable_id: str
     question: str

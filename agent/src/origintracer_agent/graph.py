@@ -921,9 +921,10 @@ def _assessor_for_evidence_ids(
             list[question_model],
             Field(
                 default_factory=list,
-                description="""
-                  Each question must name the requested deliverable
-                  it blocks.""",
+                description=(
+                    "Each question must name the requested deliverable "
+                    "it blocks."
+                ),
             ),
         ),
         "next_steps": (
