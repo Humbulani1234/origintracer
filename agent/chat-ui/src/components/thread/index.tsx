@@ -25,6 +25,7 @@ import { useQueryState } from "nuqs";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import ThreadHistory from "./history";
 import { toast } from "sonner";
+import { isStaticDemo, showStaticDemoNotice } from "@/lib/static-demo";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
 import {
@@ -139,6 +140,11 @@ export function Thread() {
       (messageText.trim().length === 0 && contentBlocks.length === 0) ||
       isLoading
     ) {
+      return;
+    }
+
+    if (isStaticDemo) {
+      showStaticDemoNotice();
       return;
     }
 

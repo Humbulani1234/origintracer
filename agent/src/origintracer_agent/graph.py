@@ -70,14 +70,15 @@ _MAX_GRAPH_ROWS_IN_PROMPT = 100
 logger = logging.getLogger(__name__)
 
 _PLAN_PROMPT = """
-You plan an OriginTracer investigation using the conversation, selected worker
-context, available evidence, and available tool capabilities.
+You plan an OriginTracer investigation using the conversation,
+selected worker context, available evidence, and available tool capabilities.
 
 ## Interpret worker scope
 - Decide from the request and conversation context whether an operational
-  overview is for all recently reporting workers or the selected worker. Use `ambiguous`
-  only if the context does not resolve it, and `not_requested` for requests
-  that are not operational overviews. Do not require specific phrases.
+  overview is for all recently reporting workers or the selected worker.
+  Use `ambiguous` only if the context does not resolve it, and `not_requested`
+  for requests that are not operational overviews. Do not require specific
+  phrases.
 - Always return `worker_scope`; this structured field is the scope decision
   consumed by the graph.
 - If `resolved_worker_scope` is supplied, use that exact scope and plan the
@@ -218,8 +219,9 @@ You gather evidence for an OriginTracer investigation.
 
 _FRAMEWORK_RULE_GUIDANCE = """
 ## Rule evidence
-- For problems covered by configured Django, asyncio, or LangGraph rules, use
-  `evaluate_worker_rules` or a specialized diagnostic that returns live matches.
+- For problems covered by configured Django, asyncio, Gunicorn, Uvicorn,
+  nginx, Celery or LangGraph rules, use `evaluate_worker_rules` or a
+  specialized diagnostic that returns live matches.
 - For a direct rule review, use `evaluate_worker_rules`.
 - Check registered rules before saying a rule is unavailable or did not match.
 - Distinguish an unconfigured rule from one that was registered but did not
@@ -317,7 +319,9 @@ _CAUSAL_HISTORY_GUIDANCE = """
 def _is_direct_graph_inventory(
     state: InvestigationState,
 ) -> bool:
-    """Use the structured plan to recognize a direct graph inventory read."""
+    """
+    Use the structured plan to recognize a direct graph inventory read.
+    """
     plan = state.get("plan", [])
     if (
         state.get("investigation_level") != "query"
@@ -530,7 +534,9 @@ _GRAPH_ASSESS_GUIDANCE = """
 
 
 def _assessment_prompt(state: InvestigationState) -> str:
-    """Add only the evidence rules relevant to this request."""
+    """
+    Add only the evidence rules relevant to this request.
+    """
     has_hypotheses = bool(state.get("hypotheses"))
     requires_causal_latency_caution = (
         has_hypotheses and _has_comparison_diagnostics(state)
@@ -576,8 +582,8 @@ def _assessment_prompt(state: InvestigationState) -> str:
 - Do not name a primary cause without request-correlated evidence.
 - A null or zero duration means no positive duration was measured; it does not
   establish that the component was healthy or had no effect.
-- A rule absent from `causal_rule_matches` was not detected in this result; that
-  alone does not prove the corresponding behavior was absent.
+- A rule absent from `causal_rule_matches` was not detected in this result;
+  that alone does not prove the corresponding behavior was absent.
 - Treat task-creation timestamps as event times, not task durations or proof
   of event-loop health.
 - Treat causal-rule matches as patterns, not proof of root cause.
@@ -664,8 +670,10 @@ continuity, scope, and planning are decided by the planner, not here.
   OriginTracer do?” uses `chat`; “What is happening in Ukraine?” uses
   `out_of_scope`; “Show my worker’s graph” uses `investigate`.
 - Choose a write action only when the user clearly asks to perform it now.
-- Choose `record_deployment_marker` only for a clear request to create a marker.
-- Choose `evaluate_and_record_rules` only for a clear request to evaluate and save matches.
+- Choose `record_deployment_marker` only for a clear request to create
+  a marker.
+- Choose `evaluate_and_record_rules` only for a clear request to evaluate and
+  save matches.
 
 ## Return format
 - Return fields required by the structured output schema.
@@ -692,7 +700,8 @@ You are the conversational assistant for OriginTracer.
   and link to the official docs home only when a useful next reference is
   needed.
 - When referring the user to documentation, make the text a clickable Markdown
-  link, using a supplied page link or [official OriginTracer documentation](https://origintracer.app/docs/).
+  link, using a supplied page link or [official OriginTracer documentation
+  (https://origintracer.app/docs/).
   Do not leave a documentation reference as plain text.
 - Do not claim that an answer is based on official documentation unless
   relevant documentation excerpts were retrieved.
@@ -2196,10 +2205,12 @@ async def classify_request(
 def route_after_classification(
     state: InvestigationState,
 ) -> Literal["chat", "plan", "approval", "end"]:
-    """Choose the next branch after request classification.
+    """
+    Choose the next branch after request classification.
 
-    Investigation requests proceed to planning, write proposals pause for approval, and
-    duplicate or no-op messages stop without running another branch.
+    Investigation requests proceed to planning, write proposals pause
+    for approval, and duplicate or no-op messages stop without running
+    another branch.
 
     Parameters
     ----------

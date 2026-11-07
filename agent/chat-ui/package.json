@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:demo": "bash scripts/build-static-demo.sh",
     "start": "next start",
     "lint": "NODE_OPTIONS='--require ./scripts/use-typescript6.cjs' eslint .",
     "lint:fix": "NODE_OPTIONS='--require ./scripts/use-typescript6.cjs' eslint . --fix",

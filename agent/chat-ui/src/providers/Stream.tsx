@@ -27,6 +27,7 @@ import { resolveApiUrl } from "@/lib/resolve-api-url";
 import { useThreads } from "./Thread";
 import { rememberChatUiThread } from "@/lib/chat-ui-threads";
 import { toast } from "sonner";
+import { isStaticDemo } from "@/lib/static-demo";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -62,13 +63,10 @@ async function checkGraphStatus(
     if (apiKey) headers.set("X-Api-Key", apiKey);
     if (authScheme) headers.set("X-Auth-Scheme", authScheme);
 
-    const res = await fetch(`${apiUrl}/info`, {
-      headers,
-    });
-
+    const res = await fetch(`${apiUrl}/info`, { headers });
     return res.ok;
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
     return false;
   }
 }
@@ -117,6 +115,13 @@ const StreamSession = ({
   });
 
   useEffect(() => {
+    if (
+      isStaticDemo ||
+      process.env.NEXT_PUBLIC_CHECK_AGENT_CONNECTION !== "true"
+    ) {
+      return;
+    }
+
     checkGraphStatus(apiUrl, apiKey, authScheme).then((ok) => {
       if (!ok) {
         toast.error("Could not connect to the OriginTracer agent", {

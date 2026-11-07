@@ -29,6 +29,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { isStaticDemo } from "@/lib/static-demo";
 
 function ThreadList({
   threads,
@@ -238,6 +239,15 @@ function SidebarContents({
   onThreadSelect?: () => void;
   mobile?: boolean;
 }) {
+  const agentApiDocsUrl =
+    process.env.NEXT_PUBLIC_AGENT_API_DOCS_URL ?? "http://127.0.0.1:2024/docs";
+  const backendApiDocsUrl =
+    process.env.NEXT_PUBLIC_BACKEND_API_DOCS_URL ?? "http://127.0.0.1:8001/docs";
+  const showAgentApiDocs =
+    !isStaticDemo || agentApiDocsUrl.startsWith("https://");
+  const showBackendApiDocs =
+    !isStaticDemo || backendApiDocsUrl.startsWith("https://");
+
   const {
     getThreads,
     deleteThread,
@@ -278,30 +288,28 @@ function SidebarContents({
           Documentation
         </a>
         <HowItWorksDialog />
-        <a
-          href={
-            process.env.NEXT_PUBLIC_AGENT_API_DOCS_URL ??
-            "http://127.0.0.1:2024/docs"
-          }
-          target="_blank"
-          rel="noreferrer"
-          className="hover:bg-sidebar-accent flex h-9 items-center gap-3 rounded-lg px-3 text-sm"
-        >
-          <Code2 className="text-muted-foreground size-4" />
-          Agent API
-        </a>
-        <a
-          href={
-            process.env.NEXT_PUBLIC_BACKEND_API_DOCS_URL ??
-            "http://127.0.0.1:8001/docs"
-          }
-          target="_blank"
-          rel="noreferrer"
-          className="hover:bg-sidebar-accent flex h-9 items-center gap-3 rounded-lg px-3 text-sm"
-        >
-          <Database className="text-muted-foreground size-4" />
-          OriginTracer API
-        </a>
+        {showAgentApiDocs && (
+          <a
+            href={agentApiDocsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="hover:bg-sidebar-accent flex h-9 items-center gap-3 rounded-lg px-3 text-sm"
+          >
+            <Code2 className="text-muted-foreground size-4" />
+            Agent API
+          </a>
+        )}
+        {showBackendApiDocs && (
+          <a
+            href={backendApiDocsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="hover:bg-sidebar-accent flex h-9 items-center gap-3 rounded-lg px-3 text-sm"
+          >
+            <Database className="text-muted-foreground size-4" />
+            OriginTracer API
+          </a>
+        )}
       </div>
 
       <div className="border-sidebar-border border-t px-3 pt-3 pb-3">
@@ -334,7 +342,10 @@ function SidebarContents({
           <div className="min-w-0 flex-1">
             <div className="font-medium">Agent server</div>
             <div className="text-muted-foreground truncate text-xs">
-              {process.env.NEXT_PUBLIC_AGENT_SERVER_LABEL ?? "127.0.0.1:2024"}
+              {isStaticDemo
+                ? "Demo frontend"
+                : (process.env.NEXT_PUBLIC_AGENT_SERVER_LABEL ??
+                  "127.0.0.1:2024")}
             </div>
           </div>
         </div>

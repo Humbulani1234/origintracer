@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+/out-demo/
+/out-demo.tar.gz
 *.local
 
 # Editor directories and files
@@ -22,6 +24,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# demo build
+static-demo.ts
+STATIC_DEMO.md
+build-static-demo.sh
 
 # LangGraph API
 .langgraph_api

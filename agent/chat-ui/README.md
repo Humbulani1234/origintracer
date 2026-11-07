@@ -35,6 +35,15 @@ If a service prints a different address or uses a different key, update
 for the chat proxy; `NEXT_PUBLIC_AGENT_SERVER_LABEL` controls the address shown
 in the sidebar. The browser calls the same-origin `/api` route.
 
+Static demo build and Nginx deployment steps are documented separately in
+[`STATIC_DEMO.md`](STATIC_DEMO.md).
+
+The startup agent connectivity warning is disabled by default. To enable the
+`/info` reachability check and show a warning when the Agent Server is
+unavailable, set `NEXT_PUBLIC_CHECK_AGENT_CONNECTION=true` in the environment
+used to build or run the UI. For static deployments, set it before building;
+`NEXT_PUBLIC_*` values are included in the client bundle.
+
 ## Interface behavior
 
 - The selected worker PID is sent with each user message.
