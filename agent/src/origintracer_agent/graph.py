@@ -275,7 +275,8 @@ _CAUSAL_RULE_ASSESS_GUIDANCE = """
 _TRACE_STITCH_ASSESS_GUIDANCE = """
 ## Report a stitched trace
 - State which worker PIDs returned stages and whether any worker query failed.
-- Treat `duration_ms` as the worker's returned interval between adjacent events.
+- Treat `duration_ms` as the worker's returned interval between adjacent
+  events.
 - Do not sum per-worker intervals or calculate a cross-process request duration
   from timestamps.
 """.strip()
@@ -453,7 +454,8 @@ required by the schema.
 - Include concise, evidence-cited observations when the evidence contains
   relevant measurements or rule matches, even if they establish no cause.
 - Fulfill the requested scope completely. If the user asks for a list and the
-  evidence contains the complete list, include every item; do not omit requested
+  evidence contains the complete list, include every item; do not omit
+  requested
   details to satisfy an assumed brevity limit.
 - State missing evidence and material data limits clearly.
 - For diagnosis requests, keep material causal uncertainty explicit.
@@ -506,7 +508,8 @@ required by the schema.
   reads. Do not include optional investigations as unanswered deliverables.
   Completed reads alone do not mean the requested outputs were answered.
 - Judge sufficiency against the user's request.
-- If the user asks whether measurements establish a cause, answer that directly.
+- If the user asks whether measurements establish a cause, answer that
+  directly.
 - Do not repeat that question as unresolved or recommend more work solely
   because the measurements do not prove causation.
 - Leave `next_steps` empty when the request has been answered, even if more
@@ -596,7 +599,8 @@ def _assessment_prompt(state: InvestigationState) -> str:
   per-request average.
 - Do not conclude a component is not contributing only because its average is
   below the route average.
-- Do not label a duration fast or slow without a supplied baseline or threshold.
+- Do not label a duration fast or slow without a supplied baseline or
+  threshold.
 - Do not treat a planner-supplied threshold as valid unless it also appears in
   the user's request or supplied evidence.
 - Compare both hypotheses and state which measurement or correlation is
@@ -801,7 +805,9 @@ def _planner_for_tools(tool_names: tuple[str, ...]) -> Any:
             Field(
                 min_length=1,
                 max_length=8,
-                description="Only names in the supplied available_tools catalog.",
+                description=(
+                    "Only names in the supplied available_tools catalog."
+                ),
             ),
         ),
     )
@@ -931,7 +937,9 @@ def _assessor_for_evidence_ids(
             list[next_step_model],
             Field(
                 default_factory=list,
-                description="Each necessary read must name the deliverable it advances.",
+                description=(
+                    "Each necessary read must name the deliverable it advances."
+                ),
             ),
         ),
         "answered_deliverable_ids": (
@@ -951,7 +959,9 @@ def _assessor_for_evidence_ids(
         "direct_answer": (
             direct_answer_model,
             Field(
-                description="Required evidence-grounded answer to current_request."
+                description=(
+                    "Required evidence-grounded answer to current_request."
+                )
             ),
         ),
         "findings": (list[finding_model], Field()),
@@ -2350,10 +2360,12 @@ async def answer_general_chat(
 def request_action_approval(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Pause the graph until the caller approves or rejects a proposed action.
+    """
+    Pause the graph until the caller approves or rejects a proposed action.
 
-    The proposal and its arguments are exposed for review. Rejection records a cancelled
-    status and response; approval only permits the separate execution node to run.
+    The proposal and its arguments are exposed for review. Rejection records
+    a cancelled status and response; approval only permits the separate
+    execution node to run.
 
     Parameters
     ----------
@@ -5497,7 +5509,8 @@ def synthesize_findings(
 
 
 def _investigation_scoped(node: Any) -> Any:
-    """Bind a graph node's investigation ID to OriginTracer's trace context.
+    """
+    Bind a graph node's investigation ID to OriginTracer's trace context.
 
     LangGraph callback and tracing events can happen inside a node or in async
     work that the node awaits. Setting the investigation ID in a context
@@ -5508,8 +5521,7 @@ def _investigation_scoped(node: Any) -> Any:
     so it cannot leak into a later node or task. If the state has no
     ``investigation_id``, the node is called without adding a trace context.
     The wrapper otherwise passes through the node's arguments and return value;
-    it does not modify graph state or the node's state update. ``@wraps`` keeps
-    the wrapped node's metadata available to LangGraph and debugging tools.
+    it does not modify graph state or the node's state update.
     """
 
     @wraps(node)
