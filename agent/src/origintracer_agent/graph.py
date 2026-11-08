@@ -1065,7 +1065,9 @@ def _assessment_runnable(state: InvestigationState) -> Any:
 
 
 def _message_text(message: BaseMessage) -> str:
-    """Return readable text from a message with either string or block content."""
+    """
+    Return readable text from a message with either string or block content.
+    """
     content = message.content
     if isinstance(content, str):
         return content.strip()
@@ -2040,9 +2042,9 @@ async def classify_request(
 ) -> dict[str, Any]:
     """Classify the newest user message and prepare its route.
 
-    Ordinary conversation, investigation requests, and supported write requests are
-    separated here. A write request becomes a typed proposal tied to the selected stored
-    process instance; this node never executes it.
+    Ordinary conversation, investigation requests, and supported write
+    requests are separated here. A write request becomes a typed proposal
+    tied to the selected stored process instance; this node never executes it.
 
     Parameters
     ----------
@@ -2052,7 +2054,8 @@ async def classify_request(
     Returns
     -------
     dict[str, Any]
-        State updates for chat, investigation planning, an approval proposal, or a no-op
+        State updates for chat, investigation planning, an approval proposal,
+        or a no-op
     when there is no new message.
     """
 
@@ -2132,7 +2135,10 @@ async def classify_request(
             "assessment_failure": {},
             "messages": [
                 AIMessage(
-                    content=f"I cannot verify the selected worker before preparing this action. {exc}"
+                    content=(
+                        f"I cannot verify the selected worker before preparing "
+                        f"this action. {exc}"
+                    )
                 )
             ],
         }
@@ -2152,7 +2158,10 @@ async def classify_request(
             "assessment_failure": {},
             "messages": [
                 AIMessage(
-                    content="Select a live OriginTracer worker and provide its `worker_pid` before requesting this action."
+                    content=(
+                        "Select a live OriginTracer worker and provide "
+                        "its `worker_pid` before requesting this action."
+                    )
                 )
             ],
         }
@@ -2448,7 +2457,10 @@ async def execute_approved_action(
         )
         action_status = "completed"
         status = "completed"
-        message = f"Action `{name}` completed. Result: {json.dumps(result, default=str)}"
+        message = (
+            f"Action `{name}` completed. "
+            f"Result: {json.dumps(result, default=str)}"
+        )
     except (ToolException, ValueError) as exc:
         result = {"error": str(exc)}
         action_status = "failed"
