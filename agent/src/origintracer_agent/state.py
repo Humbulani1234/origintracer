@@ -8,17 +8,18 @@ from langchain.agents import AgentState
 class InvestigationState(AgentState):
     """Conversation state and structured investigation work for one thread.
 
-    LangGraph checkpoints this state with the conversation. A new thread can
-    begin with inherited conversation messages and an optional worker selection.
-    The caller supplies the worker PID; the model does not choose it.
+    LangGraph checkpoints this state with the conversation.
+    A new thread can begin with inherited conversation messages and
+    an optional worker selection. The caller supplies the worker PID;
+    the model does not choose it.
 
     Attributes
     ----------
     messages : list[BaseMessage]
         Conversation history inherited from ``AgentState``.
     worker_pid : str or int, optional
-        Worker selected for the current run. The caller supplies this PID, and
-        worker tools use it to resolve the stored snapshot to inspect.
+        Worker selected for the current run. The caller supplies this PID,
+        and worker tools use it to resolve the stored snapshot to inspect.
     worker_instance_id : str, optional
         Stable identity of the selected worker process. This distinguishes a
         restarted process that reuses a PID.
@@ -73,7 +74,8 @@ class InvestigationState(AgentState):
     recorded_tool_call_ids : list[str], optional
         Tool call IDs already recorded, used to prevent duplicate results.
     direct_answer : dict, optional
-        Concise answer to the latest request and the evidence IDs that support it.
+        Concise answer to the latest request and the evidence IDs that
+        support it.
     findings : list[dict], optional
         Current-turn observations linked to evidence IDs.
     investigation_findings : list[dict], optional
