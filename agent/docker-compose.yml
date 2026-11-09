@@ -1,0 +1,33 @@
+services:
+  langgraph-api:
+    networks:
+      - default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      langgraph-postgres:
+        condition: service_healthy
+      langgraph-redis:
+        condition: service_healthy
+
+  langgraph-postgres:
+    image: pgvector/pgvector:pg16
+    networks:
+      default:
+        aliases:
+          - langgraph-postgres
+
+  langgraph-redis:
+    image: redis:6
+    networks:
+      default:
+        aliases:
+          - langgraph-redis
+
+networks:
+  default:
+    name: agent_default
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

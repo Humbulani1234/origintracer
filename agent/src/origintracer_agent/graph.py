@@ -859,7 +859,8 @@ def _assessor_for_evidence_ids(
     require_inconclusive_hypotheses: bool,
     deliverable_ids: tuple[str, ...],
 ) -> Any:
-    """Bind assessment references and causal statuses to current state.
+    """
+    Bind assessment references and causal statuses to current state.
 
     Evidence and plan IDs become literal enums, preventing section names or
     altered spellings from being returned as citations or completed steps.
@@ -2259,10 +2260,12 @@ def route_after_classification(
 async def answer_general_chat(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Answer general conversation with relevant documentation when available.
+    """
+    Answer general conversation with relevant documentation when available.
 
-    Documentation retrieval is best-effort and does not expose worker tools. When no
-    relevant excerpts are found, the model uses the product overview context.
+    Documentation retrieval is best-effort and does not expose worker tools.
+    When no relevant excerpts are found, the model uses the product overview
+    context.
 
     Parameters
     ----------
@@ -2272,7 +2275,8 @@ async def answer_general_chat(
     Returns
     -------
     dict[str, Any]
-        State update containing the assistant response and completed chat status.
+        State update containing the assistant response and completed
+        chat status.
     """
     conversation: list[BaseMessage] = []
     for message in state.get("messages", []):
@@ -2347,7 +2351,8 @@ async def answer_general_chat(
     if not response_text:
         response = AIMessage(
             content=(
-                "The configured model returned an empty response. Please try again."
+                "The configured model returned an empty response. "
+                "Please try again."
             )
         )
     return {
@@ -2437,10 +2442,12 @@ def route_after_approval(
 async def execute_approved_action(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Execute an approved allow-listed write and record its outcome.
+    """
+    Execute an approved allow-listed write and record its outcome.
 
-    The action result is retained in action state and user-facing output. It is not
-    added to the read-only evidence used to support investigation findings.
+    The action result is retained in action state and user-facing output.
+    It is not added to the read-only evidence used to support investigation
+    findings.
 
     Parameters
     ----------
@@ -2450,7 +2457,8 @@ async def execute_approved_action(
     Returns
     -------
     dict[str, Any]
-        State update with the action result, outcome status, and response message.
+        State update with the action result, outcome status, and
+        response message.
     """
     proposal = state.get("proposed_action", {})
     name = proposal.get("name")
@@ -2492,9 +2500,9 @@ async def prepare_investigation(
 ) -> dict[str, Any]:
     """Resolve the planned worker scope against uploaded snapshot inventory.
 
-    The planner decides whether a worker overview covers all live workers or the
-    selected worker. This node resolves stable process identity and prevents evidence
-    from crossing worker instances.
+    The planner decides whether a worker overview covers all live workers
+    or the selected worker. This node resolves stable process identity and
+    prevents evidence from crossing worker instances.
 
     Parameters
     ----------
@@ -2504,8 +2512,8 @@ async def prepare_investigation(
     Returns
     -------
     dict[str, Any]
-        State update with verified worker identity and prepared investigation data, or a
-    status explaining why preparation cannot continue.
+        State update with verified worker identity and prepared investigation
+        data, or a status explaining why preparation cannot continue.
     """
     messages = state.get("messages", [])
     latest = _latest_human_message(messages)
@@ -2572,8 +2580,9 @@ async def prepare_investigation(
                 for worker in workers
             )
             prompt = (
-                f"Choose an OriginTracer worker snapshot: {options}. Send your next "
-                "message with the selected `worker_pid` in its run input."
+                f"Choose an OriginTracer worker snapshot: {options}. "
+                "Send your next message with the selected `worker_pid` "
+                "in its run input."
             )
         else:
             prompt = (
@@ -2659,10 +2668,10 @@ async def plan_investigation(
 ) -> dict[str, Any]:
     """Create a bounded evidence plan for the current request.
 
-    The planner receives a compact tool catalog and relevant conversation context.
-    Proposed tool names are filtered against the available catalog. A follow-up reuses
-    the existing investigation only when the planner determines that the new request
-    depends on it.
+    The planner receives a compact tool catalog and relevant conversation
+    context. Proposed tool names are filtered against the available catalog.
+    A follow-up reuses the existing investigation only when the planner
+    determines that the new request depends on it.
 
     Parameters
     ----------
@@ -2788,7 +2797,10 @@ async def plan_investigation(
         decision = interrupt(
             {
                 "type": "origintracer_worker_overview_scope",
-                "message": "Should I inspect all recently reporting workers or only the selected worker?",
+                "message": (
+                    "Should I inspect all recently reporting workers or "
+                    "only the selected worker?"
+                ),
                 "options": ["all", "selected"],
                 "selected_worker": context["selected_worker"],
             }
@@ -2799,7 +2811,10 @@ async def plan_investigation(
                 "status": "awaiting_worker_overview_scope",
                 "messages": [
                     AIMessage(
-                        content="Choose `all` or `selected` so I know which workers to include."
+                        content=(
+                            "Choose `all` or `selected` so I know which "
+                            "workers to include."
+                        )
                     )
                 ],
             }
@@ -2841,11 +2856,17 @@ async def plan_investigation(
                 "status": "planning_failed",
                 "assessment_failure": {
                     "code": "worker_scope_mismatch",
-                    "reason": "The planner did not honor the user's resolved worker scope.",
+                    "reason": (
+                        "The planner did not honor the user's resolved "
+                        "worker scope."
+                    ),
                 },
                 "messages": [
                     AIMessage(
-                        content="I could not create a plan for the worker scope you selected. Please retry the request."
+                        content=(
+                            "I could not create a plan for the worker scope "
+                            "you selected. Please retry the request."
+                        )
                     )
                 ],
             }
@@ -3535,13 +3556,16 @@ def _assessment_context(
 async def assess_evidence(
     state: InvestigationState,
 ) -> dict[str, Any]:
-    """Validate the assessment and decide whether evidence gathering should continue.
+    """
+    Validate the assessment and decide whether evidence gathering should
+    continue.
 
-    Model-supplied evidence and plan IDs are resolved against current state, and
-    hypothesis reviews are matched to stored claims by position. The node reconciles
-    completed plan steps with observed tool results. Semantic contract violations
-    preserve gathered evidence and stop report synthesis; unexpected runtime errors
-    still raise. A trace conclusion is also withheld until a planned trace read returns.
+    Model-supplied evidence and plan IDs are resolved against current state,
+    and hypothesis reviews are matched to stored claims by position. The node
+    reconciles completed plan steps with observed tool results. Semantic
+    contract violations preserve gathered evidence and stop report synthesis;
+    unexpected runtime errors still raise. A trace conclusion is also withheld
+    until a planned trace read returns.
 
     Parameters
     ----------

@@ -30,6 +30,7 @@ build/
 .eggs/
 applications/langgraph/.langgraph_api
 agent/.langgraph_api/
+agent/DOCKER_SET_UP.md
 
 # Testing
 .pytest_cache/

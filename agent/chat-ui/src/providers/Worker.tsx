@@ -38,7 +38,11 @@ export function WorkerProvider({ children }: { children: ReactNode }) {
         throw new Error(body?.detail ?? "Could not load live workers.");
       }
 
-      const nextWorkers = Array.isArray(body?.data) ? body.data : [];
+      const nextWorkers = Array.isArray(body?.data)
+      ? body.data.filter(
+          (worker: Worker & { online?: boolean }) => worker.online === true,
+        )
+      : [];
       setWorkers(nextWorkers);
       setError("");
       setWorkerPidState((current) => {

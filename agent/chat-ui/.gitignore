@@ -29,6 +29,7 @@ dist-ssr
 static-demo.ts
 STATIC_DEMO.md
 build-static-demo.sh
+DOCKER_SET_UP.md
 
 # LangGraph API
 .langgraph_api
