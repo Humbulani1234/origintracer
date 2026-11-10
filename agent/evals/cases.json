@@ -85,6 +85,51 @@
     }
   },
   {
+    "id": "follow_up_graph_for_other_worker",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Give me a live overview of all workers."
+          ]
+        },
+        {
+          "lines": [
+            "Show me the graph for this worker."
+          ]
+        },
+        {
+          "lines": [
+            "What about the graph for the other worker?"
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_live_workers_overview",
+        "get_worker_graph"
+      ],
+      "required_observation_tools": [
+        "get_worker_graph"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "target_worker_differs_from_selected": true,
+      "quality_criteria": {
+        "lines": [
+          "Resolve the follow-up using the earlier worker overview and retrieve the other worker's graph.",
+          "Keep graph evidence attached to the PID returned for that worker.",
+          "If the inventory does not identify one unambiguous other worker, ask for clarification instead of reusing the selected worker's graph."
+        ]
+      }
+    }
+  },
+  {
     "id": "recent_worker_events",
     "inputs": {
       "requires_worker": true,

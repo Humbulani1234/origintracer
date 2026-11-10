@@ -1,5 +1,7 @@
 """Focused checks for the investigation graph's routing and final report."""
 
+import json
+
 import pytest
 
 from origintracer_agent.graph import (
@@ -14,6 +16,7 @@ from origintracer_agent.graph import (
     assess_evidence,
     plan_investigation,
     prepare_investigation,
+    record_evidence,
     route_after_assessment,
     route_after_classification,
     route_after_prepare,
@@ -22,6 +25,7 @@ from origintracer_agent.graph import (
     synthesize_findings,
 )
 from origintracer_agent.investigation import (
+    DeliverableDraft,
     EvidenceAssessment,
     FindingDraft,
     HypothesisDraft,
@@ -1180,6 +1184,181 @@ async def test_investigation_binds_to_selected_process_instance(
     assert result["worker_instance_id"] == "instance-two"
     assert result["investigation_instance_id"] == "instance-two"
     assert result["scope"]["worker_pid"] == "1235"
+
+
+def test_overview_evidence_persists_worker_inventory():
+    from langchain_core.messages import ToolMessage
+
+    result = record_evidence(
+        {
+            "messages": [
+                ToolMessage(
+                    name="get_live_workers_overview",
+                    tool_call_id="overview-call",
+                    content=json.dumps(
+                        {
+                            "source": "stored overview",
+                            "result": {
+                                "workers": [
+                                    {
+                                        "pid": 1,
+                                        "worker_instance_id": "instance-one",
+                                    },
+                                    {
+                                        "pid": 2116127,
+                                        "worker_instance_id": "instance-two",
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                )
+            ],
+            "evidence": [],
+            "tool_results": [],
+            "recorded_tool_call_ids": [],
+        }
+    )
+
+    assert result["worker_inventory"] == [
+        {"pid": "1", "worker_instance_id": "instance-one"},
+        {"pid": "2116127", "worker_instance_id": "instance-two"},
+    ]
+    assert (
+        result["evidence"][0]["tool"]
+        == "get_live_workers_overview"
+    )
+
+
+@pytest.mark.anyio
+async def test_follow_up_plan_targets_other_worker_and_resets_evidence(
+    monkeypatch,
+):
+    import origintracer_agent.graph as graph
+
+    workers = [
+        {"pid": "1", "worker_instance_id": "instance-one"},
+        {"pid": "2116127", "worker_instance_id": "instance-two"},
+    ]
+
+    class PlannerStub:
+        async def ainvoke(self, messages):
+            context = json.loads(messages[1].content)
+            assert context["selected_worker"]["pid"] == "1"
+            assert context["worker_inventory"] == workers
+            return InvestigationPlan(
+                continue_existing=True,
+                worker_scope="selected",
+                target_worker_pid="2116127",
+                level="query",
+                scope_summary="Graph for worker 2116127",
+                steps=[
+                    PlanStep(
+                        description="Read that worker's graph",
+                        purpose="Answer the graph request",
+                        suggested_tools=["get_worker_graph"],
+                    )
+                ],
+                deliverables=[
+                    DeliverableDraft(
+                        description="Graph for worker 2116127",
+                        suggested_tools=["get_worker_graph"],
+                    )
+                ],
+                hypotheses=[],
+            )
+
+    monkeypatch.setattr(graph, "_planner", PlannerStub())
+    state = {
+        "current_request": "what about the graph of the other worker?",
+        "worker_pid": "1",
+        "caller_selected_worker_pid": "1",
+        "worker_inventory": workers,
+        "question": "can i have the graph for the worker?",
+        "investigation_pid": "1",
+        "investigation_instance_id": "instance-one",
+        "scope": {"worker_scope": "selected"},
+        "evidence": [{"evidence_id": "E001", "worker_pid": "1"}],
+        "findings": [{"statement": "Old worker graph"}],
+    }
+
+    result = await plan_investigation(state)
+
+    assert result["planned_worker_pid"] == "2116127"
+    assert result["planned_continuation"] is False
+    assert result["evidence"] == []
+    assert result["findings"] == []
+
+
+@pytest.mark.anyio
+async def test_prepare_uses_validated_planned_worker_pid(
+    monkeypatch,
+):
+    from langchain_core.messages import HumanMessage
+
+    import origintracer_agent.graph as graph
+
+    async def workers():
+        return [
+            {"pid": "1", "worker_instance_id": "instance-one"},
+            {
+                "pid": "2116127",
+                "worker_instance_id": "instance-two",
+            },
+        ]
+
+    monkeypatch.setattr(graph, "list_workers", workers)
+    result = await prepare_investigation(
+        {
+            "messages": [
+                HumanMessage(content="Graph the other worker")
+            ],
+            "worker_pid": "1",
+            "caller_selected_worker_pid": "1",
+            "planned_worker_pid": "2116127",
+            "scope": {"worker_scope": "selected"},
+        }
+    )
+
+    assert result["worker_pid"] == "2116127"
+    assert result["worker_instance_id"] == "instance-two"
+    assert result["caller_selected_worker_pid"] == "1"
+    assert result["planned_worker_pid"] is None
+
+
+@pytest.mark.anyio
+async def test_prepare_does_not_fall_back_when_target_worker_is_missing(
+    monkeypatch,
+):
+    from langchain_core.messages import HumanMessage
+
+    import origintracer_agent.graph as graph
+
+    async def workers():
+        return [
+            {
+                "pid": "1",
+                "worker_instance_id": "instance-one",
+                "online": True,
+            }
+        ]
+
+    monkeypatch.setattr(graph, "list_workers", workers)
+    result = await prepare_investigation(
+        {
+            "messages": [
+                HumanMessage(content="Graph the other worker")
+            ],
+            "worker_pid": "1",
+            "caller_selected_worker_pid": "1",
+            "planned_worker_pid": "2116127",
+            "scope": {"worker_scope": "selected"},
+        }
+    )
+
+    assert result["status"] == "awaiting_worker"
+    assert "2116127" in result["messages"][0].content
+    assert "worker_pid" not in result
 
 
 def test_classification_routes_action_or_investigation() -> None:

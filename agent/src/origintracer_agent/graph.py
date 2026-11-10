@@ -91,6 +91,14 @@ selected worker context, available evidence, and available tool capabilities.
   snapshots or continues an all-worker overview, plan for all recently
   reporting workers and use
   `get_live_workers_overview`, even when one worker is selected in the UI.
+- Resolve references to an individual worker using `worker_inventory` and
+  the conversation. Set `target_worker_pid` to the resolved PID when the
+  request targets a worker other than `selected_worker`; never invent one.
+  If the reference is ambiguous, use inventory to clarify the candidates
+  instead of running a read against the selected worker by default.
+- When a worker target is resolved from an earlier overview, plan the
+  requested selected-worker read (for example, `get_worker_graph`). The graph
+  will validate the target against current backend inventory before reading.
 - Infer scope from the whole conversational context and the user's intended
   subject. Do not require particular words to recognize a reference to a
   previously discussed worker or group.
@@ -2527,7 +2535,17 @@ async def prepare_investigation(
     request = str(
         state.get("current_request") or _message_text(latest)
     )
-    selected_pid = _valid_pid_text(state.get("worker_pid"))
+    selected_pid = _valid_pid_text(
+        state.get("worker_pid")
+        or state.get("caller_selected_worker_pid")
+    )
+    raw_target_pid = state.get("planned_worker_pid")
+    target_pid = _valid_pid_text(raw_target_pid)
+    requested_pid = (
+        target_pid
+        if raw_target_pid is not None
+        else selected_pid
+    )
     planned_scope = state.get("scope", {}).get(
         "worker_scope",
         state.get("scope", {}).get("overview_scope"),
@@ -2539,6 +2557,11 @@ async def prepare_investigation(
             "investigation_pid": None,
             "investigation_instance_id": None,
             "planned_continuation": False,
+            "planned_worker_pid": None,
+            "caller_selected_worker_pid": (
+                state.get("caller_selected_worker_pid")
+                or selected_pid
+            ),
             "new_investigation": False,
             "last_user_message_id": message_id,
             "response_mode": "investigation",
@@ -2571,8 +2594,8 @@ async def prepare_investigation(
 
     available_pids = [str(worker["pid"]) for worker in workers]
     if (
-        selected_pid is None
-        or selected_pid not in available_pids
+        requested_pid is None
+        or requested_pid not in available_pids
     ):
         if available_pids:
             options = ", ".join(
@@ -2590,9 +2613,9 @@ async def prepare_investigation(
                 "instrumented process configured to upload to FastAPI, then "
                 "send its PID as `worker_pid` after a snapshot arrives."
             )
-        if selected_pid is not None:
+        if requested_pid is not None:
             prompt = (
-                f"No stored snapshot is available for worker `{selected_pid}`. "
+                f"No stored snapshot is available for worker `{requested_pid}`. "
                 + prompt
             )
         return {
@@ -2605,8 +2628,9 @@ async def prepare_investigation(
     selected_worker = next(
         worker
         for worker in workers
-        if str(worker["pid"]) == selected_pid
+        if str(worker["pid"]) == requested_pid
     )
+    selected_pid = requested_pid
     selected_instance_id = str(
         selected_worker["worker_instance_id"]
     )
@@ -2641,6 +2665,11 @@ async def prepare_investigation(
 
     return {
         "worker_pid": selected_pid,
+        "planned_worker_pid": None,
+        "caller_selected_worker_pid": (
+            state.get("caller_selected_worker_pid")
+            or _valid_pid_text(state.get("worker_pid"))
+        ),
         "worker_instance_id": selected_instance_id,
         "investigation_pid": selected_pid,
         "investigation_instance_id": selected_instance_id,
@@ -2688,7 +2717,15 @@ async def plan_investigation(
         "new_investigation"
     )
     request = str(state.get("current_request", ""))
-    worker_is_selected = bool(state.get("worker_pid"))
+    caller_selected_pid = _valid_pid_text(
+        state.get("caller_selected_worker_pid")
+        or state.get("worker_pid")
+    )
+    # Worker-scoped tools are executable after an earlier all-worker overview
+    # because prepare validates a planner-resolved target before any read.
+    worker_is_selected = bool(
+        caller_selected_pid or state.get("worker_inventory")
+    )
     available_tools = read_only_tool_catalog(
         request, selected_worker=worker_is_selected
     )
@@ -2712,14 +2749,24 @@ async def plan_investigation(
         ],
         "selected_worker": (
             {
-                "pid": state.get("worker_pid"),
-                "worker_instance_id": state.get(
-                    "worker_instance_id"
+                "pid": caller_selected_pid,
+                "worker_instance_id": next(
+                    (
+                        item.get("worker_instance_id")
+                        for item in state.get(
+                            "worker_inventory", []
+                        )
+                        if isinstance(item, dict)
+                        and str(item.get("pid"))
+                        == caller_selected_pid
+                    ),
+                    None,
                 ),
             }
-            if worker_is_selected
+            if caller_selected_pid
             else None
         ),
+        "worker_inventory": state.get("worker_inventory", []),
         # Use the active investigation's own request history, not whichever
         # unrelated chat message happened to precede the current request.
         "existing_question": _latest_investigation_question(
@@ -2871,6 +2918,27 @@ async def plan_investigation(
                 ],
             }
 
+    if (
+        plan_result.target_worker_pid is not None
+        and _valid_pid_text(plan_result.target_worker_pid)
+        is None
+    ):
+        return {
+            "status": "planning_failed",
+            "assessment_failure": {
+                "code": "invalid_target_worker",
+                "reason": "The planned worker PID is not a valid numeric PID.",
+            },
+            "messages": [
+                AIMessage(
+                    content=(
+                        "I couldn't safely resolve the requested worker. "
+                        "Please identify it using a PID from the worker overview."
+                    )
+                )
+            ],
+        }
+
     prior_scope = state.get("scope", {}).get(
         "worker_scope",
         state.get("scope", {}).get("overview_scope"),
@@ -2885,10 +2953,16 @@ async def plan_investigation(
         or plan_result.worker_scope == "not_requested"
         or prior_scope in {None, plan_result.worker_scope}
     )
+    target_pid = _valid_pid_text(plan_result.target_worker_pid)
+    target_matches_active_worker = (
+        target_pid is None
+        or target_pid == _valid_pid_text(state.get("worker_pid"))
+    )
     continue_existing = (
         previous
         and plan_result.continue_existing
         and scope_compatible
+        and target_matches_active_worker
     )
     start_new = not continue_existing
     prior_investigation_id = state.get("prior_investigation_id")
@@ -3071,6 +3145,7 @@ async def plan_investigation(
             "worker_scope": plan_result.worker_scope,
             "summary": plan_result.scope_summary,
         },
+        "planned_worker_pid": target_pid,
         "planned_continuation": continue_existing,
         "investigation_level": plan_result.level,
         "hypotheses": hypotheses,
@@ -3142,6 +3217,11 @@ def _research_context(
         ),
         "current_request": state.get("current_request", ""),
         "selected_worker_pid": state.get("worker_pid"),
+        "planned_worker_pid": state.get("planned_worker_pid"),
+        "caller_selected_worker_pid": state.get(
+            "caller_selected_worker_pid"
+        ),
+        "worker_inventory": state.get("worker_inventory", []),
         "scope": state.get("scope", {}),
         "level": state.get("investigation_level", "query"),
         "plan": state.get("plan", []),
@@ -3404,6 +3484,8 @@ def record_evidence(state: InvestigationState) -> dict[str, Any]:
     recorded = list(state.get("recorded_tool_call_ids", []))
     recorded_set = set(recorded)
     next_id = len(evidence) + 1
+    worker_inventory = list(state.get("worker_inventory", []))
+    inventory_updated = False
 
     for message in state.get("messages", []):
         if not isinstance(message, ToolMessage):
@@ -3444,6 +3526,25 @@ def record_evidence(state: InvestigationState) -> dict[str, Any]:
             query = str(message.name or "")
             observed_at = ""
 
+        if (
+            message.name == "get_live_workers_overview"
+            and isinstance(result, dict)
+        ):
+            workers = result.get("workers", [])
+            if isinstance(workers, list):
+                worker_inventory = [
+                    {
+                        "pid": str(worker["pid"]),
+                        "worker_instance_id": str(
+                            worker.get("worker_instance_id", "")
+                        ),
+                    }
+                    for worker in workers
+                    if isinstance(worker, dict)
+                    and worker.get("pid") is not None
+                ]
+                inventory_updated = True
+
         evidence_id = f"E{next_id:03d}"
         evidence.append(
             {
@@ -3474,6 +3575,11 @@ def record_evidence(state: InvestigationState) -> dict[str, Any]:
         "evidence": evidence,
         "tool_results": results,
         "recorded_tool_call_ids": recorded,
+        **(
+            {"worker_inventory": worker_inventory}
+            if inventory_updated
+            else {}
+        ),
         "status": "assessing_evidence",
     }
 

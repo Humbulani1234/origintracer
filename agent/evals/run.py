@@ -147,6 +147,7 @@ def _evidence_preview(evidence: Any) -> list[dict[str, Any]]:
             "evidence_id": item.get("evidence_id"),
             "tool": item.get("tool"),
             "source": item.get("source"),
+            "worker_pid": item.get("worker_pid"),
             "query": item.get("query"),
             "result_excerpt": result[:3_000],
         }
@@ -209,6 +210,10 @@ def _format_output(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "answer": answer,
         "status": values.get("status", "unknown"),
+        "worker_pid": values.get("worker_pid"),
+        "caller_selected_worker_pid": values.get(
+            "caller_selected_worker_pid"
+        ),
         "response_mode": values.get("response_mode"),
         "research_round": values.get("research_round"),
         "plan_steps": [
@@ -506,6 +511,25 @@ def pathway_evaluator(
                 "response mode expected "
                 f"{expected_response_mode!r}, got "
                 f"{outputs.get('response_mode')!r}",
+            )
+        )
+    if reference_outputs.get(
+        "target_worker_differs_from_selected"
+    ):
+        selected_pid = outputs.get("caller_selected_worker_pid")
+        evidence_pids = {
+            str(item.get("worker_pid"))
+            for item in outputs.get("evidence", [])
+            if isinstance(item, dict)
+            and item.get("worker_pid") is not None
+        }
+        checks.append(
+            (
+                selected_pid is not None
+                and bool(evidence_pids)
+                and str(selected_pid) not in evidence_pids,
+                "final-turn evidence must come from a worker different "
+                "from the caller-selected worker",
             )
         )
     if reference_outputs.get("must_not_use_tools"):

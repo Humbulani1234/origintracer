@@ -81,6 +81,17 @@ class InvestigationPlan(BaseModel):
             "not_requested for requests that are not worker overviews."
         ),
     )
+    target_worker_pid: str | None = Field(
+        default=None,
+        description=(
+            "Set only when the current request targets a worker different "
+            "from the caller-selected worker. Resolve the PID from the "
+            "current request, prior conversation, or supplied worker "
+            "inventory. Never invent or infer a PID from ordering unless "
+            "the inventory makes that reference unambiguous. The graph "
+            "validates the PID against the backend inventory before reads."
+        ),
+    )
     level: Literal["query", "multi_step", "verification"] = (
         Field(
             description=(

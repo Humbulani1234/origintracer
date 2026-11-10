@@ -1330,9 +1330,27 @@ async def record_deployment_marker_action(
         unavailable.
     """
     pid = validate_pid(worker_pid)
-    existing = await query_worker(
-        pid, build_diff_query(label), worker_instance_id
-    )
+    try:
+        existing = await query_worker(
+            pid, build_diff_query(label), worker_instance_id
+        )
+    except ToolException as exc:
+        missing_marker_detail = (
+            "HTTP 404: No deployment marker or graph diff found for "
+            f"'{label}'"
+        )
+        if not str(exc).endswith(missing_marker_detail):
+            raise ToolException(
+                "Could not verify whether this deployment marker already "
+                "exists; no backend marker was written."
+            ) from exc
+        if not worker_instance_id:
+            raise ToolException(
+                "The selected worker instance is unavailable for marker recording."
+            ) from exc
+        return await record_deployment_marker(
+            label, worker_instance_id, pid
+        )
     query_result = existing.get("result")
     if not isinstance(query_result, dict):
         raise ToolException(
@@ -1342,7 +1360,14 @@ async def record_deployment_marker_action(
 
     error = query_result.get("error")
     if error:
-        if "no marker found" not in str(error).casefold():
+        error_text = str(error).casefold()
+        if not any(
+            phrase in error_text
+            for phrase in (
+                "no marker found",
+                "no deployment marker or graph diff found",
+            )
+        ):
             raise ToolException(
                 "Could not verify whether this deployment marker already "
                 "exists; no backend marker was written."

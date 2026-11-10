@@ -23,6 +23,18 @@ class InvestigationState(AgentState):
     worker_instance_id : str, optional
         Stable identity of the selected worker process. This distinguishes a
         restarted process that reuses a PID.
+    planned_worker_pid : str, optional
+        Worker target resolved by the planner from the user's request or known
+        worker inventory. The prepare node verifies it against the backend
+        inventory before any worker-scoped tool runs.
+    caller_selected_worker_pid : str, optional
+        Worker PID supplied by the caller when the thread began. It remains
+        available as the reference point for later requests after an
+        all-worker overview clears the active worker scope.
+    worker_inventory : list of dict, optional
+        Recent worker identities returned by an all-worker overview. This
+        supports later references such as another worker while each query
+        still verifies the PID against current backend state.
     investigation_pid : str, optional
         PID attached to the saved investigation. A change starts a new
         investigation so evidence from different workers is not combined.
@@ -118,6 +130,9 @@ class InvestigationState(AgentState):
 
     worker_pid: NotRequired[str | int]
     worker_instance_id: NotRequired[str]
+    planned_worker_pid: NotRequired[str | int | None]
+    caller_selected_worker_pid: NotRequired[str | int | None]
+    worker_inventory: NotRequired[list[dict[str, Any]]]
     investigation_pid: NotRequired[str]
     investigation_instance_id: NotRequired[str]
     investigation_id: NotRequired[str]
