@@ -540,10 +540,14 @@ class PGEventRepository(BaseRepository):
         self, customer_id: str, worker_instance_id: str
     ) -> List[Dict[str, Any]]:
         with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label FROM graph_diffs WHERE customer_id=%s AND worker_instance_id=%s ORDER BY snapshot_time DESC LIMIT 500",
-                (customer_id, worker_instance_id),
-            )
+            cur.execute("""
+                    SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label
+                    FROM ot_graph_diffs
+                    WHERE customer_id = %s
+                      AND worker_instance_id = %s
+                    ORDER BY snapshot_time DESC
+                    LIMIT 500
+                """)
             rows = cur.fetchall()
         return [
             {
@@ -566,10 +570,15 @@ class PGEventRepository(BaseRepository):
         label: Optional[str],
     ) -> Optional[Dict[str, Any]]:
         with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label FROM graph_diffs WHERE customer_id=%s AND worker_instance_id=%s AND label IS NOT DISTINCT FROM %s ORDER BY snapshot_time DESC LIMIT 1",
-                (customer_id, worker_instance_id, label),
-            )
+            cur.execute("""
+                    SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label
+                    FROM ot_graph_diffs
+                    WHERE customer_id = %s
+                      AND worker_instance_id = %s
+                      AND label IS NOT DISTINCT FROM %s
+                    ORDER BY snapshot_time DESC
+                    LIMIT 1
+                """)
             row = cur.fetchone()
         if row is None:
             return None
@@ -587,7 +596,7 @@ class PGEventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_events
+                    INSERT INTO ot_events
                         (customer_id, worker_pid, trace_id, span_id, parent_span_id,
                          probe, service, name, wall_time,
                          duration_ns, pid, tid, metadata)
@@ -672,7 +681,7 @@ class PGEventRepository(BaseRepository):
         sql = f"""
             SELECT trace_id, span_id, parent_span_id, probe, service, name,
                    wall_time, duration_ns, pid, tid, metadata
-            FROM   st_events
+            FROM   ot_events
             {where}
             ORDER  BY wall_time DESC
             LIMIT  %s
@@ -713,7 +722,7 @@ class PGEventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_snapshots
+                    INSERT INTO ot_snapshots
                         (customer_id, worker_instance_id, worker_pid, received_at, content_type,
                          node_count, edge_count, data)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -744,7 +753,7 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     SELECT data, content_type, received_at, worker_pid, worker_instance_id, node_count, edge_count
-                    FROM   st_snapshots
+                    FROM   ot_snapshots
                     WHERE  customer_id = %s AND worker_instance_id = %s
                     ORDER  BY received_at DESC
                     LIMIT  1
@@ -779,7 +788,7 @@ class PGEventRepository(BaseRepository):
                 """
                 SELECT DISTINCT ON (worker_instance_id) worker_instance_id, worker_pid,
                        data, content_type, received_at, node_count, edge_count
-                FROM st_snapshots WHERE customer_id = %s
+                FROM ot_snapshots WHERE customer_id = %s
                 ORDER BY worker_instance_id, received_at DESC
             """,
                 (customer_id,),
@@ -810,7 +819,7 @@ class PGEventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO worker_runtime_status
+                    INSERT INTO ot_worker_runtime_status
                         (customer_id, worker_instance_id, worker_pid, observed_at, status)
                     VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (customer_id, worker_instance_id)
@@ -841,7 +850,7 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     SELECT worker_pid, observed_at, status
-                    FROM worker_runtime_status
+                    FROM ot_worker_runtime_status
                     WHERE customer_id = %s AND worker_instance_id = %s
                     """,
                     (customer_id, worker_instance_id),
@@ -871,7 +880,7 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     SELECT worker_instance_id, worker_pid, observed_at, status
-                    FROM worker_runtime_status
+                    FROM ot_worker_runtime_status
                     WHERE customer_id = %s
                     ORDER BY observed_at DESC
                     """,
@@ -906,7 +915,7 @@ class PGEventRepository(BaseRepository):
     ) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO graph_diffs
+                """INSERT INTO ot_graph_diffs
                 (customer_id, worker_instance_id, worker_pid, snapshot_time, added_nodes, removed_nodes, added_edges, removed_edges, label)
                 VALUES (%s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s)""",
                 (
@@ -942,7 +951,7 @@ class PGEventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_markers (customer_id, worker_instance_id, worker_pid, label, created_at)
+                    INSERT INTO ot_markers (customer_id, worker_instance_id, worker_pid, label, created_at)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
@@ -969,7 +978,7 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     SELECT created_at
-                    FROM st_markers
+                    FROM ot_markers
                     WHERE customer_id = %s
                       AND worker_instance_id = %s
                       AND label = %s
@@ -996,7 +1005,7 @@ class PGEventRepository(BaseRepository):
     ):
         with self._conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO causal_matches (customer_id, worker_instance_id, worker_pid, timestamp, matches) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO ot_causal_matches (customer_id, worker_instance_id, worker_pid, timestamp, matches) VALUES (%s, %s, %s, %s, %s)",
                 (
                     customer_id,
                     worker_instance_id,
@@ -1012,7 +1021,7 @@ class PGEventRepository(BaseRepository):
     ):
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT worker_instance_id, timestamp, matches FROM causal_matches WHERE customer_id = %s AND worker_instance_id = %s ORDER BY timestamp DESC LIMIT %s",
+                "SELECT worker_instance_id, timestamp, matches FROM ot_causal_matches WHERE customer_id = %s AND worker_instance_id = %s ORDER BY timestamp DESC LIMIT %s",
                 (customer_id, worker_instance_id, limit),
             )
             rows = cur.fetchall()
