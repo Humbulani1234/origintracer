@@ -18,6 +18,11 @@ Requests concerning the OriginTracer runtime proceed through the investigation f
 
 Each investigation is scoped to a single OriginTracer process, identified by a worker PID supplied by the caller. The agent resolves this PID to its stable `worker_instance_id` using the FastAPI snapshot inventory and retains both identifiers throughout the investigation, and this ensures that evidence and snapshots belonging to different process instances are never inadvertently combined.
 
+The dedicated live-worker overview is the exception: it can inspect several
+recently reporting workers at once. It does not broaden the scope of later
+reads. A follow-up inspection uses the selected worker, and the agent does not
+combine evidence from different process instances in one diagnosis.
+
 Once the worker has been identified, the investigation proceeds through five stages:
 
 1. **Set the scope.** The agent establishes the investigation scope using the user's question and the selected worker. If the worker is missing or unavailable, that must be resolved before the investigation can proceed.
@@ -62,6 +67,15 @@ Individual read tools can also provide more specific guidance through their `Too
 
 For example, event-related guidance distinguishes event probe names from graph node IDs, while ranking guidance explains whether a result is ordered by call count or execution duration. The relevant instructions are attached to the tool metadata and supplied to the model when needed.
 
+Latency comparisons use the generic `get_worker_component_diagnostics` tool.
+The planner supplies exact service labels from the selected worker, such as
+`nginx`, `gunicorn`, or `asyncio`, and may include configured semantic system
+aliases such as `database`. One call can compare up to five services and
+aliases; adding a framework does not require a new pair-specific tool. The
+result keeps aggregate node measurements, sampled events, and rule matches
+distinct. Shared trace IDs help select traces to inspect but do not establish
+causation.
+
 The graph also tracks whether the planned reads have actually been performed. A plan step that specifies required tools remains pending until evidence from those tools has been recorded. If the research stage returns prose instead of executing a required read, the agent retries the tool selection once. It then continues only within the established round limit.
 
 There is also a compatibility adjustment for `evaluate_worker_rules`. When an optional tags list is intended to be omitted but a local model supplies an empty object (`{}`), the graph normalizes that value to an omitted filter, allowing all configured rules to be evaluated. Other malformed filter values remain tool errors. This prevents a partially followed investigation plan from being incorrectly reported as complete.
@@ -82,7 +96,7 @@ Hypothesis assessment follows an additional validation process:
 * The assessor receives hypothesis claims in their original order, without internal IDs, and must return its reviews in that same order.
 * The graph maps each returned review to its corresponding stored hypothesis. If the number of reviews does not match the number of supplied hypotheses, assessment stops.
 * The graph also rejects reviews that claim a hypothesis is supported or weakened without providing evidence citations.
-* In a comparison between database and event-loop explanations, a causal finding requires component durations correlated to individual requests. Without that evidence, assessment stops rather than allowing the result to be rewritten as a generic report statement.
+* For comparisons between components and affected outcomes, causal reviews remain inconclusive unless the evidence correlates component durations to individual outcomes. This does not prevent the report from stating measured values, rule matches, or other supported observations.
 
 When one of these validation failures occurs, the graph records `status: assessment_failed`, stores the failure reason and gathered evidence IDs, returns an explicit message, and terminates before report synthesis. The gathered evidence remains available in thread state, but no completed `final_report` is produced. Unexpected runtime errors continue to raise normally.
 

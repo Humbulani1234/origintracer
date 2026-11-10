@@ -148,7 +148,7 @@ function StructuredValue({
         new Set(rows.flatMap((row) => Object.keys(row))),
       ).slice(0, 7);
       const table = (shownRows: ReportRecord[]) => (
-        <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border">
+        <div className="w-full max-w-full min-w-0 overflow-x-auto rounded-md border">
           <table className="min-w-full border-collapse text-left text-xs">
             <thead className="bg-muted/70 text-muted-foreground">
               <tr>
@@ -319,12 +319,12 @@ function ReportEvidence({ report }: { report: ReportRecord }) {
       typeof observation.summary === "string" &&
       observation.summary.trim() === summaryText.trim(),
   );
-  const hasLatencyDiagnostics = observations.some(
-    (item) => item.tool === "get_worker_latency_diagnostics",
+  const hasComponentDiagnostics = observations.some(
+    (item) => item.tool === "get_worker_component_diagnostics",
   );
   const otherFindings = findings.filter((finding) => {
     if (finding === summaryFinding) return false;
-    if (hasLatencyDiagnostics) {
+    if (hasComponentDiagnostics) {
       const statement = String(finding.statement ?? "");
       const generatedKind =
         finding.kind === "observed_measurements" ||
@@ -345,7 +345,7 @@ function ReportEvidence({ report }: { report: ReportRecord }) {
     nextSteps.length;
 
   return (
-    <div className="w-full min-w-0 max-w-3xl space-y-5 py-1">
+    <div className="w-full max-w-3xl min-w-0 space-y-5 py-1">
       {(!summaryRepeatsObservation || hasExplicitAnswer) && (
         <section>
           <MarkdownText compact>{summaryText}</MarkdownText>
@@ -385,7 +385,7 @@ function ReportEvidence({ report }: { report: ReportRecord }) {
               key={`${String(finding.statement ?? "finding")}-${index}`}
               className="min-w-0 rounded-lg border px-3 py-2.5"
             >
-              <div className="break-words text-sm leading-6">
+              <div className="text-sm leading-6 break-words">
                 <MarkdownText compact>
                   {String(finding.statement ?? "")}
                 </MarkdownText>
@@ -616,7 +616,6 @@ function Interrupt({
     return null;
   }
 
-
   return (
     <>
       {isAgentInboxInterruptSchema(interrupt) &&
@@ -702,7 +701,11 @@ export function AssistantMessage({
 }: {
   message: Message | undefined;
   isLoading: boolean;
-  handleRegenerate: (parentCheckpoint: Checkpoint | null | undefined) => void;
+  handleRegenerate?: (
+    parentCheckpoint: Checkpoint | null | undefined,
+    sourceMessage: Message,
+    sourceWorkerPid: number | undefined,
+  ) => void;
 }) {
   const content = message?.content ?? [];
   const contentString = getContentString(content);
@@ -736,7 +739,24 @@ export function AssistantMessage({
   const meta = message ? thread.getMessagesMetadata(message) : undefined;
   const threadInterrupt = thread.interrupt;
 
-  const parentCheckpoint = meta?.firstSeenState?.parent_checkpoint;
+  const precedingHumanMessage =
+    currentMessageIndex >= 0
+      ? thread.messages
+          .slice(0, currentMessageIndex)
+          .findLast((item) => item.type === "human")
+      : undefined;
+  const precedingHumanMetadata = precedingHumanMessage
+    ? thread.getMessagesMetadata(precedingHumanMessage)
+    : undefined;
+  const precedingHumanCheckpoint =
+    precedingHumanMetadata?.firstSeenState?.parent_checkpoint;
+  const storedWorkerPid =
+    precedingHumanMetadata?.firstSeenState?.values.worker_pid;
+  const parsedWorkerPid = Number(storedWorkerPid);
+  const precedingWorkerPid =
+    Number.isSafeInteger(parsedWorkerPid) && parsedWorkerPid > 0
+      ? parsedWorkerPid
+      : undefined;
   const anthropicStreamedToolCalls = Array.isArray(content)
     ? parseAnthropicStreamedToolCalls(content)
     : undefined;
@@ -793,7 +813,9 @@ export function AssistantMessage({
               <ReportEvidence report={report} />
             ) : hasStructuredActionResult ? (
               <ActionResultCard
-                actionName={String(proposedAction.name ?? "OriginTracer action")}
+                actionName={String(
+                  proposedAction.name ?? "OriginTracer action",
+                )}
                 result={actionResult}
               />
             ) : (
@@ -846,7 +868,18 @@ export function AssistantMessage({
                 content={contentString}
                 isLoading={isLoading}
                 isAiMessage={true}
-                handleRegenerate={() => handleRegenerate(parentCheckpoint)}
+                handleRegenerate={
+                  handleRegenerate &&
+                  precedingHumanMessage &&
+                  precedingHumanCheckpoint
+                    ? () =>
+                        handleRegenerate(
+                          precedingHumanCheckpoint,
+                          precedingHumanMessage,
+                          precedingWorkerPid,
+                        )
+                    : undefined
+                }
               />
             </div>
           </>

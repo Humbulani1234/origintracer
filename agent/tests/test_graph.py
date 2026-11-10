@@ -40,17 +40,20 @@ def test_latency_summary_labels_per_call_and_aggregate_durations() -> (
     None
 ):
     summary = _tool_result_summary(
-        "get_worker_latency_diagnostics",
+        "get_worker_component_diagnostics",
         {
-            "request_latency": {
-                "data": [
-                    {
-                        "node": "django::/slow/",
-                        "call_count": 240,
-                        "avg_duration_ms": 211.47,
-                        "total_duration_ms": 50752.883,
-                    }
-                ]
+            "service_measurements": {
+                "django": {
+                    "data": [
+                        {
+                            "node": "django::/slow/",
+                            "measurement_scope": "outcome",
+                            "call_count": 240,
+                            "avg_duration_ms": 211.47,
+                            "total_duration_ms": 50752.883,
+                        }
+                    ]
+                }
             }
         },
     )
@@ -60,6 +63,199 @@ def test_latency_summary_labels_per_call_and_aggregate_durations() -> (
         "total_duration_ms (aggregate across 240 calls)=50752.883"
         in summary
     )
+
+
+def test_component_diagnostics_summary_preserves_scope_and_trace_links():
+    summary = _tool_result_summary(
+        "get_worker_component_diagnostics",
+        {
+            "service_measurements": {
+                "nginx": {
+                    "data": [
+                        {
+                            "node": "nginx::/checkout",
+                            "measurement_scope": "outcome",
+                            "avg_duration_ms": 120.0,
+                            "call_count": 4,
+                        }
+                    ]
+                },
+                "asyncio": {
+                    "data": [
+                        {
+                            "node": "asyncio::worker",
+                            "measurement_scope": "component",
+                            "avg_duration_ms": 12.0,
+                            "call_count": 8,
+                        }
+                    ]
+                },
+            },
+            "service_events": {
+                "nginx": {
+                    "data": [{"trace_id": "trace-1"}],
+                    "trace_ids": ["trace-1"],
+                },
+                "asyncio": {
+                    "data": [{"trace_id": "trace-1"}],
+                    "trace_ids": ["trace-1"],
+                },
+            },
+            "shared_trace_ids": ["trace-1"],
+        },
+    )
+
+    assert "service_measurements nginx" in summary
+    assert "scope=outcome" in summary
+    assert "service_measurements asyncio" in summary
+    assert "scope=component" in summary
+    assert "shared trace IDs=['trace-1']" in summary
+
+
+def test_component_diagnostics_is_ranked_for_arbitrary_service_comparisons():
+    from origintracer_agent.tools import read_only_tool_catalog
+
+    catalog = read_only_tool_catalog(
+        "Compare Nginx vs asyncio as causes of slow responses"
+    )
+    names = [item["name"] for item in catalog]
+
+    assert names[0] == "get_worker_component_diagnostics"
+
+
+@pytest.mark.anyio
+async def test_component_diagnostics_queries_selected_services_and_scopes_rows(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    import origintracer_agent.tools as tools
+
+    calls = []
+    services = ["nginx", "asyncio", "gunicorn"]
+
+    async def query_worker(pid, query, worker_instance_id=None):
+        calls.append((pid, query, worker_instance_id))
+        service = (
+            next(
+                name
+                for name in services
+                if f'service = "{name}"' in query
+            )
+            if "service = " in query
+            else None
+        )
+        if query.startswith("SHOW latency"):
+            assert service is not None
+            return {
+                "result": {
+                    "metric": "latency",
+                    "data": [
+                        {
+                            "node": (
+                                f"{service}::/checkout"
+                                if service == "nginx"
+                                else f"{service}::worker"
+                            ),
+                            "service": service,
+                            "avg_duration_ms": 120.0,
+                            "call_count": 4,
+                        }
+                    ],
+                }
+            }
+        if query.startswith("SHOW events"):
+            assert service is not None
+            return {
+                "result": {
+                    "metric": "events",
+                    "data": [
+                        {
+                            "service": service,
+                            "trace_id": "trace-1",
+                        }
+                    ],
+                }
+            }
+        if query == "CAUSAL":
+            return {"result": {"metric": "causal", "data": []}}
+        if query == "SHOW rules":
+            return {"result": {"metric": "rules", "data": []}}
+        raise AssertionError(f"Unexpected query: {query}")
+
+    monkeypatch.setattr(tools, "query_worker", query_worker)
+    result = (
+        await tools.get_worker_component_diagnostics.coroutine(
+            SimpleNamespace(
+                state={
+                    "worker_pid": "499118",
+                    "worker_instance_id": "instance-a",
+                }
+            ),
+            services=services,
+            outcome_services=["nginx"],
+            limit=5,
+        )
+    )
+
+    assert {query for _, query, _ in calls} == {
+        'SHOW latency WHERE service = "nginx" LIMIT 5',
+        'SHOW latency WHERE service = "asyncio" LIMIT 5',
+        'SHOW latency WHERE service = "gunicorn" LIMIT 5',
+        'SHOW events WHERE service = "nginx" LIMIT 50',
+        'SHOW events WHERE service = "asyncio" LIMIT 50',
+        'SHOW events WHERE service = "gunicorn" LIMIT 50',
+        "CAUSAL",
+        "SHOW rules",
+    }
+    assert all(
+        pid == 499118 and instance_id == "instance-a"
+        for pid, _, instance_id in calls
+    )
+    assert (
+        result["result"]["service_measurements"]["nginx"][
+            "data"
+        ][0]["measurement_scope"]
+        == "outcome"
+    )
+    assert (
+        result["result"]["service_measurements"]["asyncio"][
+            "data"
+        ][0]["measurement_scope"]
+        == "component"
+    )
+    assert (
+        result["result"]["service_measurements"]["gunicorn"][
+            "data"
+        ][0]["measurement_scope"]
+        == "component"
+    )
+    assert result["result"]["shared_trace_ids"] == ["trace-1"]
+
+
+@pytest.mark.anyio
+async def test_component_diagnostics_rejects_missing_or_mismatched_selectors():
+    from types import SimpleNamespace
+
+    from langchain_core.tools import ToolException
+
+    from origintracer_agent.tools import (
+        get_worker_component_diagnostics,
+    )
+
+    runtime = SimpleNamespace(state={"worker_pid": "499118"})
+    with pytest.raises(
+        ToolException, match="at least one service"
+    ):
+        await get_worker_component_diagnostics.coroutine(runtime)
+    with pytest.raises(
+        ToolException, match="included in services"
+    ):
+        await get_worker_component_diagnostics.coroutine(
+            runtime,
+            services=["nginx"],
+            outcome_services=["asyncio"],
+        )
 
 
 def test_duration_scope_instruction_is_shared_across_request_types():
@@ -128,20 +324,23 @@ def test_duration_scope_instruction_is_shared_across_request_types():
 
 def test_latency_diagnostic_guidance_is_scoped_to_planned_tool():
     diagnostic_prompt = _research_prompt(
-        {"get_worker_latency_diagnostics"}
+        {"get_worker_component_diagnostics"}
     )
     general_prompt = _research_prompt(set())
 
-    assert "get_worker_latency_diagnostics" in diagnostic_prompt
-    assert "Inspect every" in diagnostic_prompt
     assert (
-        "measurement category and relevant rule match"
-        in diagnostic_prompt
+        "get_worker_component_diagnostics" in diagnostic_prompt
     )
+    assert "Inspect every" in diagnostic_prompt
+    assert "measurement category" in diagnostic_prompt
     assert "Django" not in diagnostic_prompt
     assert "asyncio" not in diagnostic_prompt
-    assert "get_worker_latency_diagnostics" not in general_prompt
-    assert "get_worker_latency_diagnostics" not in _plan_prompt()
+    assert (
+        "get_worker_component_diagnostics" not in general_prompt
+    )
+    assert (
+        "get_worker_component_diagnostics" not in _plan_prompt()
+    )
 
 
 def test_comparison_guidance_uses_measurement_scope_across_services():
@@ -533,7 +732,7 @@ def test_graph_inventory_policy_does_not_apply_to_verification_plan():
             {
                 "suggested_tools": [
                     "get_worker_graph",
-                    "get_worker_latency_diagnostics",
+                    "get_worker_component_diagnostics",
                 ]
             }
         ],
@@ -928,38 +1127,38 @@ def test_local_service_urls_are_code_defaults_and_env_can_override(
     )
 
 
-def test_latency_assessment_keeps_late_diagnostic_sections():
-    sections = (
-        "database_latency",
-        "database_events",
-        "request_latency",
-        "request_events",
-        "asyncio_latency",
-        "asyncio_events",
-        "causal_rule_matches",
-        "registered_causal_rules",
-    )
-    diagnostics = {
-        name: {
-            "metric": (
-                "latency"
-                if name.endswith("latency")
-                else "events"
-            ),
+def test_component_assessment_keeps_all_service_sections_bounded():
+    service_measurements = {
+        "asyncio": {
             "data": [
                 {
-                    "node": "asyncio::loop",
-                    "name": "asyncio.loop.tick",
-                    "probe": "asyncio.loop.tick",
+                    "node": f"asyncio::loop-{index}",
+                    "service": "asyncio",
+                    "measurement_scope": "component",
                     "avg_duration_ms": 10.5,
-                    "rule": "asyncio_event_loop_starvation",
-                    "confidence": 0.8,
-                    "explanation": "task steps average over 10 ms",
                 }
-                for _ in range(10)
-            ],
+                for index in range(12)
+            ]
         }
-        for name in sections
+    }
+    service_events = {
+        "asyncio": {
+            "data": [
+                {
+                    "probe": "asyncio.loop.tick",
+                    "trace_id": str(index),
+                }
+                for index in range(8)
+            ]
+        }
+    }
+    diagnostics = {
+        "service_measurements": service_measurements,
+        "system_measurements": {},
+        "service_events": service_events,
+        "causal_rule_matches": {"metric": "causal", "data": []},
+        "worker_active_rules": {"metric": "rules", "data": []},
+        "interpretation_limits": ["aggregate node data only"],
     }
     context = _assessment_context(
         {
@@ -972,7 +1171,7 @@ def test_latency_assessment_keeps_late_diagnostic_sections():
             "evidence": [
                 {
                     "evidence_id": "E001",
-                    "tool": "get_worker_latency_diagnostics",
+                    "tool": "get_worker_component_diagnostics",
                     "result": diagnostics,
                 }
             ],
@@ -981,16 +1180,18 @@ def test_latency_assessment_keeps_late_diagnostic_sections():
 
     result = context["evidence"][0]["result"]
     assert isinstance(result, dict)
-    assert set(sections).issubset(result)
-    assert len(result["database_events"]["data"]) == 3
+    assert set(diagnostics).issubset(result)
     assert (
-        result["asyncio_latency"]["data"][0]["avg_duration_ms"]
+        len(result["service_measurements"]["asyncio"]["data"])
+        == 10
+    )
+    assert (
+        result["service_measurements"]["asyncio"]["data"][0][
+            "avg_duration_ms"
+        ]
         == 10.5
     )
-    assert (
-        result["causal_rule_matches"]["data"][0]["rule"]
-        == "asyncio_event_loop_starvation"
-    )
+    assert len(result["service_events"]["asyncio"]["data"]) == 5
 
 
 @pytest.mark.anyio

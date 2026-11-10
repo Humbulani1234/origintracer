@@ -229,21 +229,21 @@ _FRAMEWORK_RULE_GUIDANCE = """
 ## Rule evidence
 - For problems covered by configured Django, asyncio, Gunicorn, Uvicorn,
   nginx, Celery or LangGraph rules, use `evaluate_worker_rules` or a
-  specialized diagnostic that returns live matches.
+  component diagnostic that returns live matches.
 - For a direct rule review, use `evaluate_worker_rules`.
 - Check registered rules before saying a rule is unavailable or did not match.
 - Distinguish an unconfigured rule from one that was registered but did not
   match at query time.
 - Report matches as detected patterns, not application root causes.
-- Do not use `get_worker_latency_diagnostics` unless latency or duration
-  evidence is relevant.
+- Use `get_worker_component_diagnostics` for requested latency or duration
+  comparisons across selected services or configured system aliases.
 """.strip()
 
-_LATENCY_DIAGNOSTIC_RESEARCH_GUIDANCE = """
-## Latency diagnostic evidence
-- Call `get_worker_latency_diagnostics` before assessing either explanation.
-- Inspect every measurement category and relevant rule match returned by the
-  diagnostic.
+_COMPONENT_DIAGNOSTIC_RESEARCH_GUIDANCE = """
+## Component diagnostic evidence
+- Use `get_worker_component_diagnostics` for latency comparisons across
+  caller-selected services and configured semantic system aliases.
+- Inspect every returned measurement category and relevant rule match.
 - Use explicit duration fields for latency claims, preserving their scope and
   aggregation.
 - Treat event timestamps as timestamps, not durations. Never subtract
@@ -415,8 +415,8 @@ def _research_prompt(
     planned_tools = planned_tools or set()
     if "evaluate_worker_rules" in planned_tools:
         parts.append(_FRAMEWORK_RULE_GUIDANCE)
-    if "get_worker_latency_diagnostics" in planned_tools:
-        parts.append(_LATENCY_DIAGNOSTIC_RESEARCH_GUIDANCE)
+    if "get_worker_component_diagnostics" in planned_tools:
+        parts.append(_COMPONENT_DIAGNOSTIC_RESEARCH_GUIDANCE)
     if "get_worker_stitched_trace" in planned_tools:
         parts.append(_TRACE_STITCH_GUIDANCE)
     elif planned_tools.intersection(
@@ -1668,86 +1668,55 @@ def _assessment_result_preview(
         return graph_preview
 
     if (
-        tool != "get_worker_latency_diagnostics"
-        or not isinstance(result, dict)
+        tool == "get_worker_component_diagnostics"
+        and isinstance(result, dict)
     ):
-        return result
-
-    row_limits = {
-        "database_latency": 5,
-        "database_events": 3,
-        "request_latency": 6,
-        "request_events": 3,
-        "asyncio_latency": 5,
-        "asyncio_events": 3,
-        "causal_rule_matches": 8,
-        "registered_causal_rules": 20,
-    }
-    diagnostics_preview: dict[str, Any] = {}
-    for name, limit in row_limits.items():
-        section = result.get(name)
-        if not isinstance(section, dict):
-            continue
-        section_preview = {
-            key: value
-            for key, value in section.items()
-            if key != "data"
+        preview: dict[str, Any] = {
+            "shared_trace_ids": result.get(
+                "shared_trace_ids", []
+            )
         }
-        rows = section.get("data")
-        if isinstance(rows, list):
-            fields: tuple[str, ...]
-            if name in {
-                "database_latency",
-                "request_latency",
-                "asyncio_latency",
-            }:
-                fields = (
-                    "node",
-                    "service",
-                    "type",
-                    "call_count",
-                    "avg_duration_ms",
-                    "total_duration_ms",
-                )
-            elif name == "causal_rule_matches":
-                fields = (
-                    "rule",
-                    "confidence",
-                    "explanation",
-                    "evidence",
-                )
-            elif name == "registered_causal_rules":
-                fields = ("rule", "name", "tag", "description")
-            else:
-                fields = (
-                    "probe",
-                    "service",
-                    "name",
-                    "trace_id",
-                    "ts",
-                )
-            section_preview["data"] = [
-                (
-                    {
-                        key: row[key]
-                        for key in fields
-                        if isinstance(row, dict) and key in row
-                    }
-                    if isinstance(row, dict)
-                    else row
-                )
-                for row in rows[:limit]
-            ]
-            if len(rows) > limit:
-                section_preview["omitted_rows"] = (
-                    len(rows) - limit
-                )
-        diagnostics_preview[name] = section_preview
-    if result.get("limits"):
-        diagnostics_preview["limits"] = result["limits"]
-    if not diagnostics_preview:
-        return result
-    return diagnostics_preview
+        for name, row_limit in (
+            ("service_measurements", 10),
+            ("system_measurements", 10),
+            ("service_events", 5),
+        ):
+            selector_map = result.get(name)
+            if not isinstance(selector_map, dict):
+                continue
+            sections = {}
+            for selector, section in selector_map.items():
+                if not isinstance(section, dict):
+                    sections[str(selector)] = section
+                    continue
+                data = section.get("data")
+                sections[str(selector)] = {
+                    key: value
+                    for key, value in section.items()
+                    if key != "data"
+                } | {
+                    "data": (
+                        data[:row_limit]
+                        if isinstance(data, list)
+                        else data
+                    )
+                }
+                if (
+                    isinstance(data, list)
+                    and len(data) > row_limit
+                ):
+                    sections[str(selector)]["omitted_rows"] = (
+                        len(data) - row_limit
+                    )
+            preview[name] = sections
+        for name in (
+            "causal_rule_matches",
+            "worker_active_rules",
+            "interpretation_limits",
+        ):
+            if name in result:
+                preview[name] = result[name]
+        return preview
 
 
 def _assessment_evidence_item(
@@ -1757,7 +1726,7 @@ def _assessment_evidence_item(
     tool = str(item.get("tool", ""))
     result = item.get("result")
     if tool in {
-        "get_worker_latency_diagnostics",
+        "get_worker_component_diagnostics",
         "get_worker_trace",
         "get_worker_stitched_trace",
         "get_worker_events",
@@ -5165,27 +5134,77 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
             + "; ".join(_row_text(row) for row in rows)
         )
 
-    if tool_name == "get_worker_latency_diagnostics":
+    if tool_name == "get_worker_component_diagnostics":
         sections = []
-        for name, value in result.items():
-            rows = _mapping_rows(value)
-            if rows is not None:
-                sections.append(
-                    f"{name}: {_rows_text(rows, 'result')}"
-                )
-            elif isinstance(value, list):
-                if name == "interpretation_limits":
-                    sections.extend(
-                        f"Limit: {str(item)[:220]}"
-                        for item in value[:4]
-                    )
-                else:
+        for category in (
+            "service_measurements",
+            "system_measurements",
+        ):
+            selectors = result.get(category, {})
+            if not isinstance(selectors, dict):
+                continue
+            for selector, section in selectors.items():
+                rows = _mapping_rows(section)
+                if rows is None:
                     sections.append(
-                        f"{name}: {_rows_text(value, 'item')}"
+                        f"{category} {selector}: no rows"
                     )
+                    continue
+                sample = []
+                for row in rows[:3]:
+                    if not isinstance(row, dict):
+                        continue
+                    sample.append(
+                        f"{row.get('node', 'unnamed')} "
+                        f"(scope={row.get('measurement_scope', 'unknown')}, "
+                        "avg_duration_ms (per-call average)="
+                        f"{row.get('avg_duration_ms', 'not returned')}, "
+                        f"call_count={row.get('call_count', 'not returned')}, "
+                        "total_duration_ms (aggregate across "
+                        f"{row.get('call_count', 'observed')} calls)="
+                        f"{row.get('total_duration_ms', 'not returned')})"
+                    )
+                sections.append(
+                    f"{category} {selector}: "
+                    + (
+                        "; ".join(sample)
+                        or "no measurement rows"
+                    )
+                )
+        event_sections = result.get("service_events", {})
+        if isinstance(event_sections, dict):
+            for service, section in event_sections.items():
+                rows = _mapping_rows(section)
+                trace_ids = (
+                    section.get("trace_ids", [])
+                    if isinstance(section, dict)
+                    else []
+                )
+                sections.append(
+                    f"events {service}: {len(rows or [])} sampled event(s), "
+                    f"trace IDs={trace_ids}"
+                )
+        if result.get("shared_trace_ids"):
+            sections.append(
+                f"shared trace IDs={result['shared_trace_ids']}"
+            )
+        matches = result.get("causal_rule_matches")
+        match_rows = _mapping_rows(matches)
+        if match_rows is not None:
+            sections.append(
+                "causal_rule_matches: "
+                + _rows_text(match_rows, "match")
+            )
+        active = result.get("worker_active_rules")
+        active_rows = _mapping_rows(active)
+        if active_rows is not None:
+            sections.append(
+                "worker_active_rules: "
+                + _rows_text(active_rows, "rule")
+            )
         return (
             "; ".join(sections)
-            or "No diagnostic sections returned"
+            or "No component diagnostics returned"
         )
 
     if tool_name == "evaluate_worker_rules":

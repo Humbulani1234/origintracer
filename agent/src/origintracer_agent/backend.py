@@ -683,6 +683,49 @@ def build_event_query(
     return f"SHOW events{where} LIMIT {limit}"
 
 
+def build_latency_query(
+    limit: int,
+    service: str | None = None,
+    system: str | None = None,
+) -> str:
+    """Build a duration-ranked latency query for a service or system.
+
+    Parameters
+    ----------
+    limit : int
+        Maximum number of rows, clamped to 1–100.
+    service : str, optional
+        Exact graph service name.
+    system : str, optional
+        Configured semantic system label.
+
+    Returns
+    -------
+    str
+        Read-only OriginTracer latency query.
+
+    Raises
+    ------
+    ToolException
+        If neither filter is supplied or a filter is unsafe.
+    """
+    filters = []
+    for field, value in (
+        ("service", service),
+        ("system", system),
+    ):
+        if value:
+            filters.append(
+                f"{field} = {_safe_filter(value, field)}"
+            )
+    if not filters:
+        raise ToolException(
+            "Provide a service name or configured system label."
+        )
+    where = f" WHERE {' AND '.join(filters)}"
+    return f"SHOW latency{where} LIMIT {max(1, min(int(limit), 100))}"
+
+
 def build_causal_query(tags: list[str] | None) -> str:
     """Build a causal-rules query with optional tag filtering.
 

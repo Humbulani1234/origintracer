@@ -197,7 +197,7 @@ export function CommandBar({
       {isAiMessage && !!handleRegenerate && (
         <TooltipIconButton
           disabled={isLoading}
-          tooltip="Refresh"
+          tooltip="Rerun this request"
           variant="ghost"
           onClick={handleRegenerate}
         >
@@ -207,7 +207,7 @@ export function CommandBar({
       {showEdit && (
         <TooltipIconButton
           disabled={isLoading}
-          tooltip="Edit"
+          tooltip="Edit and rerun from this message"
           variant="ghost"
           onClick={() => {
             setIsEditing?.(true);

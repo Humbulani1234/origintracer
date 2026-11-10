@@ -480,10 +480,10 @@
     "outputs": {
       "expected_status": "completed",
       "required_tools": [
-        "get_worker_latency_diagnostics"
+        "get_worker_component_diagnostics"
       ],
       "required_observation_tools": [
-        "get_worker_latency_diagnostics"
+        "get_worker_component_diagnostics"
       ],
       "min_evidence": 1,
       "min_hypotheses": 2,
@@ -520,12 +520,10 @@
     "outputs": {
       "expected_status": "completed",
       "any_tools": [
-        "evaluate_worker_rules",
-        "get_worker_latency_diagnostics"
+        "evaluate_worker_rules"
       ],
       "required_observation_any_tools": [
-        "evaluate_worker_rules",
-        "get_worker_latency_diagnostics"
+        "evaluate_worker_rules"
       ],
       "min_evidence": 1,
       "min_hypotheses": 0,
@@ -563,12 +561,10 @@
     "outputs": {
       "expected_status": "completed",
       "any_tools": [
-        "evaluate_worker_rules",
-        "get_worker_latency_diagnostics"
+        "evaluate_worker_rules"
       ],
       "required_observation_any_tools": [
-        "evaluate_worker_rules",
-        "get_worker_latency_diagnostics"
+        "evaluate_worker_rules"
       ],
       "min_evidence": 1,
       "min_hypotheses": 0,
@@ -605,12 +601,10 @@
     "outputs": {
       "expected_status": "completed",
       "any_tools": [
-        "evaluate_worker_rules",
-        "get_worker_latency_diagnostics"
+        "evaluate_worker_rules"
       ],
       "required_observation_any_tools": [
-        "evaluate_worker_rules",
-        "get_worker_latency_diagnostics"
+        "evaluate_worker_rules"
       ],
       "min_evidence": 1,
       "min_hypotheses": 0,
@@ -756,10 +750,10 @@
     "outputs": {
       "expected_status": "completed",
       "required_tools": [
-        "get_worker_latency_diagnostics"
+        "get_worker_component_diagnostics"
       ],
       "required_observation_tools": [
-        "get_worker_latency_diagnostics"
+        "get_worker_component_diagnostics"
       ],
       "min_evidence": 1,
       "max_evidence": 1,
@@ -823,7 +817,7 @@
         "get_worker_edges",
         "get_worker_hotspots",
         "get_worker_events",
-        "get_worker_latency_diagnostics"
+        "get_worker_component_diagnostics"
       ],
       "min_evidence": 1,
       "min_hypotheses": 0,

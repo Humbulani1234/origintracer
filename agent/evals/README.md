@@ -41,14 +41,16 @@ contain useful observations.
 The `django_database_vs_event_loop` case targets the Django example in
 [`applications/django`](../../applications/django/README.md). It expects the
 selected process to have Django database and asyncio instrumentation, plus the
-`database` semantic group used by `get_worker_database_hotspots`. Run the
-Django app with its `origintracer.yaml`, send database-backed and async traffic,
-wait for a graph snapshot upload, then set its process PID. A fresh heartbeat
-is needed for cases that ask about current reporting status; stale snapshots
-remain selectable for stored graph and event questions. A different application can run the general
-cases, but this database comparison needs equivalent query instrumentation and
-semantic configuration. The runner currently executes every case against one
-selected worker; run separate eval sessions when comparing different apps.
+`database` semantic group. The planner uses the generic
+`get_worker_component_diagnostics` tool to query the relevant service labels
+and semantic alias; there is no Django-versus-asyncio-specific comparison tool.
+Run the Django app with its `origintracer.yaml`, send database-backed and async
+traffic, wait for a graph snapshot upload, then set its process PID. A fresh
+heartbeat is needed for cases that ask about current reporting status; stale
+snapshots remain selectable for stored graph and event questions. Other
+applications can use the same diagnostics tool with their own exact service
+labels. The runner executes every case against one selected worker; run
+separate eval sessions when comparing different apps.
 
 Results depend on the workload present in that worker and on the configured
 Ollama model. The pathway grader checks stable behavior such as tool selection

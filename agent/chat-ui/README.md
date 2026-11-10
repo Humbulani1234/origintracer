@@ -52,6 +52,10 @@ used to build or run the UI. For static deployments, set it before building;
 - The app shows investigation output in the conversation and supports the
   agent's worker-scope and action-approval prompts.
 - The backend API key stays on the Next.js server for worker discovery.
+- The main composer sends a new message. Editing a prior prompt or rerunning an
+  answer starts a branch from the checkpoint before that prompt; it does not
+  mutate the saved conversation history. Rerun replays the original user
+  request, while Edit opens an inline editor for that request.
 
 ## Inline investigation results
 
@@ -69,8 +73,8 @@ from the model's prose. The mapping lives in
   canvas.
 - `get_worker_events` and `get_worker_database_events` render event tables.
 - `get_worker_trace` and `get_worker_stitched_trace` render trace stages.
-- `get_worker_latency_diagnostics` renders separate database, request, and
-  asyncio measurement tables plus detected rule cards.
+- `get_worker_component_diagnostics` renders per-service and per-system
+  measurement tables, sampled events, shared trace IDs, and detected rules.
 - `evaluate_worker_rules` and `get_worker_causal_history` render rule cards.
 
 Ordinary findings and explanation checks remain conversational text. Detailed

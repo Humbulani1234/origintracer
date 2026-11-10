@@ -196,9 +196,22 @@ export function Thread() {
 
   const handleRegenerate = (
     parentCheckpoint: Checkpoint | null | undefined,
+    sourceMessage: Message,
+    sourceWorkerPid: number | undefined,
   ) => {
+    if (!parentCheckpoint) return;
+
+    const replayMessage: Message = {
+      id: uuidv4(),
+      type: "human",
+      content: sourceMessage.content,
+    };
     stream.submit(
-      { worker_pid: workerPid ? Number(workerPid) : undefined },
+      {
+        messages: [replayMessage],
+        worker_pid:
+          sourceWorkerPid ?? (workerPid ? Number(workerPid) : undefined),
+      },
       {
         checkpoint: parentCheckpoint,
         streamMode: ["values"],

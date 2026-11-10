@@ -13,6 +13,7 @@ from origintracer_agent.backend import (
     build_causal_query,
     build_diff_query,
     build_event_query,
+    build_latency_query,
     build_trace_query,
     evaluate_and_record_rules,
     get_causal_history,
@@ -412,178 +413,239 @@ async def get_worker_database_events(
 
 
 @tool
-async def get_worker_latency_diagnostics(
-    runtime: ToolRuntime[Any], limit: int = 5
+async def get_worker_component_diagnostics(
+    runtime: ToolRuntime[Any],
+    services: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Exact graph service labels to inspect, such as nginx or "
+                "asyncio. Use labels present in the worker graph."
+            ),
+            max_length=5,
+        ),
+    ] = None,
+    systems: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Configured semantic system labels to inspect, such as "
+                "database. Use for graph nodes grouped by a configured alias."
+            ),
+            max_length=5,
+        ),
+    ] = None,
+    outcome_services: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Optional subset of services whose measurements represent "
+                "the affected request or outcome."
+            ),
+            max_length=5,
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Field(description="Rows per section, clamped to 1–10."),
+    ] = 5,
 ) -> dict[str, Any]:
-    """Gather evidence for a database-versus-event-loop latency comparison.
+    """Read latency and event evidence for caller-selected worker services.
 
-    The result combines duration-ranked database nodes, Django request-duration nodes, SQL
-    query events, asyncio durations and events, and live causal-rule matches. Event rows
-    have timestamps rather than per-event durations, so compare only rows with the same
-    trace ID. Tick activity alone cannot prove or rule out starvation. Missing request nodes
-    or database rows are data limitations, not evidence that the work was fast or absent.
+    This generic diagnostic supports arbitrary graph service labels and
+    configured semantic system labels. It returns aggregate node measurements
+    separately from sampled events, and reports shared trace IDs without
+    inferring request-level causation.
 
     Parameters
     ----------
     runtime : ToolRuntime
         Trusted graph state containing the selected worker identity.
+    services : list[str], optional
+        Exact graph service labels, such as ``nginx`` or ``asyncio``.
+    systems : list[str], optional
+        Configured semantic system labels, such as ``database``.
+    outcome_services : list[str], optional
+        Services whose graph nodes represent the affected request or outcome.
     limit : int, default=5
-        Maximum rows requested from each bounded result, clamped to 1–10.
+        Maximum latency rows per selector and event rows per service, clamped
+        to 1–10.
 
     Returns
     -------
     dict[str, Any]
-        Bounded database, request, asyncio, event, and causal-rule observations with
-        interpretation limits.
+        Scoped latency rows, per-service events, shared trace IDs, and current
+        causal-rule observations.
+
+    Raises
+    ------
+    ToolException
+        If no selectors are supplied, a selector is invalid, or a selected
+        worker identity is unavailable.
     """
+    selected_services = list(dict.fromkeys(services or []))
+    selected_systems = list(dict.fromkeys(systems or []))
+    selected_outcomes = set(outcome_services or [])
+    if not selected_services and not selected_systems:
+        raise ToolException(
+            "Provide at least one service or configured system to inspect."
+        )
+    if len(selected_services) + len(selected_systems) > 5:
+        raise ToolException(
+            "Inspect no more than five services and systems in one call."
+        )
+    if not selected_outcomes.issubset(selected_services):
+        raise ToolException(
+            "outcome_services must be included in services."
+        )
+
     pid = _pid(runtime)
+    instance_id = _instance_id(runtime)
     bounded_limit = max(1, min(limit, 10))
-    database_latency_query = (
-        'SHOW latency WHERE system = "database" LIMIT '
-        f"{bounded_limit}"
-    )
-    database_events_query = build_event_query(
-        bounded_limit,
-        service="django",
-        probe="django.db.query",
-    )
-    # The Django semantic group includes its asyncio nodes. Query that group,
-    # then keep only asyncio rows because the DSL's service filter resolves
-    # semantic labels rather than arbitrary service names.
-    asyncio_latency_query = (
-        f'SHOW latency WHERE system = "django" LIMIT '
-        f"{max(bounded_limit, 50)}"
-    )
-    # The query DSL resolves service filters as semantic labels. Fetch a
-    # bounded sample without that filter, then select asyncio rows locally.
-    asyncio_events_query = build_event_query(100)
-    (
-        database_latency,
-        database_events,
-        asyncio_latency,
-        asyncio_events,
-        causal_rules,
-        registered_rules,
-    ) = await asyncio.gather(
-        query_worker(
-            pid, database_latency_query, _instance_id(runtime)
+    requests: list[tuple[str, str, Any]] = []
+    for service in selected_services:
+        latency_query = build_latency_query(
+            bounded_limit, service=service
+        )
+        events_query = build_event_query(
+            min(max(bounded_limit * 10, 20), 100),
+            service=service,
+        )
+        requests.append(
+            ("service_latency", service, latency_query)
+        )
+        requests.append(
+            ("service_events", service, events_query)
+        )
+    for system in selected_systems:
+        requests.append(
+            (
+                "system_latency",
+                system,
+                build_latency_query(
+                    bounded_limit, system=system
+                ),
+            )
+        )
+
+    query_results = await asyncio.gather(
+        *(
+            query_worker(pid, query, instance_id)
+            for _, _, query in requests
         ),
-        query_worker(
-            pid, database_events_query, _instance_id(runtime)
-        ),
-        query_worker(
-            pid, asyncio_latency_query, _instance_id(runtime)
-        ),
-        query_worker(
-            pid, asyncio_events_query, _instance_id(runtime)
-        ),
-        query_worker(
-            pid, build_causal_query(None), _instance_id(runtime)
-        ),
-        query_worker(pid, "SHOW rules", _instance_id(runtime)),
+        query_worker(pid, build_causal_query(None), instance_id),
+        query_worker(pid, "SHOW rules", instance_id),
     )
-    asyncio_latency_result = asyncio_latency.get(
-        "result", asyncio_latency
-    )
-    if isinstance(asyncio_latency_result, dict) and isinstance(
-        asyncio_latency_result.get("data"), list
+    service_measurements: dict[str, Any] = {}
+    system_measurements: dict[str, Any] = {}
+    service_events: dict[str, Any] = {}
+    for (kind, selector, _), response in zip(
+        requests, query_results[: len(requests)]
     ):
-        asyncio_latency_result = {
-            **asyncio_latency_result,
-            "data": [
-                row
-                for row in asyncio_latency_result["data"]
-                if isinstance(row, dict)
-                and row.get("service") == "asyncio"
-            ][:bounded_limit],
-        }
-    asyncio_events_result = asyncio_events.get(
-        "result", asyncio_events
-    )
-    request_latency_result = asyncio_latency.get(
-        "result", asyncio_latency
-    )
-    if isinstance(request_latency_result, dict) and isinstance(
-        request_latency_result.get("data"), list
-    ):
-        request_latency_result = {
-            **request_latency_result,
-            "data": [
-                row
-                for row in request_latency_result["data"]
-                if isinstance(row, dict)
-                and row.get("service") == "django"
-                and str(row.get("node", ""))
-                .split("::", 1)[-1]
-                .startswith("/")
-            ],
-        }
-    request_events_result = asyncio_events.get(
-        "result", asyncio_events
-    )
-    if isinstance(request_events_result, dict) and isinstance(
-        request_events_result.get("data"), list
-    ):
-        request_events_result = {
-            **request_events_result,
-            "data": [
-                row
-                for row in request_events_result["data"]
-                if isinstance(row, dict)
-                and row.get("service") == "django"
-                and row.get("probe")
-                in {
-                    "request.entry",
-                    "request.exit",
+        payload = response.get("result", response)
+        if not isinstance(payload, dict):
+            payload = (
+                {"data": payload}
+                if isinstance(payload, list)
+                else {}
+            )
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            rows = []
+        if kind == "service_events":
+            events = [
+                row for row in rows if isinstance(row, dict)
+            ][-bounded_limit:]
+            service_events[selector] = {
+                "service": selector,
+                "data": events,
+                "trace_ids": list(
+                    dict.fromkeys(
+                        str(row["trace_id"])
+                        for row in events
+                        if row.get("trace_id")
+                    )
+                ),
+            }
+            continue
+
+        scope = "component" if kind == "system_latency" else None
+        annotated_rows = []
+        for row in rows[:bounded_limit]:
+            if not isinstance(row, dict):
+                continue
+            node_name = str(row.get("node", "")).split("::", 1)[
+                -1
+            ]
+            row_scope = scope or (
+                "outcome"
+                if selector in selected_outcomes
+                or node_name.startswith("/")
+                else "component"
+            )
+            annotated_rows.append(
+                {
+                    **row,
+                    "component": selector,
+                    "measurement_scope": row_scope,
                 }
-            ][-bounded_limit:],
+            )
+        section = {
+            **payload,
+            "selector": selector,
+            "measurement_scope": scope
+            or (
+                "outcome"
+                if selector in selected_outcomes
+                else "component"
+            ),
+            "data": annotated_rows,
         }
-    if isinstance(asyncio_events_result, dict) and isinstance(
-        asyncio_events_result.get("data"), list
-    ):
-        asyncio_events_result = {
-            **asyncio_events_result,
-            "data": [
-                row
-                for row in asyncio_events_result["data"]
-                if isinstance(row, dict)
-                and row.get("service") == "asyncio"
-            ][-bounded_limit:],
-        }
+        if kind == "service_latency":
+            service_measurements[selector] = section
+        else:
+            system_measurements[selector] = section
+
+    trace_sets = [
+        set(section["trace_ids"])
+        for section in service_events.values()
+        if section.get("trace_ids")
+    ]
+    shared_trace_ids = (
+        sorted(set.intersection(*trace_sets))
+        if len(trace_sets) > 1
+        else []
+    )
+    causal_response = query_results[-2].get(
+        "result", query_results[-2]
+    )
+    active_rules_response = query_results[-1].get(
+        "result", query_results[-1]
+    )
     return {
         "source": "OriginTracer stored snapshot latency diagnostics",
         "worker_pid": str(pid),
-        "query": "database and asyncio latency/events",
+        "query": "service/system latency and service events",
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "result": {
-            "database_latency": database_latency.get(
-                "result", database_latency
-            ),
-            "database_events": database_events.get(
-                "result", database_events
-            ),
-            "request_latency": request_latency_result,
-            "request_events": request_events_result,
-            "asyncio_latency": asyncio_latency_result,
-            "asyncio_events": asyncio_events_result,
-            "causal_rule_matches": causal_rules.get(
-                "result", causal_rules
-            ),
-            "registered_causal_rules": registered_rules.get(
-                "result", registered_rules
-            ),
+            "service_measurements": service_measurements,
+            "system_measurements": system_measurements,
+            "service_events": service_events,
+            "shared_trace_ids": shared_trace_ids,
+            "causal_rule_matches": causal_response,
+            "worker_active_rules": active_rules_response,
             "interpretation_limits": [
                 (
-                    "Latency rows report aggregate node durations; event rows "
-                    "do not report per-event duration."
+                    "Latency values are graph-node averages or aggregates "
+                    "across observed calls, not per-request durations."
                 ),
                 (
-                    "Only compare events with the same trace_id; timestamps "
-                    "from different traces are unrelated."
+                    "A shared trace ID groups recorded events; inspect its "
+                    "trace before drawing timing or causal conclusions."
                 ),
                 (
-                    "Asyncio tick frequency alone does not prove or rule out "
-                    "event-loop starvation."
+                    "Event timestamps do not provide event durations, and "
+                    "empty service data does not prove the service is absent."
                 ),
             ],
         },
@@ -1050,14 +1112,35 @@ READ_ONLY_TOOL_PROFILES = (
         ),
     ),
     ToolProfile(
-        get_worker_latency_diagnostics,
-        "latency_diagnostics",
+        get_worker_component_diagnostics,
+        "component_latency_diagnostics",
         (
+            "compare",
+            " versus ",
+            " vs ",
             "latency",
             "duration",
             "slow request",
             "compare bottlenecks",
-            "event loop starvation",
+            "compare services",
+            "compare components",
+            "service latency",
+            "component latency",
+        ),
+        assessment_guidance=(
+            "get_worker_component_diagnostics reads aggregate latency rows "
+            "for caller-selected exact service labels and configured system "
+            "aliases, plus sampled events for selected services. It marks "
+            "outcome_services as outcome scope; other rows are component "
+            "scope. Shared trace IDs identify events to inspect, not proof "
+            "of causal contribution. Use get_worker_trace for a relevant "
+            "trace. Empty results do not prove a service is absent."
+        ),
+        research_guidance=(
+            "For service comparisons, pass exact service labels from the "
+            "selected worker's graph. Use `systems` only for configured "
+            "semantic aliases such as database. Mark a service as an outcome "
+            "only when the request identifies it as the affected operation."
         ),
     ),
     ToolProfile(

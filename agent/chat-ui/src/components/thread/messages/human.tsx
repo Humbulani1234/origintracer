@@ -64,9 +64,19 @@ export function HumanMessage({
           const values = meta?.firstSeenState?.values;
           if (!values) return prev;
 
+          const messages = [...(values.messages ?? [])];
+          const editedIndex = messages.findIndex(
+            (existing) => message.id != null && existing.id === message.id,
+          );
+          if (editedIndex >= 0) {
+            messages[editedIndex] = newMessage;
+          } else {
+            messages.push(newMessage);
+          }
+
           return {
             ...values,
-            messages: [...(values.messages ?? []), newMessage],
+            messages,
           };
         },
       },
@@ -80,7 +90,12 @@ export function HumanMessage({
         isEditing && "w-full max-w-xl",
       )}
     >
-      <div className={cn("flex w-full min-w-0 flex-col gap-2", isEditing && "w-full")}>
+      <div
+        className={cn(
+          "flex w-full min-w-0 flex-col gap-2",
+          isEditing && "w-full",
+        )}
+      >
         {isEditing ? (
           <EditableContent
             value={value}
@@ -111,7 +126,7 @@ export function HumanMessage({
             )}
             {/* Render text if present, otherwise fallback to file/image name */}
             {contentString ? (
-              <p className="bg-muted ml-auto w-fit max-w-[min(85%,48rem)] rounded-3xl px-4 py-2 text-left whitespace-pre-wrap break-words [text-wrap:pretty]">
+              <p className="bg-muted ml-auto w-fit max-w-[min(85%,48rem)] rounded-3xl px-4 py-2 text-left [text-wrap:pretty] break-words whitespace-pre-wrap">
                 {contentString}
               </p>
             ) : null}

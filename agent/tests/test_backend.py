@@ -156,6 +156,26 @@ def test_query_builders_reject_unsafe_filters_and_allow_n_plus_one_tag():
         backend.build_trace_query('trace" OR true')
 
 
+def test_latency_query_builder_supports_service_and_system_filters():
+    assert (
+        backend.build_latency_query(5, service="nginx")
+        == 'SHOW latency WHERE service = "nginx" LIMIT 5'
+    )
+    assert (
+        backend.build_latency_query(500, system="database")
+        == 'SHOW latency WHERE system = "database" LIMIT 100'
+    )
+
+    with pytest.raises(
+        ToolException, match="service name or configured"
+    ):
+        backend.build_latency_query(5)
+    with pytest.raises(
+        ToolException, match="service must contain"
+    ):
+        backend.build_latency_query(5, service='nginx" OR true')
+
+
 @pytest.mark.parametrize("value", [None, "abc", 0, -1, True])
 def test_pid_validation_rejects_values_that_cannot_select_a_worker(
     value,
