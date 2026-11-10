@@ -558,6 +558,7 @@ def _init_uploader(
             endpoint=cfg.endpoint,
             api_key=cfg.api_key,
             flush_interval=cfg.flush_interval,
+            snapshot_interval=cfg.snapshot_interval,
             max_batch_size=500,
         )
         uploader.bind_engine(engine)  # give uploader the engine

@@ -455,6 +455,10 @@ def _show_llm_content(
                 "name": event.name,
                 "trace_id": event.trace_id,
                 "span_id": event.span_id,
+                "parent_span_id": event.parent_span_id,
+                "investigation_id": metadata.get(
+                    "investigation_id"
+                ),
                 "content": content,
                 "truncated": bool(
                     metadata.get(f"{field}_truncated")
@@ -504,6 +508,10 @@ def _show_tool_content(
                 "name": event.name,
                 "trace_id": event.trace_id,
                 "span_id": event.span_id,
+                "parent_span_id": event.parent_span_id,
+                "investigation_id": metadata.get(
+                    "investigation_id"
+                ),
                 "kind": kind,
                 "content": content,
                 "truncated": bool(

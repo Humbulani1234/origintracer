@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 function shortTrace(traceId) {
   if (!traceId) return "—";
   return traceId.length > 18 ? `${traceId.slice(0, 18)}…` : traceId;
@@ -449,7 +451,7 @@ function ContentBody({ content, isTool }) {
 /**
  * Display opt-in LangGraph content captures without widening the event table.
  * The worker query decides what content is available; this view only renders
- * already-redacted, bounded previews returned by the selected live process.
+ * already-redacted, bounded previews returned for the selected stored process instance.
  */
 export default function ContentView({ kind, rows }) {
   const isTool = kind === "tool";
@@ -457,6 +459,66 @@ export default function ContentView({ kind, rows }) {
   const empty = isTool
     ? "No captured tool content for this worker."
     : "No captured LLM content for this worker.";
+  const traces = new Map();
+  for (const [index, row] of (rows ?? []).entries()) {
+    const traceId = row.trace_id ?? "unassociated";
+    const group = traces.get(traceId)
+      ?? { id: traceId, rows: [], first: Infinity, latest: 0,
+        investigationIds: new Set() };
+    group.rows.push({ row, index });
+    if (row.investigation_id) {
+      group.investigationIds.add(row.investigation_id);
+    }
+    const timestamp = Number(row.ts) || 0;
+    if (timestamp) {
+      group.first = Math.min(group.first, timestamp);
+      group.latest = Math.max(group.latest, timestamp);
+    }
+    traces.set(traceId, group);
+  }
+  const traceGroups = [...traces.values()].map((group) => ({
+    ...group,
+    // The backend returns newest-first so it can efficiently bound recent
+    // captures. Display each selected trace in execution order instead.
+    rows: [...group.rows].sort((a, b) => {
+      const aTime = Number(a.row.ts) || 0;
+      const bTime = Number(b.row.ts) || 0;
+      return aTime - bTime || a.index - b.index;
+    }),
+    investigationId: group.investigationIds.size === 1
+      ? [...group.investigationIds][0]
+      : null,
+  })).sort((a, b) => b.latest - a.latest);
+  const investigations = new Map();
+  for (const group of traceGroups) {
+    if (!group.investigationId) continue;
+    const investigation = investigations.get(group.investigationId)
+      ?? { id: group.investigationId, traces: [], latest: 0 };
+    investigation.traces.push(group);
+    investigation.latest = Math.max(investigation.latest, group.latest);
+    investigations.set(group.investigationId, investigation);
+  }
+  const relatedInvestigations = [...investigations.values()]
+    .filter((investigation) => investigation.traces.length > 1)
+    .sort((a, b) => b.latest - a.latest);
+  const relatedInvestigationIds = new Set(
+    relatedInvestigations.map((investigation) => investigation.id),
+  );
+  const standaloneTraces = traceGroups.filter(
+    (group) => !relatedInvestigationIds.has(group.investigationId),
+  );
+  const [selectedTraceId, setSelectedTraceId] = useState(null);
+  const [followLatest, setFollowLatest] = useState(true);
+  const selectedGroup = followLatest
+    ? traceGroups[0]
+    : traceGroups.find((group) => group.id === selectedTraceId)
+      ?? traceGroups[0];
+
+  useEffect(() => {
+    if (followLatest || !selectedTraceId || !traces.has(selectedTraceId)) {
+      setSelectedTraceId(traceGroups[0]?.id ?? null);
+    }
+  }, [rows, selectedTraceId, followLatest]);
 
   if (!rows?.length) {
     return (
@@ -470,13 +532,88 @@ export default function ContentView({ kind, rows }) {
     );
   }
 
+  const selectedRows = selectedGroup?.rows ?? [];
+  const startedAt = Number.isFinite(selectedGroup?.first)
+    ? new Date(selectedGroup.first * 1000).toLocaleString()
+    : "time unavailable";
   return (
     <div style={{ padding: 14 }}>
-      <div style={{ marginBottom: 12, fontFamily: "monospace", fontSize: 10,
-        color: "var(--muted)", letterSpacing: "0.06em" }}>
-        {rows.length} captured {title} {rows.length === 1 ? "entry" : "entries"}
+      <div style={{ display: "flex", alignItems: "center", gap: 10,
+        flexWrap: "wrap", marginBottom: 12 }}>
+        <label htmlFor={`${kind}-trace-select`} style={{ color: "var(--muted)",
+          fontFamily: "monospace", fontSize: 10 }}>TRACE / RUN</label>
+        <select
+          id={`${kind}-trace-select`}
+          value={selectedGroup?.id ?? ""}
+          onChange={(event) => {
+            setSelectedTraceId(event.target.value);
+            setFollowLatest(false);
+          }}
+          style={{ maxWidth: "100%", color: "var(--text)", background: "var(--bg2)",
+            border: "1px solid var(--border)", borderRadius: 4, padding: "5px 8px",
+            fontFamily: "monospace", fontSize: 10 }}
+        >
+          {standaloneTraces.map((group) => {
+            const time = Number.isFinite(group.first)
+              ? new Date(group.first * 1000).toLocaleString()
+              : "time unavailable";
+            return (
+              <option key={group.id} value={group.id}>
+                {time} · {shortTrace(group.id)} · {group.rows.length} entries
+              </option>
+            );
+          })}
+          {relatedInvestigations.map((investigation) => (
+            <optgroup
+              key={investigation.id}
+              label={`Investigation ${shortTrace(investigation.id)} · ${investigation.traces.length} runs`}
+            >
+              {[...investigation.traces]
+                .sort((a, b) => a.first - b.first)
+                .map((group, index) => {
+                  const time = Number.isFinite(group.first)
+                    ? new Date(group.first * 1000).toLocaleString()
+                    : "time unavailable";
+                  return (
+                    <option key={group.id} value={group.id}>
+                      Run {index + 1} · {time} · {shortTrace(group.id)} · {group.rows.length} entries
+                    </option>
+                  );
+                })}
+            </optgroup>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => setFollowLatest(true)}
+          disabled={followLatest}
+          style={{ color: followLatest ? "var(--muted)" : "var(--accent)",
+            background: "var(--bg)", border: "1px solid var(--border)",
+            borderRadius: 4, padding: "5px 8px", fontFamily: "monospace",
+            fontSize: 10, cursor: followLatest ? "default" : "pointer" }}
+        >
+          {followLatest ? "● latest" : "follow latest"}
+        </button>
+        <span style={{ color: "var(--muted)", fontFamily: "monospace",
+          fontSize: 10, marginLeft: "auto" }}>
+          {selectedRows.length} of {rows.length} captured {title} entries · started {startedAt}
+        </span>
       </div>
-      {rows.map((row, index) => {
+      <div style={{ marginBottom: 12, padding: "8px 10px",
+        borderLeft: "3px solid var(--amber)", background: "var(--bg2)",
+        color: "var(--muted)", fontFamily: "monospace", fontSize: 10 }}>
+        {selectedGroup?.investigationId
+          && relatedInvestigationIds.has(selectedGroup.investigationId)
+          ? <>Investigation <span title={selectedGroup.investigationId}
+            style={{ color: "var(--text)" }}>
+            {shortTrace(selectedGroup.investigationId)}
+          </span> · </>
+          : null}
+        Trace <span title={selectedGroup?.id} style={{ color: "var(--text)" }}>
+          {shortTrace(selectedGroup?.id)}
+        </span> · started {startedAt}
+      </div>
+      {selectedRows.map(({ row, index }) => {
         const label = isTool ? row.kind ?? "content" : row.probe ?? "content";
         const truncated = row.truncated ? " · truncated" : "";
         return (

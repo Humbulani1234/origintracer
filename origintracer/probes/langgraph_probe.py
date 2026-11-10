@@ -31,8 +31,10 @@ Framework metadata
 ------------------
 LangGraph-specific facts such as node name, step, triggers, path, and checkpoint
 namespace remain event metadata. They are intentionally interpreted only by
-LangGraph rules or research tooling. Inputs and outputs are represented by keys
-or bounded summaries so this probe does not copy arbitrary application state.
+LangGraph rules or research tooling. The active agent ``investigation_id`` is
+also recorded as metadata to group related runs while keeping each ``trace_id``
+as a distinct execution. Inputs and outputs are represented by keys or bounded
+summaries so this probe does not copy arbitrary application state.
 
 Registration
 ------------
@@ -70,7 +72,7 @@ from langchain_core.tracers.context import (
     register_configure_hook,
 )
 
-from ..context.vars import get_trace_id
+from ..context.vars import get_investigation_id, get_trace_id
 from ..core.event_schema import NormalizedEvent, ProbeTypes
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
@@ -338,6 +340,7 @@ def _framework_metadata(
     """Select useful scheduler facts without copying arbitrary callback state."""
     source = metadata or {}
     keys = (
+        "investigation_id",
         "langgraph_node",
         "langgraph_step",
         "langgraph_triggers",
@@ -383,11 +386,21 @@ def _remember_run(
             or (parent.get("trace_id") if parent else None)
             or str(run_id)
         )
+        investigation_id = (
+            get_investigation_id()
+            or (
+                parent.get("investigation_id")
+                if parent
+                else None
+            )
+            or (metadata or {}).get("investigation_id")
+        )
         entry = {
             "t0": time.perf_counter(),
             "name": name,
             "kind": kind,
             "trace_id": trace_id,
+            "investigation_id": investigation_id,
             "parent_span_id": parent_span_id,
             "framework_metadata": _framework_metadata(metadata),
             **state,
@@ -422,10 +435,14 @@ def _fallback_run(
             or (parent.get("trace_id") if parent else None)
             or str(run_id)
         )
+        investigation_id = get_investigation_id() or (
+            parent.get("investigation_id") if parent else None
+        )
     return {
         "name": name,
         "kind": kind,
         "trace_id": trace_id,
+        "investigation_id": investigation_id,
         "parent_span_id": (
             str(parent_run_id) if parent_run_id else None
         ),
@@ -454,6 +471,10 @@ def _emit_run_event(
     if "is_langgraph_root" in entry:
         stable_metadata["is_langgraph_root"] = entry[
             "is_langgraph_root"
+        ]
+    if entry.get("investigation_id"):
+        stable_metadata["investigation_id"] = entry[
+            "investigation_id"
         ]
 
     event = NormalizedEvent.now(

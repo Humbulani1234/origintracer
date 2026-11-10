@@ -60,15 +60,18 @@ Install Ollama using the instructions for your operating system, start its servi
 
 ```bash
 ollama serve
-ollama pull qwen2.5:7b or any model of your choice
+ollama pull qwen2.5:7b
 ```
+
+To use another tool-calling model, pull it separately and set its name in
+`OLLAMA_MODEL` below.
 
 ## Configure the server
 
 Create the environment file and add the credentials required by Agent Server:
 
 ```bash
-touch env.example
+cp .env.example .env
 ```
 
 At minimum, review:
@@ -76,7 +79,7 @@ At minimum, review:
 ```dotenv
 LANGSMITH_API_KEY=your-key-for-agent-server
 LANGSMITH_TRACING=false
-OLLAMA_MODEL=qwen2.5:7b or any model of your choice
+OLLAMA_MODEL=qwen2.5:7b
 OLLAMA_BASE_URL=http://host.docker.internal:11434
 ORIGINTRACER_ENDPOINT=http://host.docker.internal:8001
 ```
@@ -94,7 +97,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8001 --log-level info
 If the host firewall blocks Docker bridge traffic, allow the Agent Server's Docker subnet to reach the backend port, and for the default stack network used by this example:
 
 ```bash
-sudo ufw allow from 172.19.0.0/16 to any port 8001 proto tcp
+sudo ufw allow from <docker network> to any port 8001 proto tcp
 ```
 
 Ollama must likewise accept connections from the container. If it is running on another machine, set `OLLAMA_BASE_URL` to that machine's reachable address.
@@ -159,8 +162,10 @@ uvicorn personal_assistant.manual_server:app \
 
 These settings control different layers of concurrency. `--workers 1` starts one Uvicorn process, while `N_JOBS_PER_WORKER=1` permits only one active graph run in that process. If another request arrives, it waits for the current run to finish. This is the recommended configuration when stepping through probe callbacks with `pdb`.
 
-The `--env-file env.example` option loads `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, and `ORIGINTRACER_ENDPOINT` before Uvicorn imports the graph and constructs its
-`ChatOllama` model. Without it, the manual server does not automatically read `env.example` and defaults to Ollama at `http://localhost:11434` and the optional OriginTracer backend at `http://localhost:8001`.
+The `--env-file .env` option loads `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, and
+`ORIGINTRACER_ENDPOINT` before Uvicorn imports the graph and constructs its
+model. Without it, Uvicorn does not automatically load `.env`; the server then
+uses its code defaults.
 
 To override an address for one server session, export it before starting Uvicorn; an existing server must be restarted after changing these values:
 

@@ -27,6 +27,17 @@ def current_worker_identity() -> tuple[str, int]:
     The PID check makes the identity fork-safe: a child receives a fresh
     instance ID on its first call, even if this module was imported by its
     parent process.
+
+    Returns
+    -------
+    tuple[str, int]
+        Stable instance ID for this process lifetime and its operating-system
+        PID.
+
+    Notes
+    -----
+    The identity is generated once per process. After a fork, the child gets a
+    new instance ID the first time this function is called.
     """
     global _identity_pid, _worker_instance_id
 

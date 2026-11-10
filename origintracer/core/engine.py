@@ -46,52 +46,48 @@ class _PendingChild:
 
 
 class Engine:
-    """
-    Engine is the central, stack-agnostic coordinator.
-    It receives `NormalizedEvents` from any probe via `emit()`,
-    builds the `RuntimeGraph`, drives the `TemporalStore`,
-    and exposes causal/semantic query surfaces.
+    """Coordinate normalized events, runtime graphs, temporal snapshots, and causal queries.
+
+    The engine is stack-agnostic. Probes emit ``NormalizedEvent`` objects through the SDK
+    emitter; the engine builds the ``RuntimeGraph``, stores temporal snapshots, and exposes
+    causal and semantic query operations.
 
     Lifecycle
     ---------
-    1. Instantiate once at startup.
-    2. Bind to the SDK emitter: `sdk.emitter.bind_engine(engine)`
-    3. All probes emit via `sdk.emitter.emit(event)` - they never touch Engine directly.
-    4. Call `engine.start_background_tasks()` to enable periodic snapshots.
-    5. Query via `engine.query(...)` or the HTTP API.
+    1. Instantiate one engine during process startup.
+    2. Bind it to the SDK emitter with ``sdk.emitter.bind_engine(engine)``.
+    3. Let probes emit observations through ``sdk.emitter.emit(event)``; probes do not call
+    the engine directly.
+    4. Call ``start_background_tasks()`` to enable periodic snapshots.
+    5. Query with ``query(...)`` or through the HTTP API.
 
     Lineage contract
     ----------------
-    The engine understands only the framework-neutral lineage fields on
-    ``NormalizedEvent``:
+    The engine interprets only the framework-neutral lineage fields on ``NormalizedEvent``:
 
-    * ``trace_id`` identifies an execution.
-    * ``span_id`` identifies one logical operation within that execution.
+    * ``trace_id`` identifies one execution.
+    * ``span_id`` identifies one logical operation in that execution.
     * ``parent_span_id`` identifies the direct operation that caused it.
 
-    A producer that can observe real parentage should provide stable span IDs.
-    That permits one parent to fan out to many children without making sibling
-    relationships depend on arrival order. The lookup is scoped by trace ID so
-    independently generated traces may safely reuse a span ID.
+    Producers that observe real parentage should provide stable span IDs. This lets one
+    parent have multiple children without deriving sibling relationships from event arrival
+    order. Span lookup is scoped by trace ID, so separate traces may safely reuse a span ID.
 
-    Events can arrive out of order. A child whose parent is not yet known is
-    retained temporarily and connected when the parent arrives. Both resolved
-    spans and unresolved children are bounded by ``lineage_ttl_s``.
+    Events may arrive out of order. A child whose parent has not arrived is retained and
+    connected when the parent appears. Resolved spans and unresolved children are both
+    bounded by ``lineage_ttl_s``.
 
-    Multiple events with the same ``(trace_id, span_id)`` are lifecycle
-    observations of one logical operation, not separate invocations. The first
-    observation creates and counts the graph node; later observations enrich its
-    metadata and duration without incrementing its call count again.
+    Events with the same ``(trace_id, span_id)`` describe lifecycle observations of one
+    operation. The first observation creates and counts its graph node; later observations
+    update metadata and duration without incrementing the call count.
 
-    Events without explicit lineage form a sequential trace: the most recently
-    observed event in a trace becomes the next event's parent. This mode suits
-    serialized event streams but cannot infer causality between concurrent
-    siblings. Events with explicit parentage are resolved exclusively through
-    span lineage and do not advance the sequential cursor.
+    Events without explicit lineage form a sequential trace: the most recently observed
+    event becomes the next event's parent. This suits serialized event streams but cannot
+    infer causality between concurrent siblings. Events with explicit parentage use span
+    lineage exclusively and do not advance the sequential cursor.
 
-    The engine does not inspect probe-specific metadata or interpret any
-    framework's scheduler, node model, or callback lifecycle. Those decisions
-    belong to probes and causal rules.
+    The engine does not inspect probe-specific metadata or interpret framework schedulers,
+    graph nodes, or callback lifecycles. Those decisions belong to probes and causal rules.
     """
 
     def __init__(
@@ -102,6 +98,22 @@ class Engine:
         max_temporal_diffs: int = 500,
         lineage_ttl_s: float = 300.0,
     ) -> None:
+        """Initialize graph, temporal, and semantic runtime components.
+
+        Parameters
+        ----------
+        causal_registry : PatternRegistry, optional
+            Compatibility argument. The public SDK initialization path attaches
+            its configured registry after constructing the engine.
+        semantic_layer : SemanticLayer, optional
+            Semantic query layer. A default layer is created when omitted.
+        snapshot_interval_s : float, default=15.0
+            Interval between background graph snapshots, in seconds.
+        max_temporal_diffs : int, default=500
+            Maximum number of graph diffs retained by the temporal store.
+        lineage_ttl_s : float, default=300.0
+            Maximum age, in seconds, for resolved lineage and pending children.
+        """
         self.graph = RuntimeGraph()
         self.temporal = TemporalStore(
             max_diffs=max_temporal_diffs
@@ -155,13 +167,22 @@ class Engine:
         self.repository: Optional[Any] = None
 
     def process(self, event: NormalizedEvent) -> None:
-        """
-        Consume one normalized observation and update engine state.
+        """Consume one normalized observation and update engine state.
 
-        A ``parent_span_id`` selects explicit lineage. Events without one use the
-        sequential trace cursor. Explicit children whose parent has not arrived
-        are retained for reconciliation; they are never attached to whichever
-        sibling happened to arrive first.
+        A ``parent_span_id`` selects explicit lineage. Events without one use the sequential
+        trace cursor. An explicit child whose parent has not arrived is retained for
+        reconciliation rather than attached to whichever sibling arrived first.
+
+        Parameters
+        ----------
+        event : NormalizedEvent
+            Probe observation to normalize, add to the runtime graph, and record.
+
+        Returns
+        -------
+        None
+            Updates the in-memory graph and event log; if a repository is bound, also stores
+            the event.
         """
         with self._normalizer_lock:
             event.name = self.normalizer.normalize(
@@ -398,16 +419,34 @@ class Engine:
     def snapshot(
         self, label: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Capture and store a graph diff. Returns the diff summary.
+        """Capture the current graph and store its temporal diff.
+
+        Parameters
+        ----------
+        label : str, optional
+            Label associated with this snapshot, such as a deployment marker.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Serialized graph-diff summary.
         """
         snap = self.graph.snapshot()
         diff = self.temporal.capture(snap, label=label)
         return diff.to_dict()
 
     def mark_deployment(self, label: str = "deployment") -> None:
-        """
-        Mark a deployment boundary in the temporal store.
+        """Mark a deployment boundary in the temporal store.
+
+        Parameters
+        ----------
+        label : str, default="deployment"
+            Label used to identify the deployment boundary in later graph comparisons.
+
+        Returns
+        -------
+        None
+            Stores the marker in the temporal store.
         """
         self.temporal.mark_event(label)
         logger.info("Deployment marker set: %s", label)
@@ -415,8 +454,18 @@ class Engine:
     def evaluate(
         self, tags: Optional[List[str]] = None
     ) -> List[CausalMatch]:
-        """
-        Run all registered causal rules against the current graph.
+        """Run registered causal rules against the current graph.
+
+        Parameters
+        ----------
+        tags : List[str], optional
+            Rule tags used to limit the evaluation.
+
+        Returns
+        -------
+        List[CausalMatch]
+            Matches returned by the configured registry, or an empty list when no registry
+            is configured.
         """
         if self.causal is not None:
             return self.causal.evaluate(
@@ -428,9 +477,17 @@ class Engine:
         return []
 
     def query(self, query_str: str) -> Dict[str, Any]:
-        """
-        Entry point for the DSL query layer.
-        Delegates to query/executor.py.
+        """Execute one OriginTracer DSL query against this engine.
+
+        Parameters
+        ----------
+        query_str : str
+            DSL query to parse and execute.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Query result produced by the parser and executor.
         """
         parsed = parse(query_str)
         # The parser describes its coordinator protocol with the Engine class.
@@ -439,10 +496,22 @@ class Engine:
     def critical_path(
         self, trace_id: str
     ) -> List[Dict[str, Any]]:
-        """
-        Derive the critical path for a single `trace_id` from the event log.
-        Returns all registered probe events in chronological order,
-        annotated with inter-stage durations.
+        """Return ordered observations for one trace with inter-stage timing.
+
+        The event log is bounded, so only retained events are available. Registered probe events
+        are included even when they have no duration, since they may represent topology
+        transitions.
+
+        Parameters
+        ----------
+        trace_id : str
+            Trace identifier to inspect.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            Event rows in chronological order, annotated with the time between consecutive
+            observations.
         """
         with self._event_log_lock:
             events = [
@@ -487,8 +556,21 @@ class Engine:
     def traces_for_service(
         self, service: str, limit: int = 50
     ) -> List[str]:
-        """
-        Return distinct trace_ids that touched a given service.
+        """List distinct trace IDs that touched a service.
+
+        Trace IDs are returned newest first, based on the bounded in-memory event log.
+
+        Parameters
+        ----------
+        service : str
+            Service name to match.
+        limit : int, default=50
+            Maximum number of distinct trace IDs to return.
+
+        Returns
+        -------
+        List[str]
+            Matching trace IDs in reverse chronological order.
         """
         with self._event_log_lock:
             seen = []
@@ -505,8 +587,19 @@ class Engine:
         return seen
 
     def hotspots(self, top_n: int = 10) -> List[Dict[str, Any]]:
-        """
-        Return the N busiest nodes by call count.
+        """Return the busiest graph nodes by call count.
+
+        Average duration is included for context; it does not determine the ranking.
+
+        Parameters
+        ----------
+        top_n : int, default=10
+            Maximum number of graph nodes to return.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            Node identity, service, type, call count, and average duration.
         """
         return [
             {
@@ -524,6 +617,15 @@ class Engine:
         ]
 
     def start_background_tasks(self) -> None:
+        """Start the periodic snapshot and graph-compaction thread.
+
+        The method is idempotent while the background thread is running.
+
+        Returns
+        -------
+        None
+            Starts a daemon thread that captures snapshots and evicts stale lineage.
+        """
         if self._running:
             return
         self._running = True
@@ -539,6 +641,13 @@ class Engine:
         )
 
     def stop(self) -> None:
+        """Stop background snapshot processing and wait briefly for the thread to exit.
+
+        Returns
+        -------
+        None
+            Signals the background thread to stop and joins it for up to five seconds.
+        """
         self._running = False
         if self._snapshot_thread:
             self._snapshot_thread.join(timeout=5)
@@ -634,6 +743,14 @@ class Engine:
             )
 
     def status(self) -> Dict[str, Any]:
+        """Return current engine storage and lineage counts.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Graph size, temporal diff count, event-log size, resolved lineage count, and
+            pending lineage count.
+        """
         with self._lineage_lock:
             lineage_spans = len(self._event_by_span_id)
             pending_lineage = sum(
