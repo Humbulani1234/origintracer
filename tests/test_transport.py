@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 
 import httpx
@@ -12,6 +13,39 @@ from origintracer.sdk.uploader import (
 )
 
 from .conftest import evt
+
+
+class MockBackend:
+    """Records every request the uploader makes and returns a canned reply."""
+
+    def __init__(self):
+        self.requests: list[httpx.Request] = []
+        self.status = 200
+        self.body = {"status": "ok", "nodes": 1, "edges": 0}
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        return httpx.Response(self.status, json=self.body)
+
+    def find(self, path: str) -> httpx.Request:
+        return next(
+            r for r in self.requests if r.url.path == path
+        )
+
+
+@pytest.fixture
+def backend(monkeypatch):
+    b = MockBackend()
+    real_client = httpx.Client
+
+    def client_factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(b.handler)
+        return real_client(*args, **kwargs)
+
+    # Uploader._http() calls httpx.Client(headers=...) at request time,
+    # so it picks this up and keeps its real auth-header logic.
+    monkeypatch.setattr(httpx, "Client", client_factory)
+    return b
 
 
 class TestEventBuffer:
@@ -210,76 +244,42 @@ class TestUploaderRepositoryInterface:
         assert u._running is False
 
 
-#
-
-
 class TestUploaderHTTPFlush:
     """
     Test that _flush_events() sends the correct payload to the correct
-    endpoint. Uses a mock HTTP client to avoid needing a real server.
+    endpoint. Requests are intercepted at the httpx transport layer.
     """
 
     def setup_method(self):
         pytest.importorskip("httpx")
 
     def test_flush_events_posts_to_correct_endpoint(
-        self, monkeypatch
+        self, backend
     ):
-        import httpx
-
-        from origintracer.sdk.uploader import Uploader
-
-        requests_made = []
-
-        def mock_post(url, **kwargs):
-            requests_made.append({"url": url, "kwargs": kwargs})
-            return httpx.Response(
-                200, json={"status": "ok", "stored": 1}
-            )
-
-        monkeypatch.setattr(httpx, "post", mock_post)
-
         u = Uploader(
             endpoint="http://backend:8000", api_key="sk_test"
         )
         u.insert_event(evt())
         u._flush_events()
 
-        assert len(requests_made) == 1
+        assert len(backend.requests) == 1
+        req = backend.requests[0]
         assert (
-            requests_made[0]["url"]
-            == "http://backend:8000/api/v1/events"
+            str(req.url) == "http://backend:8000/api/v1/events"
         )
-        headers = requests_made[0]["kwargs"]["headers"]
-        assert headers["Authorization"] == "Bearer sk_test"
-        assert headers["X-OriginTracer-Worker-PID"].isdigit()
-        assert headers["X-OriginTracer-Worker-Instance-ID"]
+        assert req.headers["Authorization"] == "Bearer sk_test"
+        assert req.headers["X-OriginTracer-Worker-PID"].isdigit()
+        assert req.headers["X-OriginTracer-Worker-Instance-ID"]
 
     def test_flush_snapshot_posts_to_correct_endpoint(
-        self, monkeypatch
+        self, backend
     ):
-
-        requests_made = []
-
-        def mock_post(url, **kwargs):
-            requests_made.append({"url": url, "kwargs": kwargs})
-            # We need a valid response object for the Uploader logic to continue
-            return httpx.Response(
-                200,
-                json={"status": "ok", "nodes": 1, "edges": 0},
-            )
-
-        monkeypatch.setattr(httpx, "post", mock_post)
-
-        # Initialize Uploader
         u = Uploader(
             endpoint="http://backend:8000", api_key="sk_test"
         )
 
-        # --- FIX: Mock the Engine's Temporal interface ---
         class FakeTemporal:
             def latest_diff(self):
-                # Return a dummy dict so the Uploader has something to send
                 return {
                     "nodes": [],
                     "edges": [],
@@ -288,9 +288,7 @@ class TestUploaderHTTPFlush:
 
         class FakeEngine:
             graph = RuntimeGraph()
-            temporal = (
-                FakeTemporal()
-            )  # <--- This prevents the AttributeError
+            temporal = FakeTemporal()
 
             @staticmethod
             def evaluate():
@@ -308,20 +306,18 @@ class TestUploaderHTTPFlush:
                 return [Match()]
 
         u.bind_engine(FakeEngine())
-        u._last_snapshot_flush_s = 0  # force immediate flush
-
-        # This should now run without crashing
         u._flush_snapshot()
-        assert any(
-            "/api/v1/graph/snapshot" in request["url"]
-            for request in requests_made
-        )
-        causal_request = next(
-            request
-            for request in requests_made
-            if "/api/v1/causal/report" in request["url"]
-        )
-        assert causal_request["kwargs"]["json"]["matches"] == [
+
+        paths = [r.url.path for r in backend.requests]
+        assert "/api/v1/graph/snapshot" in paths
+        assert "/api/v1/causal/report" in paths
+        assert "/api/v1/graph/diff" in paths
+
+        snapshot_req = backend.find("/api/v1/graph/snapshot")
+        causal_req = backend.find("/api/v1/causal/report")
+        diff_req = backend.find("/api/v1/graph/diff")
+
+        assert json.loads(causal_req.content)["matches"] == [
             {
                 "rule": "app_local_rule",
                 "confidence": 0.8,
@@ -330,68 +326,42 @@ class TestUploaderHTTPFlush:
                 "timestamp": 1.0,
             }
         ]
-        causal_headers = causal_request["kwargs"]["headers"]
+
         assert (
-            causal_headers["Authorization"] == "Bearer sk_test"
+            causal_req.headers["Authorization"]
+            == "Bearer sk_test"
         )
-        assert causal_headers[
-            "X-OriginTracer-Worker-PID"
-        ].isdigit()
-        assert causal_headers[
-            "X-OriginTracer-Worker-Instance-ID"
-        ]
-        snapshot_request = next(
-            request
-            for request in requests_made
-            if "/api/v1/graph/snapshot" in request["url"]
-        )
-        headers = snapshot_request["kwargs"]["headers"]
-        assert headers["X-OriginTracer-Worker-PID"].isdigit()
-        assert headers["X-OriginTracer-Worker-Instance-ID"]
-        diff_request = next(
-            request
-            for request in requests_made
-            if "/api/v1/graph/diff" in request["url"]
-        )
-        assert (
-            diff_request["kwargs"]["headers"][
+        for req in (snapshot_req, causal_req, diff_req):
+            assert req.headers[
                 "X-OriginTracer-Worker-PID"
-            ]
-            == headers["X-OriginTracer-Worker-PID"]
-        )
-        assert (
-            diff_request["kwargs"]["headers"][
+            ].isdigit()
+            assert req.headers[
                 "X-OriginTracer-Worker-Instance-ID"
             ]
-            == headers["X-OriginTracer-Worker-Instance-ID"]
-        )
 
-    def test_flush_events_skips_when_buffer_empty(
-        self, monkeypatch
-    ):
+        # Same worker identity on every request in one flush
+        for name in (
+            "X-OriginTracer-Worker-PID",
+            "X-OriginTracer-Worker-Instance-ID",
+        ):
+            assert (
+                diff_req.headers[name]
+                == snapshot_req.headers[name]
+            )
 
-        calls = []
-        monkeypatch.setattr(
-            httpx, "post", lambda *a, **k: calls.append(1)
-        )
-
+    def test_flush_events_skips_when_buffer_empty(self, backend):
         u = Uploader(
             endpoint="http://backend:8000", api_key="sk_test"
         )
         u._flush_events()  # nothing in buffer
 
-        assert calls == []
+        assert backend.requests == []
 
     def test_failed_upload_increments_failed_counter(
-        self, monkeypatch
+        self, backend
     ):
-
-        def mock_post(*a, **k):
-            return httpx.Response(
-                500, text="Internal Server Error"
-            )
-
-        monkeypatch.setattr(httpx, "post", mock_post)
+        backend.status = 500
+        backend.body = {"error": "Internal Server Error"}
 
         u = Uploader(
             endpoint="http://backend:8000", api_key="sk_test"
