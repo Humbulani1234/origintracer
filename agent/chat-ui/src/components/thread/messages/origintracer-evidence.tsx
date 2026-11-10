@@ -44,6 +44,19 @@ function number(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function formatRecordedTime(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const parsed = typeof value === "number" ? value : Number(value);
+  const date = Number.isFinite(parsed)
+    ? new Date(parsed < 1e12 ? parsed * 1000 : parsed)
+    : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return text(value);
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
 function payloadOf(value: unknown): unknown {
   if (!isRecord(value)) return value;
   if ("data" in value) return value.data;
@@ -927,7 +940,43 @@ function CausalMatches({ value }: { value: unknown }) {
 }
 
 function CausalHistory({ value }: { value: unknown }) {
-  const rows = records(payloadOf(value));
+  const root = isRecord(value) ? value : {};
+  const snapshots = nestedRecords(payloadOf(value));
+  const fallbackWorkerPid = root.worker_pid;
+  const rows = snapshots.flatMap((snapshot) => {
+    const matches = nestedRecords(snapshot.matches);
+    const timestamp =
+      snapshot.timestamp ?? snapshot.observed_at ?? snapshot.ts;
+    const workerPid = snapshot.worker_pid ?? fallbackWorkerPid;
+    const common = {
+      timestamp,
+      worker_pid: workerPid,
+      worker_instance_id:
+        snapshot.worker_instance_id ?? root.worker_instance_id,
+    };
+    if (matches.length) {
+      return matches.map((match) => ({ ...match, ...common }));
+    }
+    if (snapshot.rule || snapshot.rule_id) {
+      return [{ ...snapshot, ...common }];
+    }
+    if (Array.isArray(snapshot.matches)) {
+      return [
+        {
+          ...common,
+          rule: "No matched rules",
+          confidence: "—",
+        },
+      ];
+    }
+    return [
+      {
+        ...common,
+        rule: "Match data unavailable",
+        confidence: "—",
+      },
+    ];
+  });
   if (!rows.length)
     return (
       <p className="text-muted-foreground text-sm">
@@ -948,10 +997,42 @@ function CausalHistory({ value }: { value: unknown }) {
         {
           key: "timestamp",
           label: "Recorded",
-          render: (row) =>
-            text(row.timestamp, text(row.observed_at, text(row.ts))),
+          render: (row) => formatRecordedTime(row.timestamp),
         },
-        { key: "worker_pid", label: "Worker" },
+        {
+          key: "worker_pid",
+          label: "Worker",
+          render: (row) =>
+            row.worker_pid
+              ? `PID ${text(row.worker_pid)}`
+              : text(row.worker_instance_id),
+        },
+        {
+          key: "details",
+          label: "Details",
+          render: (row) => {
+            const explanation = text(row.explanation, "");
+            const evidence = row.evidence;
+            if (!explanation && evidence === undefined) return "—";
+            return (
+              <details>
+                <summary className="text-muted-foreground cursor-pointer text-xs">
+                  View match details
+                </summary>
+                {explanation && (
+                  <p className="mt-1 text-sm">{explanation}</p>
+                )}
+                {evidence !== undefined && (
+                  <pre className="bg-muted mt-2 max-w-96 overflow-x-auto rounded-md p-2 text-xs whitespace-pre-wrap">
+                    {typeof evidence === "string"
+                      ? evidence
+                      : JSON.stringify(evidence, null, 2)}
+                  </pre>
+                )}
+              </details>
+            );
+          },
+        },
       ]}
     />
   );

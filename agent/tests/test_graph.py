@@ -10,6 +10,7 @@ from origintracer_agent.graph import (
     _assessment_result_preview,
     _event_result_preview,
     _is_direct_graph_inventory,
+    _normalized_evidence_view,
     _plan_prompt,
     _research_prompt,
     _tool_result_summary,
@@ -68,7 +69,7 @@ def test_duration_scope_instruction_is_shared_across_request_types():
     general_prompt = _assessment_prompt(
         {"current_request": "Inspect worker latency metrics"}
     )
-    django_comparison_prompt = _assessment_prompt(
+    comparison_prompt = _assessment_prompt(
         {
             "current_request": (
                 "Compare database query latency with asyncio event-loop "
@@ -80,9 +81,31 @@ def test_duration_scope_instruction_is_shared_across_request_types():
             "evidence": [
                 {
                     "result": {
-                        "database_latency": {},
-                        "asyncio_latency": {},
-                        "request_latency": {},
+                        "database_latency": {
+                            "data": [
+                                {
+                                    "node": "SELECT 1",
+                                    "avg_duration_ms": 1.7,
+                                }
+                            ]
+                        },
+                        "asyncio_latency": {
+                            "data": [
+                                {
+                                    "node": "loop.tick",
+                                    "service": "asyncio",
+                                    "avg_duration_ms": 10.5,
+                                }
+                            ]
+                        },
+                        "request_latency": {
+                            "data": [
+                                {
+                                    "node": "/slow/",
+                                    "avg_duration_ms": 211.47,
+                                }
+                            ]
+                        },
                     }
                 }
             ],
@@ -90,23 +113,109 @@ def test_duration_scope_instruction_is_shared_across_request_types():
     )
 
     assert shared_instruction in general_prompt
-    assert shared_instruction in django_comparison_prompt
-    correlation_rule = "Do not name a primary cause without request-correlated evidence"
-    assert correlation_rule in django_comparison_prompt
+    assert shared_instruction in comparison_prompt
+    correlation_rule = "Do not name a primary cause without outcome-correlated evidence"
+    assert correlation_rule in comparison_prompt
     assert correlation_rule not in general_prompt
+    assert (
+        "Component and outcome comparison" in comparison_prompt
+    )
+    assert (
+        "Database versus event-loop comparison"
+        not in comparison_prompt
+    )
 
 
-def test_database_loop_guidance_is_scoped_to_planned_diagnostic_tool():
+def test_latency_diagnostic_guidance_is_scoped_to_planned_tool():
     diagnostic_prompt = _research_prompt(
         {"get_worker_latency_diagnostics"}
     )
     general_prompt = _research_prompt(set())
 
     assert "get_worker_latency_diagnostics" in diagnostic_prompt
-    assert "db_query_hotspot" in diagnostic_prompt
+    assert "Inspect every" in diagnostic_prompt
+    assert (
+        "measurement category and relevant rule match"
+        in diagnostic_prompt
+    )
+    assert "Django" not in diagnostic_prompt
+    assert "asyncio" not in diagnostic_prompt
     assert "get_worker_latency_diagnostics" not in general_prompt
-    assert "db_query_hotspot" not in general_prompt
     assert "get_worker_latency_diagnostics" not in _plan_prompt()
+
+
+def test_comparison_guidance_uses_measurement_scope_across_services():
+    prompt = _assessment_prompt(
+        {
+            "current_request": (
+                "Compare Gunicorn worker saturation with Nginx buffering "
+                "as causes of slow responses."
+            ),
+            "hypotheses": [
+                {
+                    "claim": "Gunicorn worker saturation causes slow responses"
+                }
+            ],
+            "evidence": [
+                {
+                    "result": {
+                        "worker_metrics": {
+                            "data": [
+                                {
+                                    "service": "gunicorn",
+                                    "node": "gunicorn::worker",
+                                    "measurement_scope": "component",
+                                    "avg_duration_ms": 18.0,
+                                }
+                            ]
+                        },
+                        "response_metrics": {
+                            "data": [
+                                {
+                                    "service": "nginx",
+                                    "node": "nginx::/checkout",
+                                    "measurement_scope": "outcome",
+                                    "avg_duration_ms": 220.0,
+                                }
+                            ]
+                        },
+                    }
+                }
+            ],
+        }
+    )
+
+    assert "Component and outcome comparison" in prompt
+    assert "Database versus event-loop comparison" not in prompt
+    assert "Django" not in prompt
+    assert "asyncio" not in prompt
+
+
+def test_normalized_evidence_accepts_generic_outcome_correlation():
+    evidence = _normalized_evidence_view(
+        {
+            "evidence_id": "E001",
+            "worker_pid": "1234",
+            "result": {
+                "comparison": {
+                    "outcome_id": "request-7",
+                    "outcome_duration_ms": 220.0,
+                    "component": "gunicorn",
+                    "component_duration_ms": 18.0,
+                }
+            },
+        }
+    )
+
+    assert evidence["outcome_correlations"] == [
+        {
+            "worker_pid": "1234",
+            "outcome_id": "request-7",
+            "outcome_duration_ms": 220.0,
+            "component_duration_ms": 18.0,
+            "component": "gunicorn",
+        }
+    ]
 
 
 def test_stitch_guidance_is_only_added_for_planned_stitch_tool():
@@ -204,6 +313,37 @@ def test_saved_causal_history_uses_history_guidance():
 
     assert "get_worker_causal_history" in prompt
     assert "get_worker_causal_history" in assessment_prompt
+    assert "evaluation snapshot" in assessment_prompt
+    assert "`matches` list" in assessment_prompt
+    assert "structured evidence" in assessment_prompt
+
+
+def test_causal_history_summary_reads_nested_matches():
+    summary = _tool_result_summary(
+        "get_worker_causal_history",
+        {
+            "worker_pid": "2135130",
+            "result": [
+                {
+                    "worker_instance_id": "instance-1",
+                    "timestamp": 1794338596.59,
+                    "matches": [
+                        {
+                            "rule": "asyncio_event_loop_starvation",
+                            "confidence": 0.8,
+                            "explanation": "Task steps averaged over 10 ms.",
+                            "evidence": {"avg_ms": 16.4},
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert "asyncio_event_loop_starvation" in summary
+    assert "confidence=0.8" in summary
+    assert "worker_pid=2135130" in summary
+    assert "avg_ms" in summary
 
 
 def test_empty_hypothesis_set_forbids_assessor_generated_reviews():
@@ -954,7 +1094,7 @@ async def test_assessor_cannot_invent_hypotheses_or_complete_unrun_tools(
                         explanation="Invented review.",
                         evidence_for=["E001"],
                         evidence_against=[],
-                    )
+                    ),
                 ],
                 findings=[
                     FindingDraft(
@@ -1047,7 +1187,16 @@ async def test_latency_cause_requires_request_correlation(
                             "asyncio_event_loop_starvation: 10.5 ms task steps"
                         ],
                         evidence_against=[],
-                    )
+                    ),
+                    HypothesisReview(
+                        hypothesis_id="hypothesis_1",
+                        status="supported",
+                        explanation=(
+                            "The observed metrics indicate this is the likely cause."
+                        ),
+                        evidence_for=["E001"],
+                        evidence_against=[],
+                    ),
                 ],
                 findings=[
                     FindingDraft(
@@ -1069,7 +1218,7 @@ async def test_latency_cause_requires_request_correlation(
     monkeypatch.setattr(graph, "_assessor", AssessorStub())
     result = await assess_evidence(
         {
-            "current_request": "Compare database and event-loop latency",
+            "current_request": "Compare component and response latency",
             "plan": [
                 {
                     "id": "step-1",
@@ -1079,12 +1228,12 @@ async def test_latency_cause_requires_request_correlation(
             "hypotheses": [
                 {
                     "id": "hyp-db",
-                    "claim": "Slow database queries cause high latency",
+                    "claim": "Gunicorn worker saturation causes slow responses",
                     "status": "unassessed",
                 },
                 {
                     "id": "hyp-1234567890",
-                    "claim": "Event-loop starvation causes high latency",
+                    "claim": "Nginx buffering causes slow responses",
                     "status": "unassessed",
                 },
             ],
@@ -1093,44 +1242,34 @@ async def test_latency_cause_requires_request_correlation(
                     "evidence_id": "E001",
                     "tool": "diagnostic",
                     "result": {
-                        "database_latency": {
+                        "gunicorn_metrics": {
                             "data": [
                                 {
-                                    "node": "SELECT 1",
-                                    "avg_duration_ms": 1.7,
-                                    "call_count": 10,
-                                }
-                            ]
-                        },
-                        "asyncio_latency": {
-                            "data": [
-                                {
-                                    "node": "loop.tick",
-                                    "avg_duration_ms": 10.5,
+                                    "node": "gunicorn::worker",
+                                    "service": "gunicorn",
+                                    "measurement_scope": "component",
+                                    "avg_duration_ms": 16.4,
                                     "call_count": 20,
                                 }
                             ]
                         },
-                        "request_latency": {
+                        "nginx_metrics": {
                             "data": [
                                 {
-                                    "node": "/slow/",
+                                    "node": "nginx::/api/checkout",
+                                    "service": "nginx",
+                                    "measurement_scope": "outcome",
                                     "avg_duration_ms": 211.47,
-                                    "call_count": 5,
+                                    "call_count": 20,
                                 }
                             ]
                         },
                         "causal_rule_matches": {
                             "data": [
                                 {
-                                    "rule": "asyncio_event_loop_starvation",
+                                    "rule": "worker_queue_saturation",
                                     "confidence": 0.8,
-                                    "explanation": "Task steps average above 10 ms.",
-                                },
-                                {
-                                    "rule": "db_query_hotspot",
-                                    "confidence": 0.7,
-                                    "explanation": "A query pattern is a high share of calls.",
+                                    "explanation": "Worker queue depth exceeded the configured threshold.",
                                 },
                             ]
                         },
@@ -1144,10 +1283,15 @@ async def test_latency_cause_requires_request_correlation(
         }
     )
 
-    hypothesis = result["hypotheses"][1]
-    assert hypothesis["status"] == "inconclusive"
-    assert hypothesis.get("evidence_for", []) == []
-    assert "do not correlate" in hypothesis["explanation"]
+    assert [item["status"] for item in result["hypotheses"]] == [
+        "inconclusive",
+        "inconclusive",
+    ]
+    assert result["hypotheses"][0].get("evidence_for", []) == []
+    assert all(
+        "does not correlate" in item["explanation"]
+        for item in result["hypotheses"]
+    )
     assert len(result["findings"]) == 0
 
 

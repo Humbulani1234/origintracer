@@ -239,15 +239,15 @@ _FRAMEWORK_RULE_GUIDANCE = """
   evidence is relevant.
 """.strip()
 
-_DB_LOOP_RESEARCH_GUIDANCE = """
-## Django database versus event-loop evidence
+_LATENCY_DIAGNOSTIC_RESEARCH_GUIDANCE = """
+## Latency diagnostic evidence
 - Call `get_worker_latency_diagnostics` before assessing either explanation.
-- Inspect relevant rule matches, including `db_query_hotspot` when present.
-- Inspect the request-duration rows and use explicit duration fields for
-  latency claims.
+- Inspect every measurement category and relevant rule match returned by the
+  diagnostic.
+- Use explicit duration fields for latency claims, preserving their scope and
+  aggregation.
 - Treat event timestamps as timestamps, not durations. Never subtract
   timestamps from different trace IDs.
-- Do not infer event-loop health from asyncio tick frequency alone.
 - Treat rule matches as patterns, not root causes.
 """.strip()
 
@@ -317,11 +317,25 @@ _TRACE_TOOL_RETRY_GUIDANCE = """
 - Use only IDs and values present in the evidence.
 """.strip()
 
-_CAUSAL_HISTORY_GUIDANCE = """
-## Saved causal-rule history
+_CAUSAL_HISTORY_RESEARCH_GUIDANCE = """
+## Saved causal-rule history read
 - Use `get_worker_causal_history` for the selected worker instance.
+- Each returned row is an evaluation snapshot with a nested `matches` list.
 - Do not replace a history read with a fresh rule evaluation unless the user
   asks for a new evaluation.
+""".strip()
+
+_CAUSAL_HISTORY_ASSESSMENT_GUIDANCE = """
+## Summarize saved causal-rule history
+- Interpret results from `get_worker_causal_history` as saved history, not a
+  current rule evaluation.
+- Treat each returned row as one evaluation snapshot and inspect its nested
+  `matches` list.
+- When matches are present, report each rule name, confidence, explanation,
+  relevant values from its structured evidence, recorded time, and worker
+  identity when supplied. An empty match list means that snapshot recorded no
+  matched rules.
+- Keep historical matches separate from rules matched by a current evaluation.
 """.strip()
 
 
@@ -402,7 +416,7 @@ def _research_prompt(
     if "evaluate_worker_rules" in planned_tools:
         parts.append(_FRAMEWORK_RULE_GUIDANCE)
     if "get_worker_latency_diagnostics" in planned_tools:
-        parts.append(_DB_LOOP_RESEARCH_GUIDANCE)
+        parts.append(_LATENCY_DIAGNOSTIC_RESEARCH_GUIDANCE)
     if "get_worker_stitched_trace" in planned_tools:
         parts.append(_TRACE_STITCH_GUIDANCE)
     elif planned_tools.intersection(
@@ -414,7 +428,7 @@ def _research_prompt(
     ):
         parts.append(_TRACE_SELECTION_GUIDANCE)
     if "get_worker_causal_history" in planned_tools:
-        parts.append(_CAUSAL_HISTORY_GUIDANCE)
+        parts.append(_CAUSAL_HISTORY_RESEARCH_GUIDANCE)
     return "\n\n".join(parts)
 
 
@@ -449,7 +463,7 @@ required by the schema.
   item, but leave unrequested raw payload details (such as full SQL strings)
   in the supporting findings or evidence.
 - Do not add recommendations unless requested, or claim a cause without
-  request-correlated evidence.
+  outcome-correlated evidence.
 
 ## Report observations and uncertainty
 - Treat `current_request` as the task to answer in this assessment. `question`
@@ -476,7 +490,7 @@ required by the schema.
   When hypotheses are supplied, assess their explanations in
   `hypothesis_reviews`; do not repeat a causal hypothesis as a factual finding.
 - Do not claim that a component caused or contributed to an outcome without
-  request-correlated evidence. If that correlation is absent, report the
+  outcome-correlated evidence. If that correlation is absent, report the
   measurements and keep the causal review inconclusive.
 - Attach each unresolved question to a valid requested deliverable ID. Only
   report questions necessary to complete that output; unrelated questions are
@@ -550,7 +564,8 @@ def _assessment_prompt(state: InvestigationState) -> str:
     """
     has_hypotheses = bool(state.get("hypotheses"))
     requires_causal_latency_caution = (
-        has_hypotheses and _has_comparison_diagnostics(state)
+        has_hypotheses
+        and _has_component_outcome_comparison(state)
     )
     parts = [_ASSESS_PROMPT]
     observed_tools = {
@@ -575,31 +590,29 @@ def _assessment_prompt(state: InvestigationState) -> str:
     if requires_causal_latency_caution:
         parts.append("""
 
-## Database versus event-loop comparison
+## Component and outcome comparison
 - Use the original investigation question as context when the current turn is
   a follow-up that refers to earlier explanations.
-- When the evidence has no request-correlated component durations, every
-  causal hypothesis review must be `inconclusive`. A hotspot pattern, a
-  route-level duration, a missing rule match, or a null/zero component duration
-  does not establish that either component caused or did not cause request
-  latency.
+- When evidence contains outcome-level and component-level measurements but
+  no outcome-correlated component durations, causal hypothesis reviews must be
+  `inconclusive`. Aggregate component measurements and outcome measurements
+  do not establish which component caused or did not cause the outcome.
 - Describe detected patterns and measured durations as findings. Do not put a
   causal hypothesis in `findings`; assess it only in its ordered review.
 - The comparison is answered when you state what the supplied evidence does
   and does not establish. Leave optional investigations out of `next_steps`.
-- Treat latency rows as aggregate durations. Request rows identify slow routes,
-  but do not identify their dependency.
+- Respect the scope and aggregation of each measurement. Outcome-level
+  measurements identify affected operations but do not identify their
+  dependencies unless the evidence correlates them.
 - Do not infer durations from timestamps or subtract timestamps across traces.
-- Do not name a primary cause without request-correlated evidence.
+- Do not name a primary cause without outcome-correlated evidence.
 - A null or zero duration means no positive duration was measured; it does not
   establish that the component was healthy or had no effect.
 - A rule absent from `causal_rule_matches` was not detected in this result;
   that alone does not prove the corresponding behavior was absent.
-- Treat task-creation timestamps as event times, not task durations or proof
-  of event-loop health.
 - Treat causal-rule matches as patterns, not proof of root cause.
-- Use every diagnostic category supplied. Do not say asyncio or rule-match data
-  is missing when it is present.
+- Use every supplied diagnostic category. Do not say a measurement or rule
+  result is missing when it is present.
 - Report relevant matches and distinguish the detected pattern from its effect
   on these requests.
 - Preserve the reported units and values. Do not calculate totals by
@@ -634,7 +647,7 @@ def _assessment_prompt(state: InvestigationState) -> str:
     ):
         parts.append(_TRACE_SELECTION_GUIDANCE)
     if "get_worker_causal_history" in observed_tools:
-        parts.append(_CAUSAL_HISTORY_GUIDANCE)
+        parts.append(_CAUSAL_HISTORY_ASSESSMENT_GUIDANCE)
     if "get_live_workers_overview" in observed_tools:
         parts.append("""
 
@@ -872,9 +885,9 @@ def _assessor_for_evidence_ids(
 
     Evidence and plan IDs become literal enums, preventing section names or
     altered spellings from being returned as citations or completed steps.
-    When comparison diagnostics lack request correlation, causal reviews are
-    constrained to inconclusive because aggregate component metrics cannot
-    establish request-level causation.
+    When evidence has outcome and component measurements without request
+    correlation, causal reviews are constrained to inconclusive because
+    aggregate measurements cannot establish outcome-level causation.
     """
     # Empty evidence has no valid citation. An empty-only literal keeps empty
     # citation lists valid while preventing the model from inventing a value.
@@ -996,8 +1009,8 @@ def _assessor_for_evidence_ids(
                 review_status,
                 Field(
                     description=(
-                        "Use inconclusive when component durations are not "
-                        "correlated with individual requests."
+                        "Use inconclusive when component measurements are "
+                        "not correlated with individual outcomes."
                         if require_inconclusive_hypotheses
                         else "Assessment of the supplied claim."
                     )
@@ -1071,8 +1084,8 @@ def _assessment_runnable(state: InvestigationState) -> Any:
     )
     require_inconclusive = (
         has_hypotheses
-        and _has_comparison_diagnostics(state)
-        and not _has_request_correlated_latency(state)
+        and _has_component_outcome_comparison(state)
+        and not _has_outcome_correlated_measurements(state)
     )
     return _assessor_for_evidence_ids(
         evidence_ids,
@@ -1780,13 +1793,13 @@ def _normalized_evidence_view(
     """Project differing tool payloads into shared evidence semantics.
 
     The raw result remains available for full detail. This compact projection
-    exposes measurements, rule matches, and request correlations consistently
+    exposes measurements, rule matches, and outcome correlations consistently
     to both the assessor and deterministic validation, including values nested
     under per-worker overview responses.
     """
     measurements: list[dict[str, Any]] = []
     rule_matches: list[dict[str, Any]] = []
-    request_correlations: list[dict[str, Any]] = []
+    outcome_correlations: list[dict[str, Any]] = []
     evidence_id = item.get("evidence_id")
     default_pid = item.get("worker_pid")
 
@@ -1795,7 +1808,13 @@ def _normalized_evidence_view(
     ) -> str:
         normalized_path = path.casefold()
         service = str(value.get("service", "")).casefold()
+        explicit_component = value.get("component")
         label = subject.casefold()
+        if (
+            isinstance(explicit_component, str)
+            and explicit_component
+        ):
+            return explicit_component.casefold()
         if any(
             token in normalized_path
             for token in ("database", "hotspot_queries", "sql")
@@ -1902,6 +1921,9 @@ def _normalized_evidence_view(
                             else None
                         ),
                         "component": component,
+                        "scope": _measurement_scope(
+                            value, path, component
+                        ),
                         "subject": subject or path,
                         "metric": metric,
                         "value": converted,
@@ -1911,30 +1933,33 @@ def _normalized_evidence_view(
                     }
                 )
 
+            outcome_id = value.get(
+                "outcome_id",
+                value.get(
+                    "request_trace_id", value.get("request_id")
+                ),
+            )
+            outcome_duration = value.get(
+                "outcome_duration_ms",
+                value.get("request_duration_ms"),
+            )
             if (
-                value.get("request_trace_id")
-                and isinstance(
-                    value.get("request_duration_ms"),
-                    (int, float),
-                )
+                outcome_id
+                and isinstance(outcome_duration, (int, float))
                 and isinstance(
                     value.get("component_duration_ms"),
                     (int, float),
                 )
             ):
-                request_correlations.append(
+                outcome_correlations.append(
                     {
                         "worker_pid": (
                             str(local_pid)
                             if local_pid is not None
                             else None
                         ),
-                        "request_trace_id": value[
-                            "request_trace_id"
-                        ],
-                        "request_duration_ms": value[
-                            "request_duration_ms"
-                        ],
+                        "outcome_id": outcome_id,
+                        "outcome_duration_ms": outcome_duration,
                         "component_duration_ms": value[
                             "component_duration_ms"
                         ],
@@ -1958,8 +1983,58 @@ def _normalized_evidence_view(
     return {
         "measurements": measurements,
         "rule_matches": rule_matches,
-        "request_correlations": request_correlations,
+        "outcome_correlations": outcome_correlations,
     }
+
+
+def _measurement_scope(
+    value: dict[str, Any], path: str, component: str
+) -> str:
+    """Classify a normalized measurement as outcome or component scope.
+
+    Explicit scope metadata takes precedence. Known request/path shapes remain
+    supported for existing tool payloads that predate scope metadata.
+
+    Returns
+    -------
+    str
+        ``"outcome"``, ``"component"``, or ``"unknown"``.
+    """
+    explicit_scope = value.get(
+        "measurement_scope", value.get("scope")
+    )
+    if isinstance(explicit_scope, str):
+        normalized = explicit_scope.casefold()
+        if normalized in {
+            "request",
+            "route",
+            "endpoint",
+            "response",
+            "outcome",
+        }:
+            return "outcome"
+        if normalized in {"component", "dependency", "service"}:
+            return "component"
+    normalized_path = path.casefold()
+    subject = str(
+        value.get("node", value.get("id", value.get("name", "")))
+    ).casefold()
+    if (
+        component == "request"
+        or any(
+            token in normalized_path
+            for token in (
+                "request_latency",
+                "route_latency",
+                "endpoint_latency",
+            )
+        )
+        or re.match(r"^[^:]+::/[^ ]*$", subject)
+    ):
+        return "outcome"
+    if component not in {"unknown", ""}:
+        return "component"
+    return "unknown"
 
 
 def _numeric_literals(value: Any) -> set[float]:
@@ -3951,28 +4026,12 @@ async def assess_evidence(
             missing_hypothesis_reviews,
         )
 
-    has_comparison_diagnostics = _has_comparison_diagnostics(
+    has_component_outcome_comparison = (
+        _has_component_outcome_comparison(state)
+    )
+    outcome_correlated = _has_outcome_correlated_measurements(
         state
     )
-    request_correlated = _has_request_correlated_latency(state)
-
-    def has_duration_measurement(system: str) -> bool:
-        """Read duration presence from the shared normalized evidence view."""
-        for item in state.get("evidence", []):
-            normalized = _normalized_evidence_view(item)
-            if any(
-                row.get("component") == system
-                and row.get("metric")
-                in {
-                    "average_duration_ms",
-                    "duration_ms",
-                }
-                and isinstance(row.get("value"), (int, float))
-                and row["value"] > 0
-                for row in normalized["measurements"]
-            ):
-                return True
-        return False
 
     for hypothesis, review in zip(
         hypothesis_items, hypothesis_reviews
@@ -4007,44 +4066,17 @@ async def assess_evidence(
                 "citations to inconclusive"
             )
             review_status = "inconclusive"
-        claim = str(hypothesis.get("claim", "")).casefold()
         review_explanation = review.explanation
         if (
-            "database" in claim or "sql" in claim
-        ) and not has_duration_measurement("database"):
-            review_status = "inconclusive"
-        if (
-            "database" in claim or "sql" in claim
-        ) and review_status == "weakened":
-            # No configured definition of "slow" is supplied to the agent.
-            review_status = "inconclusive"
-        if (
-            "event-loop" in claim
-            or "event loop" in claim
-            or "asyncio" in claim
-        ) and not has_duration_measurement("asyncio"):
-            review_status = "inconclusive"
-        if (
-            "event-loop" in claim
-            or "event loop" in claim
-            or "asyncio" in claim
-        ) and review_status == "weakened":
-            # Tick activity and zero aggregate duration do not establish
-            # healthy loop behavior under load.
-            review_status = "inconclusive"
-        if (
-            has_comparison_diagnostics
-            and not request_correlated
-            and re.search(
-                r"\b(cause|causes|primary|contribut)", claim
-            )
+            has_component_outcome_comparison
+            and not outcome_correlated
         ):
             review_status = "inconclusive"
             review_explanation = (
-                "The diagnostics show component-level measurements and "
-                "route-level latency, but do not correlate component "
-                "duration with individual requests. This evidence cannot "
-                "establish which component caused the route latency."
+                "The evidence contains component-level and outcome-level "
+                "measurements, but does not correlate component duration "
+                "with individual outcomes. It cannot establish whether "
+                "this component caused or contributed to the outcome."
             )
         hypothesis.update(
             {
@@ -4209,17 +4241,19 @@ async def assess_evidence(
             )
             continue
         confidence = finding.confidence
-        if not request_correlated and re.search(
-            r"\b(?:likely|probable|primary|main|direct)\s+"
-            r"(?:underlying\s+)?cause\b|"
-            r"\b(?:caused|causing|contributes? to|"
-            r"responsible for)\b.{0,60}\b"
-            r"(?:latency|delay|slow|bottleneck)\b",
-            statement,
-            re.IGNORECASE,
+        if (
+            has_component_outcome_comparison
+            and not outcome_correlated
+            and re.search(
+                r"\b(?:cause|causes|caused|causing|contribute|"
+                r"contributes|contributed|responsible for|leads? to|"
+                r"results? in)\b",
+                statement,
+                re.IGNORECASE,
+            )
         ):
             logger.warning(
-                "Discarding causal finding without request-correlated "
+                "Discarding causal finding without outcome-correlated "
                 "component durations: %r",
                 statement,
             )
@@ -4437,37 +4471,48 @@ async def assess_evidence(
     }
 
 
-def _has_comparison_diagnostics(
+def _has_component_outcome_comparison(
     state: InvestigationState,
 ) -> bool:
-    """Return whether evidence includes database, asyncio, and request metrics."""
-    return any(
-        isinstance(item.get("result"), dict)
-        and all(
-            isinstance(item["result"].get(section), dict)
-            for section in (
-                "database_latency",
-                "asyncio_latency",
-                "request_latency",
-            )
-        )
-        for item in state.get("evidence", [])
-    )
+    """Return whether evidence has both outcome and component measurements.
+
+    Measurement components come from the shared evidence projection, so this
+    guard applies across diagnostic tools and service types.
+
+    Returns
+    -------
+    bool
+        Whether both measurement scopes are represented.
+    """
+    scopes: set[str] = set()
+    for item in state.get("evidence", []):
+        normalized = _normalized_evidence_view(item)
+        for measurement in normalized["measurements"]:
+            scope = str(measurement.get("scope", "unknown"))
+            if scope in {"outcome", "component"}:
+                scopes.add(scope)
+    return scopes == {"outcome", "component"}
 
 
-def _has_request_correlated_latency(
+def _has_outcome_correlated_measurements(
     state: InvestigationState,
 ) -> bool:
-    """Return whether component durations are tied to individual requests."""
+    """Return whether component durations are tied to individual outcomes.
+
+    Returns
+    -------
+    bool
+        Whether a row identifies an outcome and both relevant durations.
+    """
     for item in state.get("evidence", []):
         correlations = _normalized_evidence_view(item)[
-            "request_correlations"
+            "outcome_correlations"
         ]
         if any(
             isinstance(row, dict)
-            and row.get("request_trace_id")
+            and row.get("outcome_id")
             and isinstance(
-                row.get("request_duration_ms"), (int, float)
+                row.get("outcome_duration_ms"), (int, float)
             )
             and isinstance(
                 row.get("component_duration_ms"), (int, float)
@@ -4820,6 +4865,100 @@ def _graph_rows(
     return nodes, edges
 
 
+def _causal_history_summary(
+    result: Any, fallback_pid: Any = None
+) -> str:
+    """Summarize nested rule matches from saved evaluation snapshots.
+
+    Parameters
+    ----------
+    result : Any
+        History snapshots or a response wrapper containing them.
+    fallback_pid : Any, optional
+        Worker PID attached to the history tool response.
+
+    Returns
+    -------
+    str
+        Compact snapshots with recorded time, worker, rules, and evidence.
+    """
+    payload = result
+    if isinstance(payload, dict):
+        payload = payload.get(
+            "result", payload.get("data", payload)
+        )
+    if isinstance(payload, dict) and isinstance(
+        payload.get("data"), list
+    ):
+        payload = payload["data"]
+    snapshots = payload if isinstance(payload, list) else []
+    if not snapshots:
+        return (
+            "No saved causal-rule history entries were returned"
+        )
+    summaries = []
+    for snapshot in snapshots[:6]:
+        if not isinstance(snapshot, dict):
+            continue
+        timestamp = snapshot.get(
+            "timestamp", snapshot.get("observed_at")
+        )
+        worker_pid = snapshot.get("worker_pid", fallback_pid)
+        prefix = []
+        if timestamp is not None:
+            prefix.append(f"recorded={timestamp}")
+        if worker_pid is not None:
+            prefix.append(f"worker_pid={worker_pid}")
+        matches = snapshot.get("matches")
+        if isinstance(matches, dict):
+            matches = matches.get(
+                "data", matches.get("matches", [])
+            )
+        if not isinstance(matches, list):
+            matches = (
+                [snapshot]
+                if snapshot.get("rule")
+                or snapshot.get("rule_id")
+                else []
+            )
+        if not matches:
+            summaries.append(
+                ", ".join(prefix + ["no matched rules"])
+            )
+            continue
+        for match in matches[:5]:
+            if not isinstance(match, dict):
+                continue
+            fields = list(prefix)
+            fields.append(
+                "rule="
+                + str(
+                    match.get(
+                        "rule", match.get("rule_id", "unknown")
+                    )
+                )
+            )
+            if match.get("confidence") is not None:
+                fields.append(
+                    f"confidence={match['confidence']}"
+                )
+            if match.get("explanation"):
+                fields.append(
+                    f"explanation={str(match['explanation'])[:180]}"
+                )
+            if match.get("evidence") is not None:
+                fields.append(
+                    "evidence="
+                    + _json_preview(match["evidence"], 240)
+                )
+            summaries.append(", ".join(fields))
+    return "Saved causal-rule history: " + (
+        "; ".join(summaries)
+        if summaries
+        else "entries returned without structured rule matches"
+    )
+
+
 def _tool_result_summary(tool_name: str, result: Any) -> str:
     """Render a factual summary of a read tool's returned structure.
 
@@ -4977,6 +5116,14 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
         return f"Currently reporting workers: {len(pids)}" + (
             f" (PIDs: {', '.join(pids)})" if pids else ""
         )
+
+    if tool_name == "get_worker_causal_history":
+        fallback_pid = (
+            result.get("worker_pid")
+            if isinstance(result, dict)
+            else None
+        )
+        return _causal_history_summary(result, fallback_pid)
 
     if not isinstance(result, dict):
         if isinstance(result, list):
@@ -5420,12 +5567,12 @@ def synthesize_findings(
             }
         )
     if generated_findings:
-        # Lead with observed data when the evidence has no request-level
+        # Lead with observed data when the evidence has no outcome-level
         # component correlation; keep any model interpretation after it.
-        request_correlated = _has_request_correlated_latency(
-            state
+        outcome_correlated = (
+            _has_outcome_correlated_measurements(state)
         )
-        if not request_correlated:
+        if not outcome_correlated:
             findings = generated_findings + findings
         else:
             findings.extend(generated_findings)
