@@ -13,10 +13,6 @@ import {
   SetStateAction,
 } from "react";
 import { createClient } from "./client";
-import {
-  forgetChatUiThread,
-  getChatUiThreadIds,
-} from "@/lib/chat-ui-threads";
 
 interface ThreadContextType {
   getThreads: () => Promise<Thread[]>;
@@ -72,8 +68,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
       limit: 100,
     });
 
-    const chatUiThreadIds = new Set(getChatUiThreadIds(resolvedAssistantId));
-    return threads.filter((thread) => chatUiThreadIds.has(thread.thread_id));
+    return threads;
   }, [apiUrl, envApiUrl, assistantId, authScheme, envAssistantId]);
 
   const deleteThread = useCallback(
@@ -90,7 +85,6 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
         authScheme || undefined,
       );
       await client.threads.delete(threadId);
-      forgetChatUiThread(threadId, resolvedAssistantId);
       setThreads((current) =>
         current.filter((thread) => thread.thread_id !== threadId),
       );

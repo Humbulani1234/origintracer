@@ -25,7 +25,6 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { getApiKey, setApiKey as storeApiKey } from "@/lib/api-key";
 import { resolveApiUrl } from "@/lib/resolve-api-url";
 import { useThreads } from "./Thread";
-import { rememberChatUiThread } from "@/lib/chat-ui-threads";
 import { toast } from "sonner";
 import { isStaticDemo } from "@/lib/static-demo";
 
@@ -107,7 +106,6 @@ const StreamSession = ({
     },
     onThreadId: (id) => {
       setThreadId(id);
-      rememberChatUiThread(id, assistantId);
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
       sleep().then(() => getThreads().then(setThreads).catch(console.error));

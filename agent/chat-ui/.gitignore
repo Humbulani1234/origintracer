@@ -14,6 +14,12 @@ dist-ssr
 /out-demo.tar.gz
 *.local
 
+# static demo build
+STATIC_DEMO.md
+scripts/build-static-demo.sh
+src/lib/static-demo.ts
+
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -24,12 +30,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# demo build
-static-demo.ts
-STATIC_DEMO.md
-build-static-demo.sh
-DOCKER_SET_UP.md
 
 # LangGraph API
 .langgraph_api

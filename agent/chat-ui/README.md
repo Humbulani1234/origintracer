@@ -47,8 +47,8 @@ used to build or run the UI. For static deployments, set it before building;
 ## Interface behavior
 
 - The selected worker PID is sent with each user message.
-- Thread history includes conversations started from this browser UI, not
-  unrelated eval or `curl` threads on the shared Agent Server.
+- Thread history includes conversations for the selected assistant found by
+  the Agent Server, including threads started through other clients.
 - The app shows investigation output in the conversation and supports the
   agent's worker-scope and action-approval prompts.
 - The backend API key stays on the Next.js server for worker discovery.
