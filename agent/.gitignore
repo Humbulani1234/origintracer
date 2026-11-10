@@ -1,0 +1,10 @@
+# Local environment files
+.env
+.env.example
+
+# LangGraph local runtime data
+.langgraph_api/
+
+# Local setup files
+DOCKER_SETUP.md
+entrypoint.sh
