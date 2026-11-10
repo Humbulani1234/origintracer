@@ -1036,15 +1036,16 @@ class PGEventRepository(BaseRepository):
     ):
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT worker_instance_id, timestamp, matches FROM causal_matches WHERE customer_id = %s AND worker_instance_id = %s ORDER BY timestamp DESC LIMIT %s",
+                "SELECT worker_instance_id, worker_pid, timestamp, matches FROM causal_matches WHERE customer_id = %s AND worker_instance_id = %s ORDER BY timestamp DESC LIMIT %s",
                 (customer_id, worker_instance_id, limit),
             )
             rows = cur.fetchall()
         return [
             {
                 "worker_instance_id": row[0],
-                "timestamp": row[1],
-                "matches": row[2],
+                "worker_pid": row[1],
+                "timestamp": row[2],
+                "matches": row[3],
             }
             for row in rows
         ]

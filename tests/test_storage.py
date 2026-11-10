@@ -78,6 +78,57 @@ def run_marker_contract(repo: BaseRepository):
     # No query API for markers — just verify it doesn't raise
 
 
+def test_pg_causal_history_includes_worker_pid():
+    from origintracer.storage.base import PGEventRepository
+
+    class Cursor:
+        query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, query, _params):
+            self.query = query
+
+        def fetchall(self):
+            return [
+                (
+                    INSTANCE,
+                    TEST_WORKER_PID,
+                    123.0,
+                    [{"rule": "db_query_hotspot"}],
+                )
+            ]
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+
+        def cursor(self):
+            return self.cursor_instance
+
+    connection = Connection()
+    repository = PGEventRepository.__new__(PGEventRepository)
+    repository._conn = connection
+
+    history = repository.get_causal_history(
+        TEST_CUSTOMER, INSTANCE
+    )
+
+    assert history == [
+        {
+            "worker_instance_id": INSTANCE,
+            "worker_pid": TEST_WORKER_PID,
+            "timestamp": 123.0,
+            "matches": [{"rule": "db_query_hotspot"}],
+        }
+    ]
+    assert "worker_pid" in connection.cursor_instance.query
+
+
 class TestInMemoryRepository:
 
     def setup_method(self):
