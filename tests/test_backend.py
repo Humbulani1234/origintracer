@@ -653,6 +653,54 @@ class TestTraces:
             == "test_customer"
         )
 
+    async def test_trace_includes_unregistered_probe_names_with_warning(
+        self,
+    ):
+        import backend.main as api
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+            ProbeTypes,
+        )
+
+        trace_id = "trace-custom-probe-001"
+        probe_name = "custom.application.operation"
+        assert probe_name not in ProbeTypes
+
+        repository = api.get_repository()
+        repository.insert_event(
+            NormalizedEvent.now(
+                probe=probe_name,
+                service="django",
+                name="/custom",
+                trace_id=trace_id,
+                duration_ns=5_000_000,
+                pid=int(TEST_WORKER_PID),
+                customer_id="test_customer",
+                worker_pid=TEST_WORKER_PID,
+                worker_instance_id=TEST_INSTANCE,
+            )
+        )
+        body = await api.get_trace(
+            trace_id,
+            worker_instance_id=TEST_INSTANCE,
+            authorization=AUTH["Authorization"],
+            repository=repository,
+        )
+
+        assert [stage["probe"] for stage in body["data"]] == [
+            probe_name
+        ]
+        assert body["warnings"] == [
+            {
+                "code": "unregistered_probe_types",
+                "message": (
+                    "Events with unregistered probe types are included "
+                    "using their recorded names."
+                ),
+                "probe_types": [probe_name],
+            }
+        ]
+
     async def test_trace_path_is_sorted_by_wall_time(
         self, client
     ):

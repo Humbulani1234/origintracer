@@ -1419,23 +1419,52 @@ async def get_trace(
             status_code=404,
             detail=f"No events found for trace '{trace_id}'",
         )
-    registered = list(ProbeTypes.all().keys())
-    filtered = [
-        e for e in events if e.get("probe") in registered
-    ]
-    if not filtered:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Events found for trace '{trace_id}' but none matched "
-                f"registered probe types. Check ProbeTypes registration."
-            ),
+    registered = ProbeTypes.all()
+    unregistered_probe_types = sorted(
+        {
+            str(event["probe"])
+            for event in events
+            if event.get("probe")
+            and event.get("probe") not in registered
+        }
+    )
+    missing_probe_name_count = sum(
+        not event.get("probe") for event in events
+    )
+    warnings = []
+    if unregistered_probe_types:
+        warnings.append(
+            {
+                "code": "unregistered_probe_types",
+                "message": (
+                    "Events with unregistered probe types are included "
+                    "using their recorded names."
+                ),
+                "probe_types": unregistered_probe_types,
+            }
+        )
+        logger.warning(
+            "Trace %s includes unregistered probe types for worker %s: %s",
+            trace_id,
+            worker_instance_id or selected_pid or "unspecified",
+            ", ".join(unregistered_probe_types),
+        )
+    if missing_probe_name_count:
+        warnings.append(
+            {
+                "code": "missing_probe_name",
+                "message": (
+                    "Some stored events have no probe name; their events "
+                    "are included with a null probe value."
+                ),
+                "event_count": missing_probe_name_count,
+            }
         )
 
     path = []
     last_ts = None
     total_ms = 0.0
-    for e in filtered:
+    for e in events:
         ts = e.get("timestamp") or e.get("wall_time")
         duration_ms: Optional[float] = (
             round((ts - last_ts) * 1000, 3)
@@ -1458,7 +1487,11 @@ async def get_trace(
             }
         )
         last_ts = ts
-    return {"data": path, "total_ms": round(total_ms, 3)}
+    return {
+        "data": path,
+        "total_ms": round(total_ms, 3),
+        "warnings": warnings,
+    }
 
 
 @app.get("/api/v1/traces/{trace_id}/stitch")
