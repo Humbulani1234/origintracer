@@ -29,9 +29,6 @@ build/
 *.egg
 .eggs/
 applications/langgraph/.langgraph_api
-agent/.langgraph_api/
-agent/DOCKER_SETUP.md
-agent/entrypoint.sh
 
 
 # Testing
