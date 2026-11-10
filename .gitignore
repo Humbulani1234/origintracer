@@ -30,6 +30,8 @@ build/
 .eggs/
 applications/langgraph/.langgraph_api
 agent/.langgraph_api/
+agent/DOCKER_SET_UP.md
+agent/entrypoint.sh
 
 # Testing
 .pytest_cache/

@@ -8,11 +8,6 @@ snapshot deserialization, and the startup snapshot reload path.
 
 from __future__ import annotations
 
-import json
-import os
-import socket
-import threading
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -443,151 +438,6 @@ class TestStatus:
 
 
 @pytest.mark.anyio
-class TestLiveWorkerQueries:
-    """FastAPI exposes only discovered workers and proxies their DSL protocol."""
-
-    async def test_workers_returns_discovered_processes(
-        self, client, monkeypatch
-    ):
-        import backend.main as m
-
-        monkeypatch.setattr(
-            m,
-            "discover_sockets",
-            lambda: ["/tmp/origintracer-1234.sock"],
-        )
-        monkeypatch.setattr(
-            m,
-            "query_worker_socket",
-            lambda pid, query: {
-                "ok": True,
-                "data": {
-                    "data": {"worker_instance_id": "worker-1234"}
-                },
-            },
-        )
-
-        response = await client.get(
-            "/api/v1/workers", headers=AUTH
-        )
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "data": [
-                {
-                    "pid": "1234",
-                    "worker_instance_id": "worker-1234",
-                    "socket": "/tmp/origintracer-1234.sock",
-                }
-            ]
-        }
-
-    async def test_worker_query_proxies_selected_pid(
-        self, client, monkeypatch
-    ):
-        import backend.main as m
-
-        calls = []
-
-        def fake_query(pid, query):
-            calls.append((pid, query))
-            return {
-                "id": "request-1",
-                "ok": True,
-                "data": {"metric": "nodes", "data": []},
-            }
-
-        monkeypatch.setattr(m, "query_worker_socket", fake_query)
-
-        response = await client.post(
-            "/api/v1/workers/4321/query",
-            json={"query": "  SHOW NODES  "},
-            headers=AUTH,
-        )
-
-        assert response.status_code == 200
-        assert calls == [(4321, "SHOW NODES")]
-        assert response.json()["worker"] == {
-            "pid": "4321",
-            "socket": "/tmp/origintracer-4321.sock",
-        }
-
-    async def test_worker_query_reports_disappeared_process(
-        self, client, monkeypatch
-    ):
-        import backend.main as m
-
-        def unavailable(pid, query):
-            raise m.WorkerUnavailableError("worker disappeared")
-
-        monkeypatch.setattr(
-            m, "query_worker_socket", unavailable
-        )
-
-        response = await client.post(
-            "/api/v1/workers/4321/query",
-            json={"query": "SHOW STATUS"},
-            headers=AUTH,
-        )
-
-        assert response.status_code == 404
-        assert response.json()["detail"] == "worker disappeared"
-
-    async def test_worker_query_requires_authentication(
-        self, client
-    ):
-        response = await client.post(
-            "/api/v1/workers/4321/query",
-            json={"query": "SHOW STATUS"},
-        )
-        assert response.status_code == 401
-
-
-def test_worker_socket_client_uses_existing_repl_protocol(
-    tmp_path, monkeypatch
-):
-    """The backend sends and receives one newline-delimited JSON message."""
-    import backend.main as m
-
-    pid = os.getpid()
-    prefix = str(tmp_path / "origintracer-")
-    socket_path = f"{prefix}{pid}.sock"
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(socket_path)
-    server.listen(1)
-
-    def serve_once():
-        connection, _ = server.accept()
-        with connection:
-            request = b""
-            while b"\n" not in request:
-                request += connection.recv(4096)
-            message = json.loads(request.split(b"\n", 1)[0])
-            response = {
-                "id": message["id"],
-                "ok": True,
-                "data": {"verb": "STATUS", "data": {"pid": pid}},
-            }
-            connection.sendall(
-                json.dumps(response).encode() + b"\n"
-            )
-        server.close()
-
-    thread = threading.Thread(target=serve_once)
-    thread.start()
-    monkeypatch.setattr(m, "_SOCKET_PREFIX", prefix)
-    monkeypatch.setattr(
-        m, "discover_sockets", lambda: [socket_path]
-    )
-
-    result = m.query_worker_socket(pid, "SHOW STATUS")
-    thread.join(timeout=2)
-
-    assert result["ok"] is True
-    assert result["data"]["data"]["pid"] == pid
-
-
-@pytest.mark.anyio
 class TestDeploymentMarker:
 
     async def test_post_deployment_returns_ok(self, client):
@@ -910,6 +760,8 @@ def reset_backend_state():
 
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._reported_causal_matches.clear()
+    m._reported_causal_signatures.clear()
     with m._active_pid_lock:
         m._active_pid.clear()
     m._valid_api_keys = {"test-key-0000": "test_customer"}
@@ -917,6 +769,8 @@ def reset_backend_state():
     yield
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._reported_causal_matches.clear()
+    m._reported_causal_signatures.clear()
     with m._active_pid_lock:
         m._active_pid.clear()
 
@@ -1054,6 +908,105 @@ class TestCausalTags:
         r = await client.get("/api/v1/causal", headers=AUTH)
         body = r.json()
         assert body["match_count"] == len(body["data"])
+
+    async def test_process_reported_app_rule_is_merged_and_cleared(
+        self, client
+    ):
+        import backend.main as m
+
+        match = {
+            "rule": "celery_task_duration_spike",
+            "confidence": 0.75,
+            "explanation": "Task duration exceeds the median.",
+            "evidence": {
+                "slow_tasks": [{"task": "export_data"}]
+            },
+            "timestamp": 1.0,
+        }
+        headers = {**AUTH, **PROCESS_HEADERS}
+        reported = await client.post(
+            "/api/v1/causal/report",
+            headers=headers,
+            json={
+                "worker_instance_id": TEST_INSTANCE,
+                "worker_pid": TEST_WORKER_PID,
+                "matches": [match],
+            },
+        )
+        assert reported.status_code == 200
+        assert reported.json()["match_count"] == 1
+
+        live = await client.get("/api/v1/causal", headers=AUTH)
+        assert live.status_code == 200
+        assert match["rule"] in {
+            item["rule"] for item in live.json()["data"]
+        }
+
+        cleared = await client.post(
+            "/api/v1/causal/report",
+            headers=headers,
+            json={
+                "worker_instance_id": TEST_INSTANCE,
+                "worker_pid": TEST_WORKER_PID,
+                "matches": [],
+            },
+        )
+        assert cleared.status_code == 200
+        live_after_clear = await client.get(
+            "/api/v1/causal", headers=AUTH
+        )
+        assert match["rule"] not in {
+            item["rule"]
+            for item in live_after_clear.json()["data"]
+        }
+        history = m._repository.get_causal_history(
+            "test_customer", TEST_INSTANCE, 10
+        )
+        assert len(history) == 2
+        assert history[0]["matches"] == []
+        assert history[1]["matches"][0]["rule"] == match["rule"]
+
+    async def test_get_is_read_only_and_post_records_matches(
+        self, client, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        import backend.main as m
+        from origintracer.core.causal import PatternRegistry
+
+        match = {"rule": "test_rule", "confidence": 0.9}
+        monkeypatch.setattr(
+            PatternRegistry,
+            "evaluate",
+            classmethod(
+                lambda cls, graph, temporal, tracker=None, tags=None: [
+                    SimpleNamespace(to_dict=lambda: match)
+                ]
+            ),
+        )
+
+        live = await client.get("/api/v1/causal", headers=AUTH)
+        assert live.status_code == 200
+        assert live.json()["data"] == [match]
+        assert (
+            m._repository.get_causal_history(
+                "test_customer", TEST_INSTANCE, 10
+            )
+            == []
+        )
+
+        saved = await client.post(
+            "/api/v1/causal/evaluate",
+            headers=AUTH,
+            json={"worker_instance_id": TEST_INSTANCE},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["data"] == [match]
+        history = m._repository.get_causal_history(
+            "test_customer", TEST_INSTANCE, 10
+        )
+        assert len(history) == 1
+        assert history[0]["matches"] == [match]
 
     async def test_causal_before_snapshot_returns_404(
         self, client

@@ -2,9 +2,8 @@
 Tasks, each designed to exercise a specific causal rule:
 
     process_report >> baseline, completes cleanly
-    send_notifications >> dispatched N times per request (fan-out amplification)
-    export_data >> makes a synchronous DB call (celery_sync_db_call rule)
-    risky_job >> fails and retries  (celery_retry_amplification rule)
+    send_notification >> dispatched N times per request (fan-out graph)
+    export_data >> emits a measured slow SQLite operation
 
 Each task accepts _trace_id as a kwarg. The celery probe reads it so
 the trace is continuous from the Django view through to the task execution.
@@ -18,6 +17,9 @@ import sqlite3
 import time
 
 from celery import shared_task
+
+from origintracer.core.event_schema import NormalizedEvent
+from origintracer.sdk.emitter import emit
 
 
 @shared_task(name="myapp.tasks.process_report", bind=True)
@@ -37,10 +39,8 @@ def send_notification(
     """
     Individual notification task.
     BulkNotifyView dispatches one of these per user_id - fan-out pattern.
-    When 10+ notifications are dispatched per HTTP request, the
-    django::BulkNotifyView >> celery::send_notification edge call_count
-    diverges from the view call_count, surfacing celery_task_amplification.
-    Exercises: fan-out amplification
+    BulkNotifyView dispatches multiple instances for one HTTP request,
+    demonstrating task fan-out in the graph.
     """
     time.sleep(random.uniform(0.01, 0.05))
     return {"status": "sent", "user_id": user_id}
@@ -50,13 +50,14 @@ def send_notification(
 def export_data(self, export_id: int, **kwargs):
     """
     Slow task making a synchronous SQLite call on the worker thread.
-    Blocks the Celery prefork worker thread for 200-400ms per call.
-    Exercises: celery_sync_db_call causal rule
+    Blocks the Celery prefork worker thread for 500-700ms per call.
+    Exercises: sync_db_in_celery causal rule
     REPL: CAUSAL
     """
     db_path = os.path.join(
         os.path.dirname(__file__), "..", "demo.db"
     )
+    trace_id = kwargs.get("_trace_id") or self.request.id
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -68,48 +69,43 @@ def export_data(self, export_id: int, **kwargs):
             (export_id, "pending"),
         )
         conn.commit()
-        time.sleep(
-            random.uniform(0.2, 0.4)
-        )  # simulate slow query
         conn.execute(
             "UPDATE exports SET status = ? WHERE id = ?",
             ("done", export_id),
         )
         conn.commit()
+        # Raw sqlite3 bypasses Django's execute_wrapper. Emit observations for
+        # the repeated SQL explicitly so the graph's db_query_hotspot rule can
+        # evaluate this workload. Model one slow synchronous read per task to
+        # exercise the app-local sync_db_in_celery rule as well.
+        sql = "SELECT status FROM exports WHERE id = ?"
+        for query_index in range(6):
+            started_ns = time.perf_counter_ns()
+            conn.execute(sql, (export_id,)).fetchone()
+            if query_index == 5:
+                time.sleep(random.uniform(0.5, 0.7))
+            duration_ns = time.perf_counter_ns() - started_ns
+            emit(
+                NormalizedEvent.now(
+                    probe="celery.db.query",
+                    trace_id=trace_id,
+                    service="sqlite",
+                    name="SELECT exports status",
+                    duration_ns=duration_ns,
+                    operation="SELECT",
+                    sql=sql,
+                    export_id=export_id,
+                )
+            )
     finally:
         conn.close()
 
     return {"status": "exported", "export_id": export_id}
 
 
-@shared_task(
-    name="myapp.tasks.risky_job",
-    bind=True,
-    max_retries=5,
-    default_retry_delay=2,
-)
-def risky_job(self, should_fail: bool = True, **kwargs):
-    """
-    Task that fails and retries up to 3 times.
-    After enough failures the celery_retry_amplification rule fires
-    because retry node call_count >> start node call_count.
-    Exercises: celery_retry_amplification causal rule
-    REPL: CAUSAL
-    """
-    if should_fail:
-        try:
-            raise ValueError(
-                f"Simulated failure — attempt {self.request.retries + 1}"
-            )
-        except ValueError as exc:
-            if self.request.retries < self.max_retries:
-                raise self.retry(exc=exc)
-            raise
-
-    return {"status": "ok"}
-
-
 @shared_task(name="myapp.tasks.generate_report", bind=True)
 def generate_report(self, report_id: int, **kwargs):
-    time.sleep(0.2)  # simulate work
+    time.sleep(
+        0.35
+    )  # distinguish its task-duration baseline in the demo
     return {"report_id": report_id, "status": "done"}

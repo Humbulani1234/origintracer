@@ -86,24 +86,36 @@ def _serialize_graph(graph: Any) -> tuple:
 
 
 class Uploader:
-    """
-    Ships probe events and graph snapshots to the OriginTracer backend.
+    """Upload probe events and worker state to an OriginTracer backend.
 
     Implements the ``BaseRepository.insert_event()`` interface so
-    ``Engine.process()`` can call it as a repository without knowing about
-    HTTP transport.
+    ``Engine.process()`` can use it without knowing about HTTP transport.
 
-    Usage
+    Parameters
+    ----------
+    endpoint : str
+        Base URL of the OriginTracer backend.
+    api_key : str
+        Bearer token used to authenticate uploads.
+    flush_interval : int, optional
+        Seconds between event batch uploads.
+    snapshot_interval : float, optional
+        Seconds between graph snapshot uploads. Runtime heartbeats use a
+        shorter independent interval.
+    max_batch_size : int, optional
+        Maximum number of events sent in one batch.
+
+    Examples
+    --------
+    >>> uploader = Uploader(endpoint="http://localhost:8001", api_key="token")
+    >>> uploader.start()
+    >>> uploader.bind_engine(engine)
+    >>> engine.repository = uploader
+
+    Notes
     -----
-    ::
-
-        uploader = Uploader(endpoint=..., api_key=...)
-        uploader.start()
-        uploader.bind_engine(engine) # must be called after start()
-        engine.repository = uploader # Engine calls insert_event() per event
-
-    Call ``uploader.stop()`` on shutdown to flush the queue and close the
-    background thread cleanly.
+    Call ``stop()`` during shutdown to flush pending events and a final graph
+    snapshot, then join the background threads.
     """
 
     def __init__(
@@ -111,9 +123,25 @@ class Uploader:
         endpoint: str,
         api_key: str,
         flush_interval: int = 10,  # seconds between event batch flushes
-        snapshot_interval: int = 60,  # seconds between graph snapshot flushes
+        snapshot_interval: float = 60,  # seconds between graph snapshot flushes
         max_batch_size: int = 500,
     ) -> None:
+        """Configure backend uploads and background flush intervals.
+
+        Parameters
+        ----------
+        endpoint : str
+            Base URL of the OriginTracer backend.
+        api_key : str
+            Bearer token used to authenticate requests.
+        flush_interval : int, optional
+            Seconds between event batch flushes.
+        snapshot_interval : float, optional
+            Seconds between graph snapshot flushes and the upper bound used to
+            derive the runtime heartbeat cadence.
+        max_batch_size : int, optional
+            Maximum number of events included in one upload batch.
+        """
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._flush_interval = flush_interval
@@ -127,7 +155,16 @@ class Uploader:
         )
 
         self._thread: Optional[threading.Thread] = None
+        self._runtime_status_thread: Optional[
+            threading.Thread
+        ] = None
         self._running: bool = False
+        # Runtime liveness must not depend on graph serialization or snapshot
+        # uploads succeeding. Keep its cadence short even when snapshots are
+        # configured less frequently.
+        self._runtime_status_interval = max(
+            1.0, min(15.0, float(snapshot_interval))
+        )
 
         # Timing
         self._last_event_flush_s: float = 0.0
@@ -142,10 +179,24 @@ class Uploader:
         self._failed_diffs_sends: int = 0
 
     def insert_event(self, event: Any) -> None:
-        """
-        Repository interface. Called by Engine.process() for every event.
-        Converts NormalizedEvent to dict and queues for batch upload.
-        Never raises - must not disrupt the drain thread.
+        """Queue a probe event for batch upload.
+
+        Called by ``Engine.process()`` for each event. The event is converted
+        to a mapping and added to the bounded upload queue.
+
+        Parameters
+        ----------
+        event : NormalizedEvent
+            Probe event to serialize and upload.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        Serialization errors are suppressed so an upload problem does not
+        interrupt event processing.
         """
         try:
             self._event_buffer.push(event.to_dict())
@@ -153,9 +204,16 @@ class Uploader:
             pass
 
     def bind_engine(self, engine: Any) -> None:
-        """
-        Wire the engine so the uploader can serialise its graph for snapshots.
-        Call this after start() from origintracer/__init__.py _init_uploader().
+        """Attach the engine whose graph and runtime state will be uploaded.
+
+        Parameters
+        ----------
+        engine : Engine
+            Engine instance supplying graph snapshots and runtime status.
+
+        Returns
+        -------
+        None
         """
         self._engine = engine
 
@@ -170,25 +228,24 @@ class Uploader:
         }
 
     def start(self) -> None:
-        """
-        Start the uploader background thread.
+        """Start background event, snapshot, and heartbeat uploads.
 
-        The thread wakes every ``snapshot_interval`` seconds and performs
-        two uploads:
+        Returns
+        -------
+        None
 
-        **Events** - drains the event buffer and posts to
-        ``POST /api/v1/events``. Best-effort: failures are silently discarded.
-        Probe events are not critical path.
+        Notes
+        -----
+        The event and snapshot thread periodically sends event batches to
+        ``POST /api/v1/events`` and graph snapshots to
+        ``POST /api/v1/graph/snapshot``. It also sends incremental graph diffs
+        when available. Event uploads are best effort; failed batches are
+        discarded.
 
-        **Snapshots** - serializes the current ``RuntimeGraph`` and posts to
-        ``POST /api/v1/graph/snapshot`` (full replacement) and
-        ``POST /api/v1/graph/diff`` (incremental, if available).
-        Serialization failures abort the snapshot cycle for that interval.
-        Snapshot and diff uploads are tracked independently.
-
-        No exceptions escape the thread - all errors are logged at
-        debug/warning level. Call ``stop()`` on shutdown to flush and join
-        cleanly.
+        A second thread posts runtime heartbeats independently of graph
+        snapshots, so a worker can report liveness if its graph cannot be
+        serialized. Upload errors are logged and do not escape the background
+        threads. Call ``stop()`` during shutdown.
         """
         if self._running:
             return
@@ -199,6 +256,12 @@ class Uploader:
             name="origintracer-uploader",
         )
         self._thread.start()
+        self._runtime_status_thread = threading.Thread(
+            target=self._run_runtime_status,
+            daemon=True,
+            name="origintracer-runtime-heartbeat",
+        )
+        self._runtime_status_thread.start()
         logger.info(
             "Uploader started: %s  events=%ds  snapshots=%ds",
             self._endpoint,
@@ -207,9 +270,16 @@ class Uploader:
         )
 
     def stop(self) -> None:
-        """
-        Stop the background thread and perform one final flush of both
-        events and snapshot before returning. Called by origintracer.shutdown().
+        """Stop background uploads and make a final event and graph flush.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        This method joins the upload and heartbeat threads, waiting up to five
+        seconds for each. It is called by ``origintracer.shutdown()``.
         """
         self._running = False
         # Final flushes on the calling thread
@@ -217,6 +287,8 @@ class Uploader:
         self._flush_snapshot()
         if self._thread:
             self._thread.join(timeout=5)
+        if self._runtime_status_thread:
+            self._runtime_status_thread.join(timeout=5)
         logger.info(
             "Uploader stopped  events_sent=%d  snapshots_sent=%d",
             self._events_sent_total,
@@ -246,6 +318,27 @@ class Uploader:
             ):
                 self._flush_snapshot()
                 self._last_snapshot_flush_s = now
+
+    def _run_runtime_status(self) -> None:
+        """Refresh the worker heartbeat independently of graph snapshots.
+
+        The backend requires one stored snapshot before it accepts runtime
+        status. Once the first snapshot succeeds, this loop keeps the worker
+        presence fresh even if a later graph serialization or snapshot upload
+        stalls. Heartbeats are deliberately more frequent than snapshots.
+        """
+        last_status = 0.0
+        while self._running:
+            now = time.monotonic()
+            if (
+                self._engine is not None
+                and self._snapshots_sent > 0
+                and now - last_status
+                >= self._runtime_status_interval
+            ):
+                self._flush_runtime_status()
+                last_status = now
+            time.sleep(1)
 
     def _flush_events(self) -> None:
         """
@@ -329,6 +422,7 @@ class Uploader:
 
         # Serialize graph
         try:
+            self._attach_semantic_membership()
             data, content_type = _serialize_graph(
                 self._engine.graph
             )
@@ -358,6 +452,7 @@ class Uploader:
                     info.get("nodes", "?"),
                     info.get("edges", "?"),
                 )
+                self._flush_causal_matches()
             else:
                 self._failed_snap_sends += 1
                 logger.warning(
@@ -425,9 +520,164 @@ class Uploader:
             self._failed_diffs_sends += 1
             logger.debug("Diff upload error: %s", exc)
 
-    def send_deployment_marker(self, label: str) -> None:
+    def _flush_causal_matches(self) -> None:
+        """Upload matches from this process's configured rule registry."""
+        if self._engine is None:
+            return
         try:
-            httpx.post(
+            worker_instance_id, worker_pid = (
+                current_worker_identity()
+            )
+            matches = [
+                match.to_dict()
+                for match in self._engine.evaluate()
+            ]
+            response = httpx.post(
+                f"{self._endpoint}/api/v1/causal/report",
+                json={
+                    "worker_instance_id": worker_instance_id,
+                    "worker_pid": str(worker_pid),
+                    "matches": matches,
+                },
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
+                },
+                timeout=10.0,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "Causal match upload failed: HTTP %d — %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+        except httpx.TimeoutException as exc:
+            logger.debug("Causal match upload timeout: %s", exc)
+        except httpx.ConnectError as exc:
+            logger.debug(
+                "Causal match upload connection error: %s", exc
+            )
+        except Exception as exc:
+            logger.debug("Causal match upload error: %s", exc)
+
+    def _flush_runtime_status(self) -> None:
+        """Upload runtime-only status so remote readers can judge freshness.
+
+        The heartbeat is sent independently of graph snapshots and is keyed
+        by the uploader's worker-instance identity. It reports uptime,
+        active requests, probes, configured rules, graph counts, semantic
+        label count, and event-log size because those values are not reliably
+        recoverable from a serialized graph. A failed heartbeat is logged at
+        debug level; it does not fail the graph upload loop.
+        """
+        if self._engine is None:
+            return
+        engine = self._engine
+        graph = engine.graph
+        tracker = getattr(engine, "tracker", None)
+        probes = getattr(engine, "probes", None) or []
+        with graph._lock:
+            graph_nodes = len(graph._nodes)
+            graph_edges = len(graph._edge_index)
+        event_log = getattr(engine, "_event_log", [])
+        event_log_lock = getattr(engine, "_event_log_lock", None)
+        if event_log_lock is None:
+            event_log_size = len(event_log)
+        else:
+            with event_log_lock:
+                event_log_size = len(event_log)
+        semantic = getattr(engine, "semantic", None)
+        rule_registry = getattr(engine, "causal", None)
+        status = {
+            "uptime_s": round(
+                time.monotonic() - engine._started_at, 1
+            ),
+            "active_requests": (
+                tracker.active_count() if tracker else 0
+            ),
+            "probes_active": [
+                str(getattr(probe, "name", probe))
+                for probe in probes
+            ],
+            "probes_total": len(probes),
+            "rules_active": list(
+                getattr(rule_registry, "_rules", {}).keys()
+            ),
+            "graph_nodes": graph_nodes,
+            "graph_edges": graph_edges,
+            "semantic_labels": (
+                len(semantic.all_labels()) if semantic else 0
+            ),
+            "event_log_size": event_log_size,
+            "snapshot_interval_s": float(
+                self._snapshot_interval
+            ),
+        }
+        try:
+            response = httpx.post(
+                f"{self._endpoint}/api/v1/worker/runtime",
+                json={
+                    "status": status,
+                    "observed_at": time.time(),
+                },
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
+                },
+                timeout=5.0,
+            )
+            if response.status_code != 200:
+                logger.debug(
+                    "Runtime status upload failed: HTTP %d — %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+        except Exception as exc:
+            logger.debug("Runtime status upload error: %s", exc)
+
+    def _attach_semantic_membership(self) -> None:
+        """Embed each configured semantic alias on matching graph nodes.
+
+        The backend serves stored snapshots without access to the originating
+        process configuration. Persisting these labels with node metadata lets
+        remote query clients apply the same semantic filters as the REPL.
+        """
+        engine = self._engine
+        if engine is None:
+            return
+        graph = engine.graph
+        semantic = getattr(engine, "semantic", None)
+        if semantic is None:
+            return
+        with graph._lock:
+            for node in graph._nodes.values():
+                labels = [
+                    alias.label
+                    for alias in semantic
+                    if alias.matches_node(node.id)
+                    or alias.matches_service(node.service)
+                ]
+                node.metadata["semantic_labels"] = labels
+
+    def send_deployment_marker(self, label: str) -> None:
+        """Send a deployment marker to the configured backend.
+
+        Parameters
+        ----------
+        label : str
+            Name identifying the deployment event.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        The request uses the current worker identity and logs upload failures
+        without raising them to the application.
+        """
+        try:
+            response = httpx.post(
                 f"{self._endpoint}/api/v1/deployment",
                 json={
                     "label": label,
@@ -440,6 +690,17 @@ class Uploader:
                 },
                 timeout=5.0,
             )
+            if response.status_code != 200:
+                logger.warning(
+                    "Deployment marker upload failed: HTTP %d — %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+            else:
+                logger.info(
+                    "Deployment marker uploaded: label=%s",
+                    label,
+                )
         except httpx.TimeoutException as e:
             logger.debug(
                 "Timeout - backend not responding: %s", e
@@ -452,6 +713,14 @@ class Uploader:
             )
 
     def stats(self) -> Dict[str, Any]:
+        """Return counters describing uploader activity.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Mapping containing event and snapshot totals, failed upload
+            counts, queue size, engine binding state, and running state.
+        """
         return {
             "events_sent_total": self._events_sent_total,
             "snapshots_sent": self._snapshots_sent,

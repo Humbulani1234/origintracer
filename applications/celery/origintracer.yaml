@@ -4,8 +4,8 @@
 #   django - TracerMiddleware + View.dispatch + ORM execute_wrapper
 #   celery - task_prerun/task_postrun worker_process_init signals
 #
-# Custom rules are auto-discovered from:
-#   origintracer/rules/*_rules.py
+# App-local rules are auto-discovered from:
+#   rules/*_rules.py (the shipped Celery rules live in origintracer.rules)
 
 probes:
   - asyncio
@@ -18,7 +18,6 @@ rules:
   - asyncio_event_loop_starvation
   - n_plus_one_queries
   - db_query_hotspot
-  - celery_retry_amplification
   - sync_db_in_celery
   - celery_task_duration_spike
 

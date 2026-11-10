@@ -1,0 +1,43 @@
+{
+    "folders":
+    [
+        {
+            "path": "/home/humbulani/origintracer",
+        },
+        {
+			"path": "/home/humbulani/origintracer/env/lib64/python3.12/site-packages/langgraph_api",
+		},
+        {
+			"path": "/home/humbulani/origintracer/env/lib64/python3.12/site-packages/langgraph_cli",
+		},
+        {
+			"path": "/home/humbulani/origintracer/env/lib64/python3.12/site-packages/langgraph_runtime_inmem",
+		},
+        {
+			"path": "/home/humbulani/origintracer/env/lib64/python3.12/site-packages/langgraph",
+		},
+        {
+			"path": "/home/humbulani/origintracer/env/lib64/python3.12/site-packages/langchain_ollama",
+		},
+        {
+			"path": "/home/humbulani/origintracer/env/lib64/python3.12/site-packages/langchain_core",
+		},
+        {
+			"path": "/home/humbulani/origintracer/env/lib64/python3.12/site-packages/langchain"
+		},
+    ],
+
+    "settings":
+    {
+        "LSP":
+        {
+            "LSP-pylsp":
+            {
+                "settings":
+                {
+                    "pylsp.plugins.jedi.environment": "/home/humbulani/origintracer/env",
+                },
+            },
+        },
+    },
+}

@@ -165,6 +165,11 @@ class CeleryProbe(BaseProbe):
             )
             return
 
+        # Each prefork worker gets a fresh OriginTracer process instance and
+        # temporal store. Mark the deployment after that instance is ready so
+        # deployment-relative diffs and rules have a baseline in this worker.
+        origintracer.mark_deployment("deployment")
+
         # Drain MainProcess event into this worker's fresh engine
         _drain_pre_fork_events()
 

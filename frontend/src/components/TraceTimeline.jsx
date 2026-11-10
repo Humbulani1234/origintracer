@@ -6,17 +6,20 @@ function toMs(ns) {
   return ns / 1_000_000;
 }
 
-export default function TraceTimeline({ trace }) {
+export default function TraceTimeline({ trace, mode = "trace" }) {
   if (!trace) {
     return (
       <div style={{ padding:"32px 14px", fontFamily:"monospace", fontSize:11,
         color:"var(--muted)", textAlign:"center" }}>
-        run <span style={{color:"var(--amber)"}}>\ stitch &lt;trace_id&gt;</span> to view a trace
+        enter <span style={{color:"var(--amber)"}}>
+          {mode === "stitch" ? "\\stitch &lt;trace_id&gt;" : "TRACE &lt;trace_id&gt;"}
+        </span> in the query bar to {mode === "stitch" ? "search uploaded events across stored workers" : "inspect the selected snapshot's stored events"}
       </div>
     );
   }
 
   const { id, stages } = trace;
+  const stitched = trace.source === "stitched";
   const durations = stages.map(s => parseFloat(s.duration_ms)).filter(n => n > 0);
   const maxDur = durations.length ? Math.max(...durations) : 1;
   const totalMs = durations.reduce((a, b) => a + b, 0);
@@ -25,7 +28,14 @@ export default function TraceTimeline({ trace }) {
     <div style={{ padding:14 }}>
       <div style={{ fontFamily:"monospace", fontSize:10, color:"var(--muted)",
         marginBottom:12, letterSpacing:"0.06em" }}>
-        trace <span style={{color:"var(--amber)"}}>{id.slice(0,8)}…</span>
+        {stitched ? "stitched trace " : "trace "}
+        <span style={{color:"var(--amber)"}}>{id.slice(0,8)}…</span>
+        {stitched && (
+          <div style={{ marginTop:5 }}>
+            found on worker(s) {trace.workersFound.join(", ") || "none"}
+            {trace.errors.length > 0 && ` · ${trace.errors.length} worker error(s)`}
+          </div>
+        )}
       </div>
       {stages.map((s, i) => {
         const durMs = s.duration_ms != null ? parseFloat(s.duration_ms) : null;
@@ -49,14 +59,28 @@ export default function TraceTimeline({ trace }) {
               <span style={{color:"#555", fontSize:9, marginLeft:4}}>
                 {s.service}::{short(s.name, 28)}
               </span>
+              {stitched && (
+                <span style={{color:"#777", fontSize:9, marginLeft:6}}>
+                  pid {s.worker_pid}
+                </span>
+              )}
             </div>
           </div>
         );
       })}
       <div style={{ marginTop:12, fontFamily:"monospace", fontSize:10, color:"var(--muted)" }}>
-        end-to-end <span style={{color:"var(--amber)"}}>{totalMs.toFixed(1)}ms</span>
-        {" · "}
-        <span style={{color:"var(--amber)"}}>{stages.length}</span> stages
+        {stitched ? (
+          <>
+            {stages.length} stages across {trace.workersFound.length} worker(s)
+            {" · per-worker intervals; no combined end-to-end duration"}
+          </>
+        ) : (
+          <>
+            end-to-end <span style={{color:"var(--amber)"}}>{totalMs.toFixed(1)}ms</span>
+            {" · "}
+            <span style={{color:"var(--amber)"}}>{stages.length}</span> stages
+          </>
+        )}
       </div>
     </div>
   );

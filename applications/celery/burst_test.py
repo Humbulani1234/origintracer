@@ -9,7 +9,6 @@ URLs hit (all under /tasks/):
     /tasks/cache/<id>/ redis cache hit/miss then celery
     /tasks/bulk-notify/ fans out many celery tasks at once
     /tasks/export/<id>/ heavier task
-    /tasks/failing/ error path (rare)
     /tasks/status/ lightweight poll
 
 Usage:
@@ -19,6 +18,7 @@ Usage:
 """
 
 import argparse
+import json
 import random
 import re
 import threading
@@ -27,7 +27,7 @@ from collections import Counter
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BASE_URL = "http://127.0.0.1:8002"
 DEFAULT_WAVES = 4
 DEFAULT_BURST_SIZE = 30
 DEFAULT_WORKERS = 15
@@ -48,12 +48,23 @@ def build_pool(base: str) -> list:
         pool.append((f"{base}/tasks/export/{eid}/", "GET", None))
     pool.extend(
         [
-            (f"{base}/tasks/bulk-notify/", "GET", None),
-            (f"{base}/tasks/bulk-notify/", "GET", None),
+            (
+                f"{base}/tasks/bulk-notify/",
+                "POST",
+                json.dumps(
+                    {"user_ids": list(range(1, 11))}
+                ).encode(),
+            ),
+            (
+                f"{base}/tasks/bulk-notify/",
+                "POST",
+                json.dumps(
+                    {"user_ids": list(range(1, 11))}
+                ).encode(),
+            ),
             (f"{base}/tasks/status/", "GET", None),
             (f"{base}/tasks/status/", "GET", None),
             (f"{base}/tasks/status/", "GET", None),
-            (f"{base}/tasks/failing/", "GET", None),  # rare
         ]
     )
     return pool
@@ -73,11 +84,21 @@ def fire_burst(base_url: str, count: int, workers: int) -> dict:
             with lock:
                 if not queue:
                     return
-                url, method, _ = queue.pop(0)
+                url, method, body = queue.pop(0)
             t0 = time.perf_counter()
             try:
                 with urlopen(
-                    Request(url, method=method), timeout=15
+                    Request(
+                        url,
+                        data=body,
+                        method=method,
+                        headers=(
+                            {"Content-Type": "application/json"}
+                            if body
+                            else {}
+                        ),
+                    ),
+                    timeout=15,
                 ) as r:
                     status = r.status
                     r.read()
