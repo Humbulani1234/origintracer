@@ -440,7 +440,7 @@ CREATE INDEX IF NOT EXISTS idx_ot_snapshots_customer
 """
 
 _PG_CREATE_WORKER_RUNTIME = """
-CREATE TABLE IF NOT EXISTS worker_runtime_status (
+CREATE TABLE IF NOT EXISTS ot_worker_runtime_status (
     customer_id TEXT NOT NULL,
     worker_instance_id TEXT NOT NULL,
     worker_pid TEXT NOT NULL,
@@ -449,8 +449,8 @@ CREATE TABLE IF NOT EXISTS worker_runtime_status (
     PRIMARY KEY (customer_id, worker_instance_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_worker_runtime_seen
-    ON worker_runtime_status (customer_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ot_worker_runtime_seen
+    ON ot_worker_runtime_status (customer_id, observed_at DESC);
 """
 
 _PG_CREATE_MARKERS = """
@@ -481,58 +481,6 @@ CREATE TABLE IF NOT EXISTS ot_graph_diffs (
 
 _PG_CREATE_CAUSAL_RULES = """
 CREATE TABLE IF NOT EXISTS ot_causal_matches (
-    id SERIAL PRIMARY KEY,
-    customer_id VARCHAR(255) NOT NULL,
-    worker_instance_id TEXT,
-    worker_pid TEXT,
-    timestamp DOUBLE PRECISION NOT NULL,
-    matches JSONB NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-"""
-
-_PG_CREATE_WORKER_RUNTIME = """
-CREATE TABLE IF NOT EXISTS worker_runtime_status (
-    customer_id TEXT NOT NULL,
-    worker_instance_id TEXT NOT NULL,
-    worker_pid TEXT NOT NULL,
-    observed_at DOUBLE PRECISION NOT NULL,
-    status JSONB NOT NULL,
-    PRIMARY KEY (customer_id, worker_instance_id)
-);
-CREATE INDEX IF NOT EXISTS idx_worker_runtime_seen
-    ON worker_runtime_status (customer_id, observed_at DESC);
-"""
-
-_PG_CREATE_MARKERS = """
-CREATE TABLE IF NOT EXISTS st_markers (
-    id BIGSERIAL PRIMARY KEY,
-    customer_id TEXT NOT NULL,
-    worker_instance_id TEXT,
-    worker_pid TEXT,
-    label TEXT NOT NULL,
-    created_at DOUBLE PRECISION NOT NULL
-);
-"""
-
-
-_PG_CREATE_GRAPH_DIFFS = """
-CREATE TABLE IF NOT EXISTS graph_diffs (
-    id SERIAL PRIMARY KEY,
-    customer_id VARCHAR(100) NOT NULL,
-    worker_instance_id TEXT,
-    worker_pid TEXT,
-    snapshot_time TIMESTAMPTZ DEFAULT NOW(),
-    added_nodes JSONB,
-    removed_nodes JSONB,
-    added_edges JSONB,
-    removed_edges JSONB,
-    label VARCHAR(200) -- populated when a deployment marker exists
-);
-"""
-
-_PG_CREATE_CAUSAL_RULES = """
-CREATE TABLE IF NOT EXISTS causal_matches (
     id SERIAL PRIMARY KEY,
     customer_id VARCHAR(255) NOT NULL,
     worker_instance_id TEXT,
