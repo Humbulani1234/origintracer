@@ -29,7 +29,7 @@ build/
 *.egg
 .eggs/
 applications/langgraph/.langgraph_api
-
+agent/PRODUCTION.md
 
 # Testing
 .pytest_cache/

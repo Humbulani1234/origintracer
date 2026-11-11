@@ -60,6 +60,7 @@ function formatSnapshotTime(value) {
 
 export default function App() {
   const [view, setView] = useState("nodes");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [trace, setTrace] = useState(null);
@@ -368,7 +369,18 @@ export default function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {mobileMenuOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+      <aside
+        id="dashboard-sidebar"
+        className={`sidebar ${mobileMenuOpen ? "is-open" : ""}`}
+      >
         <div className="logo">ORIGIN<span>TRACER</span></div>
         <nav className="nav">
           {VIEWS.map((item) => (
@@ -376,6 +388,7 @@ export default function App() {
               key={item}
               className={`nav-item ${view === item ? "active" : ""}`}
               onClick={() => {
+                setMobileMenuOpen(false);
                 if (
                   (item === "stitch" && trace?.source !== "stitched")
                   || (item === "trace" && trace?.source === "stitched")
@@ -446,6 +459,16 @@ export default function App() {
 
       <div className="main">
         <div className="toolbar">
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="dashboard-sidebar"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            <span aria-hidden="true">☰</span>
+          </button>
           <span className="toolbar-title">{view.replace("_", " ")}</span>
           {selectedWorker && (
             <span className={`worker-badge ${selectedWorker.online ? "is-reporting" : "is-stale"}`}>
@@ -473,8 +496,16 @@ export default function App() {
               </div>
             ) : (
               <>
-                {view === "nodes" && <NodeTable nodes={nodes} />}
-                {view === "edges" && <EdgeTable edges={edges} />}
+                {view === "nodes" && (
+                  <div className="table-scroll">
+                    <NodeTable nodes={nodes} />
+                  </div>
+                )}
+                {view === "edges" && (
+                  <div className="table-scroll">
+                    <EdgeTable edges={edges} />
+                  </div>
+                )}
                 {view === "trace" && <TraceTimeline trace={trace} />}
                 {view === "stitch" && (
                   <TraceTimeline trace={trace} mode="stitch" />

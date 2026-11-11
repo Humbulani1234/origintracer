@@ -8,7 +8,7 @@ export default function QueryBar({ onRun, loading }) {
   };
 
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 14px",
+    <div className="query-bar" style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 14px",
       borderBottom:"1px solid var(--border)", background:"var(--bg)" }}>
       <span style={{ fontFamily:"monospace", fontSize:11,
         color:"var(--accent)", flexShrink:0 }}>›</span>
