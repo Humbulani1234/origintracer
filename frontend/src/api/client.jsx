@@ -6,14 +6,14 @@
 
 
 const BASE = import.meta.env.VITE_API_URL || "http://localhost:8001";
-const KEY  = import.meta.env.VITE_API_KEY  || "test-key-123";
+const KEY  = import.meta.env.VITE_API_KEY ?? (import.meta.env.DEV ? "test-key-123" : "");
 
 async function request(path, options = {}) {
   const { method = "GET", data } = options;
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
-      "Authorization": `Bearer ${KEY}`,
+      ...(KEY ? { "Authorization": `Bearer ${KEY}` } : {}),
       ...(data ? { "Content-Type": "application/json" } : {}),
     },
     ...(data ? { body: JSON.stringify(data) } : {}),

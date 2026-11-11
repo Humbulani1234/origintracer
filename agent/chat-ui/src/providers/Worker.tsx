@@ -32,7 +32,13 @@ export function WorkerProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/workers", { cache: "no-store" });
+      const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(
+        /\/+$/,
+        "",
+      );
+      const response = await fetch(`${basePath}/api/workers`, {
+        cache: "no-store",
+      });
       const body = await response.json();
       if (!response.ok) {
         throw new Error(body?.detail ?? "Could not load live workers.");

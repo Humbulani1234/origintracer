@@ -35,8 +35,15 @@ If a service prints a different address or uses a different key, update
 for the chat proxy; `NEXT_PUBLIC_AGENT_SERVER_LABEL` controls the address shown
 in the sidebar. The browser calls the same-origin `/api` route.
 
+For an Nginx deployment mounted under a path such as `/chat-agent`, set
+`NEXT_BASE_PATH` before building and include the same prefix in
+`NEXT_PUBLIC_API_URL` (for example, `https://example.com/chat-agent/api`). The
+Next.js config exposes the prefix to the worker selector as well. See the
+[production runbook](../PRODUCTION.md) for the full setup.
+
 Static demo build and Nginx deployment steps are documented separately in
-[`STATIC_DEMO.md`](STATIC_DEMO.md).
+[`STATIC_DEMO.md`](STATIC_DEMO.md). For the EC2 production deployment, including
+the Linux ARM64 build workaround, see [`../PRODUCTION.md`](../PRODUCTION.md).
 
 The startup agent connectivity warning is disabled by default. To enable the
 `/info` reachability check and show a warning when the Agent Server is

@@ -5,6 +5,7 @@ model, starting the services it depends on, and sending a test investigation.
 It also explains how to approve a supported write action. For a closer look at
 the graph's state and routing, see [Agent Architecture](ARCHITECTURE.md); the
 [evaluation guide](evals/README.md) covers the end-to-end evaluation cases.
+For the single-host EC2 deployment, see the [production runbook](PRODUCTION.md).
 
 ## Install
 

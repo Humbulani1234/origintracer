@@ -59,3 +59,21 @@ instrumented applications as long as it can reach FastAPI. For durable storage
 across backend restarts and hosts, configure PostgreSQL; the in-memory
 repository is intended for development. Live in-memory DSL queries remain
 available through the OriginTracer REPL and local query server.
+
+## Production build under a URL path
+
+The static dashboard can be hosted below a domain path such as `/chat-react/`.
+Copy `.env.production.example` to `.env.production`, then set `VITE_BASE_PATH`
+before building:
+
+```bash
+cp .env.production.example .env.production
+npm ci
+npm run build
+```
+
+Vite writes the static site to `dist/`; serve that directory from Nginx at the
+configured path. `VITE_API_URL` should point to a same-origin Nginx proxy for
+the FastAPI backend. The dashboard is a browser app, so any `VITE_*` value is
+public in the built files. Leave `VITE_API_KEY` empty in production and have
+Nginx inject the backend Authorization header on the proxy route instead.
