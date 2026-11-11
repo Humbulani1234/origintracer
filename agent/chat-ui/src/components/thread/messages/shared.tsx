@@ -33,7 +33,7 @@ function ContentCopyable({
     <TooltipIconButton
       onClick={(e) => handleCopy(e)}
       variant="ghost"
-      tooltip="Copy content"
+      tooltip="Copy"
       disabled={disabled}
     >
       <AnimatePresence
@@ -197,7 +197,7 @@ export function CommandBar({
       {isAiMessage && !!handleRegenerate && (
         <TooltipIconButton
           disabled={isLoading}
-          tooltip="Rerun this request"
+          tooltip="Refresh"
           variant="ghost"
           onClick={handleRegenerate}
         >
@@ -207,7 +207,7 @@ export function CommandBar({
       {showEdit && (
         <TooltipIconButton
           disabled={isLoading}
-          tooltip="Edit and rerun from this message"
+          tooltip="Edit"
           variant="ghost"
           onClick={() => {
             setIsEditing?.(true);
