@@ -15,6 +15,7 @@ import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
 import { useArtifact } from "../artifact";
+import { LoaderCircle } from "lucide-react";
 import {
   hasOriginTracerEvidenceView,
   OriginTracerEvidence,
@@ -891,11 +892,13 @@ export function AssistantMessage({
 
 export function AssistantMessageLoading() {
   return (
-    <div className="mr-auto flex items-start gap-2">
-      <div className="bg-muted flex h-8 items-center gap-1 rounded-2xl px-4 py-2">
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_0.5s_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_1s_infinite] rounded-full"></div>
+    <div className="mr-auto flex items-start gap-2" role="status" aria-live="polite">
+      <div className="bg-muted text-muted-foreground flex min-h-9 items-center gap-2 rounded-2xl px-3 py-2 text-sm">
+        <LoaderCircle
+          aria-hidden="true"
+          className="text-primary size-4 motion-safe:animate-spin"
+        />
+        <span>Working…</span>
       </div>
     </div>
   );
