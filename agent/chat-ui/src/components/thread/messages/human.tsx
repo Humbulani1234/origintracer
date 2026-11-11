@@ -7,6 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { BranchSwitcher, CommandBar } from "./shared";
 import { MultimodalPreview } from "@/components/thread/MultimodalPreview";
 import { isBase64ContentBlock } from "@/lib/multimodal-utils";
+import { ensureToolCallsHaveResponses } from "@/lib/ensure-tool-responses";
+import { v4 as uuidv4 } from "uuid";
+import { toast } from "sonner";
 
 function EditableContent({
   value,
@@ -37,9 +40,11 @@ function EditableContent({
 export function HumanMessage({
   message,
   isLoading,
+  onEditSubmitStart,
 }: {
   message: Message;
   isLoading: boolean;
+  onEditSubmitStart?: () => void;
 }) {
   const thread = useStreamContext();
   const meta = thread.getMessagesMetadata(message);
@@ -49,34 +54,70 @@ export function HumanMessage({
   const [value, setValue] = useState("");
   const contentString = getContentString(message.content);
 
-  const handleSubmitEdit = () => {
-    setIsEditing(false);
+  const handleSubmitEdit = async () => {
+    const parentCheckpointId = parentCheckpoint?.checkpoint_id;
+    let parentState = parentCheckpointId
+      ? (Array.isArray(thread.history) ? thread.history : []).find(
+          (state) => state.checkpoint?.checkpoint_id === parentCheckpointId,
+        )
+      : undefined;
 
-    const newMessage: Message = { type: "human", content: value };
+    // History can be temporarily unavailable while the stream provider is
+    // restoring a conversation. Fetch the exact parent checkpoint as a
+    // fallback so older messages remain editable without relying on the
+    // in-memory history list.
+    if (!parentState && parentCheckpoint) {
+      try {
+        parentState = await thread.client.threads.getState(
+          parentCheckpoint.thread_id,
+          parentCheckpoint,
+        );
+      } catch (error) {
+        console.error("Failed to load the edit parent checkpoint", error);
+      }
+    }
+
+    if (!parentCheckpoint || !parentState) {
+      toast.error("Could not edit this message", {
+        description:
+          "Its parent checkpoint could not be loaded. Refresh the conversation and try again.",
+      });
+      return;
+    }
+
+    const parentValues = parentState.values;
+    const parentMessages = parentValues.messages ?? [];
+    const toolMessages = ensureToolCallsHaveResponses(parentMessages);
+    const editedMessageId = uuidv4();
+    const newMessage: Message = {
+      id: editedMessageId,
+      type: "human",
+      content: value,
+    };
+    const inputMessages = [...toolMessages, newMessage];
+    const originalWorkerPid = Number(meta?.firstSeenState?.values.worker_pid);
+    const workerPid =
+      Number.isSafeInteger(originalWorkerPid) && originalWorkerPid > 0
+        ? originalWorkerPid
+        : undefined;
+
+    setIsEditing(false);
+    onEditSubmitStart?.();
     thread.submit(
-      { messages: [newMessage] },
+      {
+        messages: inputMessages,
+        ...(workerPid === undefined ? {} : { worker_pid: workerPid }),
+      },
       {
         checkpoint: parentCheckpoint,
         streamMode: ["values"],
         streamSubgraphs: true,
         streamResumable: true,
-        optimisticValues: (prev) => {
-          const values = meta?.firstSeenState?.values;
-          if (!values) return prev;
-
-          const messages = [...(values.messages ?? [])];
-          const editedIndex = messages.findIndex(
-            (existing) => message.id != null && existing.id === message.id,
-          );
-          if (editedIndex >= 0) {
-            messages[editedIndex] = newMessage;
-          } else {
-            messages.push(newMessage);
-          }
-
+        optimisticValues: () => {
           return {
-            ...values,
-            messages,
+            ...parentValues,
+            ...(workerPid === undefined ? {} : { worker_pid: workerPid }),
+            messages: [...parentMessages, ...inputMessages],
           };
         },
       },

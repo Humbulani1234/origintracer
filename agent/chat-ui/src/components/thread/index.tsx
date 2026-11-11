@@ -95,11 +95,22 @@ export function Thread() {
   const stream = useStreamContext();
   const { workerPid } = useWorker();
   const messages = stream.messages;
+  const visibleMessages = messages.filter(
+    (message) => !message.id?.startsWith(DO_NOT_RENDER_ID_PREFIX),
+  );
   const isLoading = stream.isLoading;
+  const [loadingAnchorIndex, setLoadingAnchorIndex] = useState<number | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!isLoading) setLoadingAnchorIndex(null);
+  }, [isLoading]);
 
   const lastError = useRef<string | undefined>(undefined);
 
   const setThreadId = (id: string | null) => {
+    setLoadingAnchorIndex(null);
     _setThreadId(id);
 
     // close artifact and reset artifact context
@@ -160,6 +171,7 @@ export function Thread() {
     };
 
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
+    setLoadingAnchorIndex(visibleMessages.length);
     const context =
       Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
 
@@ -200,6 +212,11 @@ export function Thread() {
     sourceWorkerPid: number | undefined,
   ) => {
     if (!parentCheckpoint) return;
+
+    const promptIndex = visibleMessages.findIndex(
+      (message) => message.id === sourceMessage.id,
+    );
+    setLoadingAnchorIndex(promptIndex >= 0 ? promptIndex : null);
 
     const replayMessage: Message = {
       id: uuidv4(),
@@ -274,36 +291,44 @@ export function Thread() {
               contentClassName="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-4 pt-8 pb-16"
               content={
                 <>
-                  {messages
-                    .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                    .map((message, index, visibleMessages) => {
-                      if (message.type === "human") {
-                        const isLatestHumanMessage = !visibleMessages
-                          .slice(index + 1)
-                          .some((later) => later.type === "human");
-
-                        return (
-                          <Fragment key={message.id || message.type + "-" + index}>
-                            <HumanMessage
-                              message={message}
-                              isLoading={isLoading}
-                            />
-                            {isLatestHumanMessage && stream.interrupt && (
-                              <ActionApprovalInterrupt key="action-approval" />
-                            )}
-                          </Fragment>
-                        );
-                      }
+                  {visibleMessages.map((message, index) => {
+                    if (message.type === "human") {
+                      const isLatestHumanMessage = !visibleMessages
+                        .slice(index + 1)
+                        .some((later) => later.type === "human");
 
                       return (
+                        <Fragment key={message.id || message.type + "-" + index}>
+                          <HumanMessage
+                            message={message}
+                            isLoading={isLoading}
+                            onEditSubmitStart={() => {
+                              setLoadingAnchorIndex(index);
+                            }}
+                          />
+                          {isLatestHumanMessage && stream.interrupt && (
+                            <ActionApprovalInterrupt key="action-approval" />
+                          )}
+                          {isLoading && loadingAnchorIndex === index && (
+                            <AssistantMessageLoading key="anchored-loading" />
+                          )}
+                        </Fragment>
+                      );
+                    }
+
+                    return (
+                      <Fragment key={message.id || message.type + "-" + index}>
                         <AssistantMessage
-                          key={message.id || message.type + "-" + index}
                           message={message}
                           isLoading={isLoading}
                           handleRegenerate={handleRegenerate}
                         />
-                      );
-                    })}
+                        {isLoading && loadingAnchorIndex === index && (
+                          <AssistantMessageLoading key="anchored-loading" />
+                        )}
+                      </Fragment>
+                    );
+                  })}
                   {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
                     We need to render it outside of the messages list, since there are no messages to render */}
                   {hasNoAIOrToolMessages && !!stream.interrupt && (
@@ -314,7 +339,9 @@ export function Thread() {
                       handleRegenerate={handleRegenerate}
                     />
                   )}
-                  {isLoading && <AssistantMessageLoading />}
+                  {isLoading && loadingAnchorIndex === null && (
+                    <AssistantMessageLoading />
+                  )}
                 </>
               }
               footer={
