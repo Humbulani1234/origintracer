@@ -76,7 +76,13 @@ function ScrollToBottom(props: { className?: string }) {
   );
 }
 
-export function Thread() {
+export function Thread({
+  oidcEnabled = false,
+  authenticated = false,
+}: {
+  oidcEnabled?: boolean;
+  authenticated?: boolean;
+}) {
   const [artifactContext, setArtifactContext] = useArtifactContext();
   const [artifactOpen, closeArtifact] = useArtifactOpen();
 
@@ -273,6 +279,8 @@ export function Thread() {
         mobileOpen={mobileSidebarOpen}
         onMobileOpenChange={setMobileSidebarOpen}
         onNewThread={startNewThread}
+        oidcEnabled={oidcEnabled}
+        authenticated={authenticated}
       />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 bg-background px-3 sm:px-5">

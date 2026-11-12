@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
+import { originTracerAuthorization } from "@/lib/backend-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
   const backendUrl = process.env.ORIGINTRACER_API_URL ?? "http://127.0.0.1:8001";
-  const apiKey = process.env.ORIGINTRACER_API_KEY ?? "test-key-123";
+  const authorization = await originTracerAuthorization();
+  if (!authorization) {
+    return NextResponse.json(
+      { detail: "Sign in is required to view workers." },
+      { status: 401 },
+    );
+  }
 
   try {
     const response = await fetch(
       `${backendUrl.replace(/\/+$/, "")}/api/v1/snapshots`,
       {
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: authorization,
         },
         cache: "no-store",
       }
@@ -40,7 +47,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json(
       {
-        detail: `Could not reach the OriginTracer backend at ${backendUrl}.`,
+        detail: "Could not reach the OriginTracer backend.",
       },
       { status: 502 }
     );

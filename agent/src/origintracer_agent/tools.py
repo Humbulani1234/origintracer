@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import wraps
 from typing import Annotated, Any
 
 from langchain.tools import ToolRuntime, tool
@@ -10,6 +11,7 @@ from langchain_core.tools import ToolException
 from pydantic import Field
 
 from origintracer_agent.backend import (
+    authenticated_backend_context,
     build_causal_query,
     build_diff_query,
     build_event_query,
@@ -21,11 +23,38 @@ from origintracer_agent.backend import (
     query_worker,
     record_deployment_marker,
     stitch_stored_trace,
+    user_access_token_from_runtime,
     validate_pid,
 )
 from origintracer_agent.backend import (
     get_worker_snapshot as fetch_worker_snapshot,
 )
+
+
+def origintracer_tool(function: Any) -> Any:
+    """Bind each tool's backend reads to its authenticated LangGraph user."""
+
+    @wraps(function)
+    async def call_with_user_scope(
+        *args: Any, **kwargs: Any
+    ) -> Any:
+        runtime = kwargs.get("runtime")
+        if runtime is None:
+            runtime = next(
+                (
+                    value
+                    for value in args
+                    if hasattr(value, "config")
+                    and hasattr(value, "state")
+                ),
+                None,
+            )
+        with authenticated_backend_context(
+            user_access_token_from_runtime(runtime)
+        ):
+            return await function(*args, **kwargs)
+
+    return tool(call_with_user_scope)
 
 
 def _pid(runtime: ToolRuntime[Any]) -> int:
@@ -39,8 +68,10 @@ def _instance_id(runtime: ToolRuntime[Any]) -> str | None:
     return str(value) if value else None
 
 
-@tool
-async def list_live_workers() -> dict[str, Any]:
+@origintracer_tool
+async def list_live_workers(
+    runtime: ToolRuntime[Any],
+) -> dict[str, Any]:
     """List worker instances with fresh runtime heartbeats.
 
     Use this when no worker is selected or when checking which workers are reporting. It
@@ -52,6 +83,11 @@ async def list_live_workers() -> dict[str, Any]:
     dict[str, Any]
         Inventory source, observation time, count, and reporting worker rows. Each row
         includes a PID and stable worker-instance ID.
+
+    Parameters
+    ----------
+    runtime : ToolRuntime
+        Authenticated request context supplied by LangGraph Server.
     """
     snapshots = await list_workers()
     reporting = [
@@ -90,8 +126,9 @@ def _overview_graph_payload(result: Any) -> Any:
     }
 
 
-@tool
+@origintracer_tool
 async def get_live_workers_overview(
+    runtime: ToolRuntime[Any],
     max_workers: int = 10,
 ) -> dict[str, Any]:
     """
@@ -107,6 +144,8 @@ async def get_live_workers_overview(
     max_workers : int, default=10
         Maximum number of reporting workers to inspect. The value
         is clamped to the range 1–20.
+    runtime : ToolRuntime
+        Authenticated request context supplied by LangGraph Server.
 
     Returns
     -------
@@ -181,7 +220,7 @@ async def get_live_workers_overview(
     }
 
 
-@tool
+@origintracer_tool
 async def get_worker_status(
     runtime: ToolRuntime[Any],
 ) -> dict[str, Any]:
@@ -207,7 +246,7 @@ async def get_worker_status(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_snapshot(
     runtime: ToolRuntime[Any],
 ) -> dict[str, Any]:
@@ -239,7 +278,7 @@ async def get_worker_snapshot(
     return await fetch_worker_snapshot(str(instance_id))
 
 
-@tool
+@origintracer_tool
 async def get_worker_nodes(
     runtime: ToolRuntime[Any], limit: int = 50
 ) -> dict[str, Any]:
@@ -267,7 +306,7 @@ async def get_worker_nodes(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_edges(
     runtime: ToolRuntime[Any],
 ) -> dict[str, Any]:
@@ -291,7 +330,7 @@ async def get_worker_edges(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_graph(
     runtime: ToolRuntime[Any],
 ) -> dict[str, Any]:
@@ -315,7 +354,7 @@ async def get_worker_graph(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_hotspots(
     runtime: ToolRuntime[Any], top: int = 10
 ) -> dict[str, Any]:
@@ -344,7 +383,7 @@ async def get_worker_hotspots(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_database_hotspots(
     runtime: ToolRuntime[Any], limit: int = 20
 ) -> dict[str, Any]:
@@ -375,7 +414,7 @@ async def get_worker_database_hotspots(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_database_events(
     runtime: ToolRuntime[Any],
     limit: int = 50,
@@ -412,7 +451,7 @@ async def get_worker_database_events(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_component_diagnostics(
     runtime: ToolRuntime[Any],
     services: Annotated[
@@ -652,7 +691,7 @@ async def get_worker_component_diagnostics(
     }
 
 
-@tool
+@origintracer_tool
 async def get_worker_events(
     runtime: ToolRuntime[Any],
     limit: Annotated[
@@ -731,7 +770,7 @@ async def get_worker_events(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_trace(
     runtime: ToolRuntime[Any], trace_id: str
 ) -> dict[str, Any]:
@@ -759,7 +798,7 @@ async def get_worker_trace(
     )
 
 
-@tool
+@origintracer_tool
 async def get_worker_stitched_trace(
     runtime: ToolRuntime[Any], trace_id: str
 ) -> dict[str, Any]:
@@ -810,7 +849,7 @@ async def get_worker_stitched_trace(
     }
 
 
-@tool
+@origintracer_tool
 async def get_worker_causal_history(
     runtime: ToolRuntime[Any], limit: int = 50
 ) -> dict[str, Any]:
@@ -852,7 +891,7 @@ async def get_worker_causal_history(
     }
 
 
-@tool
+@origintracer_tool
 async def evaluate_worker_rules(
     runtime: ToolRuntime[Any], tags: list[str] | None = None
 ) -> dict[str, Any]:
@@ -905,7 +944,7 @@ async def evaluate_worker_rules(
     }
 
 
-@tool
+@origintracer_tool
 async def get_worker_changes(
     runtime: ToolRuntime[Any], since: str = "deployment"
 ) -> dict[str, Any]:
@@ -1380,7 +1419,7 @@ def read_only_tool_catalog(
     ]
 
 
-@tool
+@origintracer_tool
 async def record_deployment_marker_action(
     label: str = "deployment",
     worker_pid: str = "",
@@ -1483,7 +1522,7 @@ async def record_deployment_marker_action(
     )
 
 
-@tool
+@origintracer_tool
 async def evaluate_and_record_rules_action(
     tags: list[str] | None = None,
     worker_instance_id: str = "",

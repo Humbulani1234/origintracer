@@ -7,13 +7,17 @@
 
 const BASE = import.meta.env.VITE_API_URL || "http://localhost:8001";
 const KEY  = import.meta.env.VITE_API_KEY ?? (import.meta.env.DEV ? "test-key-123" : "");
+let accessTokenProvider = null;
+
+function setAccessTokenProvider(provider) { accessTokenProvider = provider; }
 
 async function request(path, options = {}) {
   const { method = "GET", data } = options;
+  const accessToken = accessTokenProvider ? await accessTokenProvider() : null;
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
-      ...(KEY ? { "Authorization": `Bearer ${KEY}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : KEY ? { Authorization: `Bearer ${KEY}` } : {}),
       ...(data ? { "Content-Type": "application/json" } : {}),
     },
     ...(data ? { body: JSON.stringify(data) } : {}),
@@ -27,6 +31,10 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  setAccessTokenProvider,
+  apiKeys: () => request("/api/v1/api-keys"),
+  createApiKey: (name) => request("/api/v1/api-keys", { method: "POST", data: { name } }),
+  revokeApiKey: (keyId) => request(`/api/v1/api-keys/${encodeURIComponent(keyId)}`, { method: "DELETE" }),
   nodes: (workerInstanceId) => request(`/api/v1/nodes?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
   edges: (workerInstanceId) => request(`/api/v1/edges?worker_instance_id=${encodeURIComponent(workerInstanceId)}`),
   events: (workerInstanceId, limit = 30) => request(

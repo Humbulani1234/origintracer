@@ -155,3 +155,30 @@ body {
   .status-bar { gap: 8px !important; padding: 6px 9px !important; flex-wrap: wrap; }
   .status-bar > span:last-child { margin-left: auto !important; }
 }
+
+
+/* OIDC sign-in and API-key management */
+.auth-screen { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: var(--bg); color: var(--text); }
+.auth-card { width: min(100%, 420px); display: flex; flex-direction: column; gap: 14px; padding: 30px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg2); box-shadow: 0 12px 36px #0005; }
+.auth-brand { color: var(--accent); font-family: var(--mono); font-size: 11px; letter-spacing: .16em; }
+.auth-card h1 { font-size: 24px; }
+.auth-card p, .auth-card small, .auth-note, .api-keys > p { color: var(--muted); line-height: 1.6; }
+.auth-card button, .api-keys button { min-height: 42px; border: 1px solid var(--border); border-radius: 8px; padding: 0 14px; cursor: pointer; }
+.auth-primary { background: #fff; color: #1f1f1f; font-weight: 600; }
+.auth-primary:hover { background: #f8faff; }
+.auth-google { display: flex; align-items: center; justify-content: center; gap: 10px; background: #fff; color: #1f1f1f; font-weight: 600; }
+.auth-divider { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+.auth-divider span { height: 1px; flex: 1; background: var(--border); }
+.auth-error { padding: 10px; border: 1px solid #a33; border-radius: 7px; color: #ffaaa5; }
+.auth-controls { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.auth-controls button, .api-keys tbody button { min-height: 30px; background: transparent; color: var(--accent); }
+.auth-controls button { border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; cursor: pointer; }
+.api-keys { display: grid; gap: 18px; max-width: 100%; }
+.api-keys form { display: flex; flex-wrap: wrap; gap: 8px; }
+.api-keys input { flex: 1 1 220px; min-width: 0; min-height: 40px; border: 1px solid var(--border); border-radius: 7px; padding: 0 10px; background: var(--bg2); color: var(--text); }
+.api-keys form button { background: var(--accent); color: #07110f; }
+.created-key { display: grid; gap: 8px; padding: 14px; border: 1px solid #a87920; border-radius: 8px; }
+.created-key code { overflow-wrap: anywhere; }
+.api-key-table { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); }
+.api-key-table table { width: 100%; min-width: 520px; border-collapse: collapse; text-align: left; }
+.api-key-table th, .api-key-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }

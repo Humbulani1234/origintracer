@@ -28,7 +28,12 @@ from origintracer.context.vars import (
 )
 from pydantic import Field, ValidationError, create_model
 
-from origintracer_agent.backend import list_workers, validate_pid
+from origintracer_agent.backend import (
+    authenticated_backend_context,
+    list_workers,
+    user_access_token_from_config,
+    validate_pid,
+)
 from origintracer_agent.config import (
     configured_chat_model,
     model_name,
@@ -2102,6 +2107,7 @@ def _candidate_investigation_id(
 
 async def classify_request(
     state: InvestigationState,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Classify the newest user message and prepare its route.
 
@@ -2189,7 +2195,10 @@ async def classify_request(
 
     selected_pid = _valid_pid_text(state.get("worker_pid"))
     try:
-        available_workers = await list_workers()
+        with authenticated_backend_context(
+            user_access_token_from_config(config)
+        ):
+            available_workers = await list_workers()
     except ToolException as exc:
         return {
             "last_user_message_id": message_id,
@@ -2549,6 +2558,7 @@ async def execute_approved_action(
 
 async def prepare_investigation(
     state: InvestigationState,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Resolve the planned worker scope against uploaded snapshot inventory.
 
@@ -2620,7 +2630,10 @@ async def prepare_investigation(
             "status": "gathering_evidence",
         }
     try:
-        workers = await list_workers()
+        with authenticated_backend_context(
+            user_access_token_from_config(config)
+        ):
+            workers = await list_workers()
     except ToolException as exc:
         return {
             "last_user_message_id": message_id,

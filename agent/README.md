@@ -15,6 +15,8 @@ React dashboard as a data source.
   routing, worker scope, evidence gathering, assessment, reports, and actions.
 - [Setup and operations](OPERATIONS.md): installation, `.env.example`,
   Ollama and Groq configuration, running the services, and sending requests.
+- [Local authentication setup](AUTHENTICATION_SETUP.md): Keycloak clients,
+  issuer and audience settings, UI sign-in, and worker API keys.
 - [Agent graph evaluations](evals/README.md): run and extend end-to-end graph
   evaluation cases.
 

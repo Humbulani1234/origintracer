@@ -1,10 +1,15 @@
 # Local environment files
 .env
 .env.example
+.env.local
+.env.production
+.env.*.local
 
 # LangGraph local runtime data
 .langgraph_api/
 
 # Local setup files
+AUTHENTICATION_SETUP.md
 DOCKER_SETUP.md
+PRODUCTION.md
 entrypoint.sh

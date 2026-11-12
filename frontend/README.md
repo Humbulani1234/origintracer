@@ -75,5 +75,28 @@ npm run build
 Vite writes the static site to `dist/`; serve that directory from Nginx at the
 configured path. `VITE_API_URL` should point to a same-origin Nginx proxy for
 the FastAPI backend. The dashboard is a browser app, so any `VITE_*` value is
-public in the built files. Leave `VITE_API_KEY` empty in production and have
-Nginx inject the backend Authorization header on the proxy route instead.
+public in the built files. Leave `VITE_API_KEY` empty in production. Nginx should forward the browser
+Authorization header to FastAPI; it must not inject one shared user credential.
+
+
+## Sign-in and worker API keys
+
+For the complete local Keycloak client, audience, issuer, and worker-key setup, see the [agent authentication setup guide](../agent/AUTHENTICATION_SETUP.md).
+
+
+The dashboard can use Keycloak OpenID Connect. Configure a public Keycloak client
+with authorization-code flow and PKCE, and register both redirect URIs
+`https://your-domain/chat-react/auth/callback` and
+`https://your-domain/chat-react/auth/silent-callback`, plus the matching post-logout URL.
+Enable account registration in the realm if users should be able to create accounts.
+For Google sign-in, configure Google as a Keycloak identity provider; the dashboard
+button sends Keycloak's `kc_idp_hint=google` parameter.
+
+Set `VITE_OIDC_AUTHORITY` and `VITE_OIDC_CLIENT_ID` in `.env.production` before
+building. The browser sends its short-lived OIDC access token to the same-origin
+`VITE_API_URL` proxy, which must forward the Authorization header to FastAPI. Do
+not put a production API key in a `VITE_*` variable. Signed-in users can create,
+list, and revoke per-worker API keys from the **api keys** view. A new key is
+shown only once and should be stored in the instrumented worker's environment.
+Without OIDC settings, local development keeps using the configured development
+API key.

@@ -58,8 +58,14 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from backend.auth.service import (
+    ApiKeyStore,
+    OIDCVerifier,
+    Principal,
+    authenticate,
+)
 from origintracer.storage.base import InMemoryRepository
 
 logging.basicConfig(
@@ -125,12 +131,20 @@ def _register_causal_rules():
 async def lifespan(app: FastAPI):
     _load_api_keys()
     _init_repository()
+    _init_authentication()
     _load_snapshots_on_startup()
     _register_causal_rules()
     logger.info("OriginTracer backend ready")
     try:
         yield
     finally:
+        if _auth_connection is not None:
+            try:
+                _auth_connection.close()
+            except Exception:
+                logger.exception(
+                    "Could not close API-key storage connection"
+                )
         if _repository and hasattr(_repository, "close"):
             try:
                 _repository.close()
@@ -177,22 +191,89 @@ _repository: Optional[Any] = None
 
 # API key:customer_id mapping - for development
 _valid_api_keys: Dict[str, str] = {}
+_api_key_store: Optional[ApiKeyStore] = None
+_oidc_verifier: Optional[OIDCVerifier] = None
+_auth_connection: Optional[Any] = None
 
 
 def _load_api_keys() -> None:
-    # Implement proper loading of APIs for real workflow
     global _valid_api_keys
+    _valid_api_keys = {}
     raw = os.getenv("ORIGINTRACER_API_KEYS", "")
     for pair in raw.split(","):
         pair = pair.strip()
         if ":" in pair:
             key, customer = pair.split(":", 1)
             _valid_api_keys[key.strip()] = customer.strip()
-    if not _valid_api_keys:
+    if (
+        not _valid_api_keys
+        and os.getenv("ORIGINTRACER_ENV", "development").lower()
+        != "production"
+    ):
         _valid_api_keys["test-key-123"] = "local_dev"
         logger.warning(
             "ORIGINTRACER_API_KEYS not set - "
-            "test-key-123 accepted for development"
+            "test-key-123 accepted in development mode"
+        )
+    if (
+        not _valid_api_keys
+        and os.getenv("ORIGINTRACER_ENV", "development").lower()
+        == "production"
+    ):
+        logger.info(
+            "No environment API keys configured; OIDC and issued keys remain available"
+        )
+
+
+def _init_authentication() -> None:
+    """Initialize persistent API keys and optional OIDC verification."""
+    global _api_key_store, _oidc_verifier, _auth_connection
+    db_dsn = os.getenv("ORIGINTRACER_DB_DSN")
+    production = (
+        os.getenv("ORIGINTRACER_ENV", "development").lower()
+        == "production"
+    )
+    if production and not db_dsn:
+        raise RuntimeError(
+            "ORIGINTRACER_DB_DSN is required in production for persistent API-key storage"
+        )
+    auth_connection = None
+    if db_dsn:
+        try:
+            import psycopg2
+
+            auth_connection = psycopg2.connect(db_dsn)
+        except Exception as exc:
+            logger.error(
+                "Could not connect to PostgreSQL for API-key storage: %s",
+                exc,
+            )
+            raise RuntimeError(
+                "Persistent API-key storage is unavailable"
+            ) from exc
+    _auth_connection = auth_connection
+    _api_key_store = ApiKeyStore(auth_connection)
+
+    issuer = os.getenv("ORIGINTRACER_OIDC_ISSUER", "").strip()
+    audience = os.getenv(
+        "ORIGINTRACER_OIDC_AUDIENCE", ""
+    ).strip()
+    jwks_url = (
+        os.getenv("ORIGINTRACER_OIDC_JWKS_URL", "").strip()
+        or None
+    )
+    if bool(issuer) != bool(audience):
+        raise RuntimeError(
+            "Configure both ORIGINTRACER_OIDC_ISSUER and ORIGINTRACER_OIDC_AUDIENCE"
+        )
+    _oidc_verifier = (
+        OIDCVerifier(issuer, audience, jwks_url)
+        if issuer
+        else None
+    )
+    if _oidc_verifier:
+        logger.info(
+            "OIDC authentication enabled for issuer %s", issuer
         )
 
 
@@ -241,6 +322,8 @@ def _load_snapshots_on_startup() -> None:
         return
 
     customer_ids = set(_valid_api_keys.values())
+    if _api_key_store is not None:
+        customer_ids.update(_api_key_store.customers())
     for customer_id in customer_ids:
         try:
             rows = _repository.list_latest_snapshots(customer_id)
@@ -283,10 +366,10 @@ def _load_snapshots_on_startup() -> None:
             )
 
 
-def _authenticate(authorization: Optional[str]) -> str:
-    """
-    Validate Bearer token, return customer_id.
-    """
+def _authenticate_principal(
+    authorization: Optional[str],
+) -> Principal:
+    """Validate a bearer credential and return its account identity."""
     if not authorization or not authorization.startswith(
         "Bearer "
     ):
@@ -294,13 +377,146 @@ def _authenticate(authorization: Optional[str]) -> str:
             status_code=401,
             detail="Missing Authorization header",
         )
-    api_key = authorization[7:]
-    customer_id = _valid_api_keys.get(api_key)
-    if not customer_id:
+    token = authorization[7:].strip()
+    if not token:
         raise HTTPException(
-            status_code=401, detail="Invalid API key"
+            status_code=401, detail="Invalid credentials"
         )
-    return customer_id
+    configured_customer = _valid_api_keys.get(token)
+    if configured_customer:
+        return Principal(
+            customer_id=configured_customer,
+            method="configured_api_key",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=401, detail="Invalid credentials"
+        )
+    try:
+        principal = authenticate(
+            token,
+            _valid_api_keys,
+            _api_key_store,
+            _oidc_verifier,
+        )
+    except Exception as exc:
+        logger.info(
+            "Bearer token validation failed: %s",
+            type(exc).__name__,
+        )
+        principal = None
+    if principal is None:
+        raise HTTPException(
+            status_code=401, detail="Invalid credentials"
+        )
+    return principal
+
+
+def _authenticate(authorization: Optional[str]) -> str:
+    """Validate a bearer credential and return its customer namespace."""
+    return _authenticate_principal(authorization).customer_id
+
+
+class ApiKeyCreateRequest(BaseModel):
+    """Request to create a named API key."""
+
+    name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        """Trim whitespace and reject a blank API-key label."""
+        value = value.strip()
+        if not value:
+            raise ValueError(
+                "name must contain a non-whitespace character"
+            )
+        return value
+
+
+@app.get("/api/v1/auth/me")
+def get_authenticated_identity(
+    authorization: Optional[str] = Header(None),
+) -> dict[str, str]:
+    """Return the account identity represented by the bearer credential."""
+    principal = _authenticate_principal(authorization)
+    return {
+        "customer_id": principal.customer_id,
+        "auth_method": principal.method,
+        **(
+            {"subject": principal.subject}
+            if principal.subject
+            else {}
+        ),
+    }
+
+
+@app.get("/api/v1/api-keys")
+def list_api_keys(
+    authorization: Optional[str] = Header(None),
+) -> dict[str, Any]:
+    """List safe API-key metadata for the signed-in OIDC account."""
+    principal = _authenticate_principal(authorization)
+    if principal.method != "oidc":
+        raise HTTPException(
+            status_code=403,
+            detail="OIDC sign-in is required to manage API keys",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API-key storage is unavailable",
+        )
+    return {
+        "data": _api_key_store.list_for_customer(
+            principal.customer_id
+        )
+    }
+
+
+@app.post("/api/v1/api-keys", status_code=201)
+def create_api_key(
+    body: ApiKeyCreateRequest,
+    authorization: Optional[str] = Header(None),
+) -> dict[str, Any]:
+    """Create a customer-scoped key and return its secret only once."""
+    principal = _authenticate_principal(authorization)
+    if principal.method != "oidc":
+        raise HTTPException(
+            status_code=403,
+            detail="OIDC sign-in is required to manage API keys",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API-key storage is unavailable",
+        )
+    secret, metadata = _api_key_store.create(
+        principal.customer_id, body.name.strip()
+    )
+    return {"api_key": secret, "data": metadata}
+
+
+@app.delete("/api/v1/api-keys/{key_id}", status_code=204)
+def revoke_api_key(
+    key_id: str, authorization: Optional[str] = Header(None)
+) -> None:
+    """Revoke one key owned by the signed-in OIDC account."""
+    principal = _authenticate_principal(authorization)
+    if principal.method != "oidc":
+        raise HTTPException(
+            status_code=403,
+            detail="OIDC sign-in is required to manage API keys",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API-key storage is unavailable",
+        )
+    if not _api_key_store.revoke(principal.customer_id, key_id):
+        raise HTTPException(
+            status_code=404, detail="API key not found"
+        )
 
 
 def get_graph(

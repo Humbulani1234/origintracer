@@ -13,6 +13,8 @@ import CausalHistory from "./components/CausalHistory";
 import ContentView from "./components/ContentView";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { api } from "./api/client";
+import ApiKeys from "./components/ApiKeys";
+import { AuthControls } from "./components/AuthGate";
 
 const VIEWS = [
   "nodes",
@@ -27,6 +29,7 @@ const VIEWS = [
   "history",
   "llm_content",
   "tool_content",
+  "api_keys",
 ];
 
 const WORKERS_PER_PAGE = 4;
@@ -476,6 +479,7 @@ export default function App() {
             </span>
           )}
           <span className="badge">{badge[view]}</span>
+          <AuthControls />
           {backendError && (
             <span className="backend-error">{backendError}</span>
           )}
@@ -483,7 +487,9 @@ export default function App() {
         <QueryBar onRun={runQuery} loading={loading} />
         <div className="content">
           <ErrorBoundary key={view}>
-            {noReportingWorkers ? (
+            {view === "api_keys" ? (
+              <ApiKeys />
+            ) : noReportingWorkers ? (
               <div className="no-worker-state">
                 <div className="no-worker-title">
                   No currently reporting workers

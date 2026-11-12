@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,16 +24,56 @@ _REQUEST_TIMEOUT_S = 12.0
 _MAX_TOOL_RESULT_CHARS = 24_000
 _SAFE_FILTER = re.compile(r"^[A-Za-z0-9_.:/-]{1,200}$")
 _SAFE_TAG = re.compile(r"^[A-Za-z0-9_.:/+-]{1,200}$")
+_USER_ACCESS_TOKEN: ContextVar[str | None] = ContextVar(
+    "origintracer_user_access_token", default=None
+)
 
 
 def _headers() -> dict[str, str]:
     """Build backend authentication headers without exposing the key."""
+    user_token = _USER_ACCESS_TOKEN.get()
+    if user_token:
+        return {"Authorization": f"Bearer {user_token}"}
     key = backend_api_key()
     if not key:
         raise ToolException(
             "ORIGINTRACER_API_KEY is not configured for the agent service."
         )
     return {"Authorization": f"Bearer {key}"}
+
+
+def user_access_token_from_runtime(runtime: Any) -> str | None:
+    """Read the verified user token attached by LangGraph Server auth."""
+    config = getattr(runtime, "config", None) or {}
+    return user_access_token_from_config(config)
+
+
+def user_access_token_from_config(config: Any) -> str | None:
+    """Read the verified user token from LangGraph's request configuration."""
+    configurable = (
+        config.get("configurable", {})
+        if isinstance(config, dict)
+        else {}
+    )
+    user = configurable.get("langgraph_auth_user", {})
+    token = (
+        user.get("access_token")
+        if isinstance(user, dict)
+        else None
+    )
+    return token if isinstance(token, str) and token else None
+
+
+@contextmanager
+def authenticated_backend_context(
+    user_access_token: str | None,
+) -> Iterator[None]:
+    """Scope backend calls in one async tool task to its verified user token."""
+    token = _USER_ACCESS_TOKEN.set(user_access_token)
+    try:
+        yield
+    finally:
+        _USER_ACCESS_TOKEN.reset(token)
 
 
 async def _request(

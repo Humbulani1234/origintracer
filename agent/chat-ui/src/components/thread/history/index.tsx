@@ -30,6 +30,8 @@ import { toast } from "sonner";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { isStaticDemo } from "@/lib/static-demo";
+import { signIn } from "next-auth/react";
+import Link from "next/link";
 
 function ThreadList({
   threads,
@@ -266,10 +268,14 @@ function HowItWorksDialog() {
 function SidebarContents({
   onNewThread,
   onThreadSelect,
+  oidcEnabled,
+  authenticated,
   mobile = false,
 }: {
   onNewThread: () => void;
   onThreadSelect?: () => void;
+  oidcEnabled: boolean;
+  authenticated: boolean;
   mobile?: boolean;
 }) {
   const agentApiDocsUrl =
@@ -408,15 +414,43 @@ function SidebarContents({
           )}
           {themeReady ? (isDarkMode ? "Light mode" : "Dark mode") : "Theme"}
         </Button>
-        <Button
-          variant="ghost"
-          className="h-10 w-full justify-start gap-3 px-3"
-          disabled
-          title="Sign-in will be available when accounts are configured."
-        >
-          <UserRound className="text-muted-foreground size-4" />
-          Sign in
-        </Button>
+        {authenticated ? (
+          <Button
+            asChild
+            variant="ghost"
+            className="h-10 w-full justify-start gap-3 px-3"
+          >
+            <Link href={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/account`}>
+              <UserRound className="text-muted-foreground size-4" />
+              Account
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            className="h-10 w-full justify-start gap-3 px-3"
+            title={
+              oidcEnabled
+                ? "Sign in with your OriginTracer account."
+                : "Configure Keycloak in chat-ui/.env.local to enable sign-in."
+            }
+            onClick={() => {
+              if (!oidcEnabled) {
+                toast.info("Sign-in is not configured", {
+                  description:
+                    "Set AUTH_KEYCLOAK_ISSUER, AUTH_KEYCLOAK_ID, and AUTH_KEYCLOAK_SECRET in chat-ui/.env.local, then restart the UI.",
+                });
+                return;
+              }
+              void signIn("keycloak", {
+                redirectTo: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`,
+              });
+            }}
+          >
+            <UserRound className="text-muted-foreground size-4" />
+            Sign in
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -426,15 +460,23 @@ export default function ThreadHistory({
   mobileOpen,
   onMobileOpenChange,
   onNewThread,
+  oidcEnabled,
+  authenticated,
 }: {
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
   onNewThread: () => void;
+  oidcEnabled: boolean;
+  authenticated: boolean;
 }) {
   return (
     <>
       <aside className="border-sidebar-border hidden h-full w-72 shrink-0 border-r lg:block">
-        <SidebarContents onNewThread={onNewThread} />
+        <SidebarContents
+          onNewThread={onNewThread}
+          oidcEnabled={oidcEnabled}
+          authenticated={authenticated}
+        />
       </aside>
       <div className="lg:hidden">
         <Sheet
@@ -450,6 +492,8 @@ export default function ThreadHistory({
             </SheetHeader>
             <SidebarContents
               mobile
+              oidcEnabled={oidcEnabled}
+              authenticated={authenticated}
               onNewThread={() => {
                 onNewThread();
                 onMobileOpenChange(false);

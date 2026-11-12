@@ -1,26 +1,22 @@
-"use client";
-
-import { Thread } from "@/components/thread";
-import { StreamProvider } from "@/providers/Stream";
-import { ThreadProvider } from "@/providers/Thread";
-import { ArtifactProvider } from "@/components/thread/artifact";
-import { Toaster } from "@/components/ui/sonner";
-import { WorkerProvider } from "@/providers/Worker";
+import { AccountActions } from "@/components/auth/account-actions";
+import { SignInPanel } from "@/components/auth/sign-in-panel";
+import { ChatApp } from "@/components/chat-app";
+import { auth, oidcAuthEnabled } from "@/auth";
 import React from "react";
 
-export default function DemoPage(): React.ReactNode {
+export default async function DemoPage(): Promise<React.ReactNode> {
+  const session = oidcAuthEnabled ? await auth() : null;
+  if (oidcAuthEnabled && (!session?.accessToken || session.error)) {
+    return <SignInPanel />;
+  }
+
   return (
-    <React.Suspense fallback={<div>Loading (layout)...</div>}>
-      <Toaster />
-      <WorkerProvider>
-        <ThreadProvider>
-          <StreamProvider>
-            <ArtifactProvider>
-              <Thread />
-            </ArtifactProvider>
-          </StreamProvider>
-        </ThreadProvider>
-      </WorkerProvider>
-    </React.Suspense>
+    <>
+      {oidcAuthEnabled && <AccountActions />}
+      <ChatApp
+        oidcEnabled={oidcAuthEnabled}
+        authenticated={Boolean(session?.accessToken && !session.error)}
+      />
+    </>
   );
 }

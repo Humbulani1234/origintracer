@@ -58,11 +58,33 @@ used to build or run the UI. For static deployments, set it before building;
   the Agent Server, including threads started through other clients.
 - The app shows investigation output in the conversation and supports the
   agent's worker-scope and action-approval prompts.
-- The backend API key stays on the Next.js server for worker discovery.
+- When Keycloak OIDC is configured, users sign in before chat or worker
+  discovery. The Next.js server forwards the user's short-lived access token to
+  LangGraph Server and the OriginTracer backend; it does not put the backend
+  API key in the browser bundle. Without OIDC, local development can use the
+  configured development key.
 - The main composer sends a new message. Editing a prior prompt or rerunning an
   answer starts a branch from the checkpoint before that prompt; it does not
   mutate the saved conversation history. Rerun replays the original user
   request, while Edit opens an inline editor for that request.
+
+## Keycloak sign-in and worker keys
+
+Copy `.env.local.example` to `.env.local`, then set `AUTH_SECRET`,
+`AUTH_KEYCLOAK_ISSUER`, `AUTH_KEYCLOAK_ID`, and `AUTH_KEYCLOAK_SECRET`. Register
+the NextAuth callback URL with the Keycloak confidential client:
+`https://your-domain/chat-agent/api/auth/callback/keycloak` (omit `/chat-agent`
+when the app is hosted at `/`). Enable account registration in the realm when
+users should be able to create email accounts. To offer Google sign-in, configure
+Google as a Keycloak identity provider; the sign-in page selects it through
+Keycloak's `kc_idp_hint`.
+
+The account page lets an authenticated user create, list, and revoke worker API
+keys. A new key is displayed once and should be stored as
+`ORIGINTRACER_API_KEY` in the instrumented process environment. Configure the
+OriginTracer backend to trust the same Keycloak issuer and the API audience
+assigned to its access tokens. The Agent Server's `auth.py` validates the
+incoming token through the backend and scopes thread operations to that user.
 
 ## Inline investigation results
 
