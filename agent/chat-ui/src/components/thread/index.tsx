@@ -255,7 +255,7 @@ export function Thread() {
         onNewThread={startNewThread}
       />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-3 sm:px-5">
+        <header className="flex h-14 shrink-0 items-center gap-3 bg-background px-3 sm:px-5">
           <Button
             variant="ghost"
             size="icon"
@@ -467,7 +467,7 @@ export function Thread() {
             />
           </StickToBottom>
         </div>
-        <div className="relative flex flex-col border-l">
+        <div className="relative flex flex-col">
           <div className="absolute inset-0 flex min-w-[30vw] flex-col">
             <div className="grid grid-cols-[1fr_auto] border-b p-4">
               <ArtifactTitle className="truncate overflow-hidden" />
