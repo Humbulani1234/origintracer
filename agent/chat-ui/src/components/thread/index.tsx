@@ -141,17 +141,26 @@ export function Thread() {
         return;
       }
 
-      // Message is defined, and it has not been logged yet. Save it, and send the error
+      // Suppress repeat notifications when the component rerenders.
       lastError.current = message;
-      toast.error("An error occurred. Please try again.", {
-        description: (
-          <p>
-            <strong>Error:</strong> <code>{message}</code>
-          </p>
-        ),
-        richColors: true,
-        closeButton: true,
-      });
+      const showDetails = process.env.NODE_ENV !== "production";
+      const description = showDetails ? (
+        <p>
+          <strong>Error:</strong> <code>{message}</code>
+        </p>
+      ) : (
+        "Please try again. If the problem continues, contact support."
+      );
+      toast.error(
+        showDetails
+          ? "An error occurred. Please try again."
+          : "Couldn't complete the request.",
+        {
+          description,
+          richColors: true,
+          closeButton: true,
+        },
+      );
     } catch {
       // no-op
     }
