@@ -44,6 +44,8 @@ function ThreadList({
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
+  const [confirmingDeleteThreadId, setConfirmingDeleteThreadId] =
+    useState<string | null>(null);
 
   if (loading) {
     return (
@@ -82,62 +84,93 @@ function ThreadList({
         }
 
         const selected = thread.thread_id === threadId;
+        const confirmingDelete = confirmingDeleteThreadId === thread.thread_id;
         return (
           <div
             key={thread.thread_id}
             className="group flex items-center gap-1"
           >
-            <Button
-              variant="ghost"
-              className={`h-9 min-w-0 flex-1 justify-start overflow-hidden px-3 text-left font-normal ${
-                selected
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                  : ""
-              }`}
-              title={label}
-              onClick={() => {
-                if (!selected) void setThreadId(thread.thread_id);
-                onThreadSelect?.();
-              }}
-            >
-              <MessageSquare className="text-muted-foreground size-4 shrink-0" />
-              <span className="truncate">{label}</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0 opacity-100 lg:opacity-0 lg:group-focus-within:opacity-100 lg:group-hover:opacity-100"
-              aria-label={`Delete conversation: ${label}`}
-              title="Delete conversation"
-              disabled={deletingThreadId === thread.thread_id}
-              onClick={async () => {
-                if (
-                  !window.confirm(
-                    `Delete this conversation? This cannot be undone.\n\n${label}`,
-                  )
-                ) {
-                  return;
-                }
-
-                setDeletingThreadId(thread.thread_id);
-                try {
-                  await onDeleteThread(thread.thread_id);
-                  if (selected) await setThreadId(null);
-                  onThreadSelect?.();
-                } catch (error) {
-                  toast.error("Could not delete conversation", {
-                    description:
-                      error instanceof Error
-                        ? error.message
-                        : "Please try again.",
-                  });
-                } finally {
-                  setDeletingThreadId(null);
-                }
-              }}
-            >
-              <Trash2 className="size-4" />
-            </Button>
+            {confirmingDelete ? (
+              <div
+                role="group"
+                aria-label={`Confirm deletion of ${label}`}
+                className="bg-destructive/10 flex h-9 min-w-0 flex-1 items-center gap-1 rounded-md px-2"
+              >
+                <span className="min-w-0 flex-1 truncate text-xs">
+                  Delete conversation?
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={deletingThreadId === thread.thread_id}
+                  onClick={() => setConfirmingDeleteThreadId(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={deletingThreadId === thread.thread_id}
+                  onClick={async () => {
+                    setDeletingThreadId(thread.thread_id);
+                    try {
+                      await onDeleteThread(thread.thread_id);
+                      setConfirmingDeleteThreadId(null);
+                      if (selected) await setThreadId(null);
+                      onThreadSelect?.();
+                    } catch (error) {
+                      toast.error("Could not delete conversation", {
+                        description:
+                          error instanceof Error
+                            ? error.message
+                            : "Please try again.",
+                      });
+                    } finally {
+                      setDeletingThreadId(null);
+                    }
+                  }}
+                >
+                  {deletingThreadId === thread.thread_id
+                    ? "Deleting…"
+                    : "Delete"}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  className={`h-9 min-w-0 flex-1 justify-start overflow-hidden px-3 text-left font-normal ${
+                    selected
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                      : ""
+                  }`}
+                  title={label}
+                  onClick={() => {
+                    if (!selected) void setThreadId(thread.thread_id);
+                    onThreadSelect?.();
+                  }}
+                >
+                  <MessageSquare className="text-muted-foreground size-4 shrink-0" />
+                  <span className="truncate">{label}</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 opacity-100 lg:opacity-0 lg:group-focus-within:opacity-100 lg:group-hover:opacity-100"
+                  aria-label={`Delete conversation: ${label}`}
+                  title="Delete conversation"
+                  onClick={() =>
+                    setConfirmingDeleteThreadId(thread.thread_id)
+                  }
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </>
+            )}
           </div>
         );
       })}

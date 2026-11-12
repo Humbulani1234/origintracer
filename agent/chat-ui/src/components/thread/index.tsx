@@ -83,6 +83,7 @@ export function Thread() {
   const [threadId, _setThreadId] = useQueryState("threadId");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [input, setInput] = useState("");
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const {
     contentBlocks,
     setContentBlocks,
@@ -102,6 +103,16 @@ export function Thread() {
   const [loadingAnchorIndex, setLoadingAnchorIndex] = useState<number | null>(
     null,
   );
+
+  useEffect(() => {
+    const textarea = inputRef.current;
+    if (!textarea) return;
+
+    const maxHeight = 192;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [input]);
 
   useEffect(() => {
     if (!isLoading) setLoadingAnchorIndex(null);
@@ -370,42 +381,30 @@ export function Thread() {
                   <div
                     ref={dropRef}
                     className={cn(
-                      "bg-muted relative z-10 mx-auto mb-8 w-full max-w-3xl rounded-2xl shadow-xs transition-all",
+                      "bg-muted relative z-10 mx-auto mb-8 w-full max-w-3xl rounded-xl border shadow-sm transition-colors focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/20",
                       dragOver
                         ? "border-primary border-2 border-dotted"
-                        : "border border-solid",
+                        : "border-border border-solid",
                     )}
                   >
                     <form
                       onSubmit={handleSubmit}
-                      className="mx-auto grid max-w-3xl grid-rows-[1fr_auto] gap-2"
+                      className="mx-auto w-full min-w-0 max-w-3xl"
                     >
                       <ContentBlocksPreview
                         blocks={contentBlocks}
                         onRemove={removeBlock}
                       />
-                      <textarea
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onPaste={handlePaste}
-                        onKeyDown={(e) => {
-                          if (
-                            e.key === "Enter" &&
-                            !e.shiftKey &&
-                            !e.metaKey &&
-                            !e.nativeEvent.isComposing
-                          ) {
-                            e.preventDefault();
-                            const el = e.target as HTMLElement | undefined;
-                            const form = el?.closest("form");
-                            form?.requestSubmit();
-                          }
-                        }}
-                        placeholder="Type your message..."
-                        className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 shadow-none ring-0 outline-none focus:ring-0 focus:outline-none"
-                      />
-
-                      <div className="flex items-center gap-6 p-2 pt-4">
+                      <div className="flex min-w-0 items-end gap-2 p-2">
+                        <textarea
+                          ref={inputRef}
+                          value={input}
+                          onChange={(e) => setInput(e.target.value)}
+                          onPaste={handlePaste}
+                          placeholder="Type your message..."
+                          rows={1}
+                          className="max-h-48 min-h-10 min-w-0 w-0 max-w-full flex-1 resize-none overflow-y-hidden border-none bg-transparent px-3 py-2 text-base leading-6 shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                        />
                         {stream.isLoading ? (
                           <Button
                             key="stop"
@@ -413,7 +412,7 @@ export function Thread() {
                             onClick={() => stream.stop()}
                             size="icon"
                             variant="outline"
-                            className="ml-auto rounded-full"
+                            className="size-9 shrink-0 rounded-full"
                             aria-label="Cancel response"
                             title="Cancel response"
                           >
@@ -423,7 +422,7 @@ export function Thread() {
                           <Button
                             type="submit"
                             size="icon"
-                            className="ml-auto rounded-full shadow-md transition-all"
+                            className="size-9 shrink-0 rounded-full shadow-sm transition-transform hover:scale-105 active:scale-95"
                             aria-label="Send message"
                             title="Send message"
                             disabled={
