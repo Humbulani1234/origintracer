@@ -13,10 +13,15 @@ React dashboard as a data source.
 
 - [Architecture and investigation flow](ARCHITECTURE.md): request
   routing, worker scope, evidence gathering, assessment, reports, and actions.
-- [Setup and operations](OPERATIONS.md): installation, `.env.example`,
-  Ollama and Groq configuration, running the services, and sending requests.
-- [Local authentication setup](AUTHENTICATION_SETUP.md): Keycloak clients,
-  issuer and audience settings, UI sign-in, and worker API keys.
+- [Run the local applications](../docs/getting-started/run-locally.md):
+  start Keycloak, FastAPI, the Agent Server, and a UI.
+- [Authentication setup](../docs/getting-started/authentication.md):
+  Keycloak clients, issuer and audience settings, UI sign-in, and worker API
+  keys.
+- [Production deployment](../docs/deployment/production.md): service layout
+  and production settings.
+- [Agent operations](OPERATIONS.md): model configuration, direct API requests,
+  and graph operation.
 - [Agent graph evaluations](evals/README.md): run and extend end-to-end graph
   evaluation cases.
 
