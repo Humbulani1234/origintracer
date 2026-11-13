@@ -19,6 +19,13 @@ cp .env.local.example .env.local
 corepack pnpm dev
 ```
 
+!!! note "Agent Server startup"
+    Start the Agent Server before opening Chat UI. If the UI starts while the
+    Agent Server is unavailable or still starting, thread requests can log a
+    temporary upstream connection error such as `POST /api/threads/search`.
+    Retry once the server is ready. If the error continues, check the configured
+    Agent Server URL and its logs; other failures should remain visible.
+
 Open <http://localhost:3000>, select a worker, and ask a question in plain
 language. You can paste the prompt from an eval case to exercise the same agent
 through chat. The UI does not execute eval files or grading logic.

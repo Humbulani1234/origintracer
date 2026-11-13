@@ -125,6 +125,14 @@ Generate a local NextAuth secret with `openssl rand -hex 32`. Keep
 port configured by chat-ui, then run `corepack pnpm dev` from
 `agent/chat-ui/`. Open `http://localhost:3000`.
 
+
+!!! note "Agent Server startup"
+    Start the Agent Server before opening Chat UI. If the UI starts while the
+    Agent Server is unavailable or still starting, thread requests can log a
+    temporary upstream connection error such as `POST /api/threads/search`.
+    Retry once the server is ready. If the error continues, check the configured
+    Agent Server URL and its logs; other failures should remain visible.
+
 `agent/langgraph.json` loads `agent/.env.example` into the Agent Server. That
 file is ignored by Git and is the local runtime environment in this setup;
 keep real provider keys out of tracked templates and never commit the local
