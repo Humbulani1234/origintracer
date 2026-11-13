@@ -15,7 +15,13 @@ function GoogleMark() {
 
 export function SignInPanel() {
   const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
-  const callbackUrl = `${basePath}/`;
+
+  function callbackUrl() {
+    if (typeof window !== "undefined" && window.location.pathname.endsWith("/account")) {
+      return `${basePath}/account`;
+    }
+    return `${basePath}/`;
+  }
 
   return (
     <main className="bg-background text-foreground flex min-h-dvh items-center justify-center p-5">
@@ -28,7 +34,7 @@ export function SignInPanel() {
         <button
           type="button"
           className="h-11 w-full cursor-pointer rounded-lg border bg-white px-4 text-sm font-medium text-[#1f1f1f] hover:bg-[#f8faff]"
-          onClick={() => signIn("keycloak", { redirectTo: callbackUrl })}
+          onClick={() => signIn("keycloak", { redirectTo: callbackUrl() })}
         >
           Sign in or create an account
         </button>
@@ -39,7 +45,7 @@ export function SignInPanel() {
           type="button"
           className="flex h-11 w-full cursor-pointer items-center justify-center gap-3 rounded-lg border bg-white px-4 text-sm font-medium text-[#1f1f1f] hover:bg-[#f8faff]"
           onClick={() =>
-            signIn("keycloak", { redirectTo: callbackUrl }, { kc_idp_hint: "google" })
+            signIn("keycloak", { redirectTo: callbackUrl() }, { kc_idp_hint: "google" })
           }
         >
           <GoogleMark />

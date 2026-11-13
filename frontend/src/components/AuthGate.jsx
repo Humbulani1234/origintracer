@@ -11,7 +11,8 @@ function GoogleMark() {
 }
 
 export default function AuthGate({ children }) {
-  const { user, ready, error, enabled } = useAuth();
+  const { user, ready, error, enabled, signingOut } = useAuth();
+  if (signingOut) return <main className="auth-screen"><p>Signing out…</p></main>;
   if (!enabled || (ready && user)) return children;
   if (!ready) return <main className="auth-screen"><p>Checking your sign-in…</p></main>;
   return <main className="auth-screen"><section className="auth-card">
@@ -26,10 +27,20 @@ export default function AuthGate({ children }) {
 }
 
 export function AuthControls() {
-  const { user, enabled } = useAuth();
+  const { user, enabled, setSigningOut } = useAuth();
   if (!enabled || !user) return null;
   return <div className="auth-controls">
     <span>Account</span>
-    <button onClick={() => userManager.signoutRedirect()}>Sign out</button>
+    <button
+      onClick={() => {
+        setSigningOut(true);
+        void userManager.signoutRedirect().catch((error) => {
+          console.error("Could not sign out", error);
+          setSigningOut(false);
+        });
+      }}
+    >
+      Sign out
+    </button>
   </div>;
 }

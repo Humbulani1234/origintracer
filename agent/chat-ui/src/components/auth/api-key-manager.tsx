@@ -94,7 +94,7 @@ export function ApiKeyManager({ enabled }: { enabled: boolean }) {
         />
         <button
           disabled={busy}
-          className="h-10 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
+          className="h-10 cursor-pointer rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           Create worker key
         </button>
@@ -138,7 +138,7 @@ export function ApiKeyManager({ enabled }: { enabled: boolean }) {
                       type="button"
                       disabled={busy}
                       onClick={() => void revoke(key.key_id)}
-                      className="text-destructive hover:underline disabled:opacity-50"
+                      className="cursor-pointer text-destructive hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Revoke
                     </button>

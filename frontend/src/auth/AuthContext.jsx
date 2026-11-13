@@ -10,6 +10,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(!oidcEnabled);
   const [error, setError] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (!userManager) return undefined;
@@ -50,8 +51,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, ready, error, enabled: oidcEnabled }),
-    [user, ready, error],
+    () => ({ user, ready, error, enabled: oidcEnabled, signingOut, setSigningOut }),
+    [user, ready, error, signingOut],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
