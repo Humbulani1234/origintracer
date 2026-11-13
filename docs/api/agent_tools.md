@@ -61,7 +61,7 @@ the workflow's approval interrupt has been resumed with approval.
       heading_level: 4
       show_root_full_path: false
 
-::: origintracer_agent.tools.get_worker_latency_diagnostics
+::: origintracer_agent.tools.get_worker_component_diagnostics
     options:
       heading_level: 4
       show_root_full_path: false

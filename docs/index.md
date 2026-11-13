@@ -28,61 +28,22 @@ The N+1 pattern surfaces structurally - `NPlusOneView`has 180 calls, and the que
     A terminal REPL that queries the live engine via Unix socket designed for development. You can run commands like: `SHOW nodes`, `SHOW edges`, `CAUSAL`, `DIFF SINCE deployment`, `\stitch <trace_id>` - while your app runs for investigations.
 
 === "React UI"
-    A browser dashboard that shows nodes, edges, trace timeline, event log, deployment diffs. It connects to the FastAPI backend and read data uploaded by the uploader - it does not interact with te in-memory causal graph.
+    A browser dashboard that shows nodes, edges, trace timeline, event log, deployment diffs. It connects to the FastAPI backend and read data uploaded by the uploader - it does not interact with the in-memory causal graph.
 
 === "Agentic investigations"
-    A LangGraph agent that uses natural langauge to investigate selected workers using the stored graph and event evidence. Users can ask it in natural langauge to explain findings, uncertainty, and supported approved actions.
+    A LangGraph agent that uses natural language to investigate selected workers using the stored graph and event evidence. Users can ask it in natural language to explain findings, uncertainty, and supported approved actions.
 
 ---
 
-## Quick start
+## Getting started
 
-```bash
-git clone https://github.com/Humbulani1234/origintracer.git
-cd origintracer 
-pip install -e .
-```
-
-Place your django project in the `applications` directory.
-
-```python
-# settings.py - TracerMiddleware must be first
-MIDDLEWARE = [
-    "origintracer.probes.django_probe.TracerMiddleware",
-    "django.middleware.security.SecurityMiddleware",
-    # ...
-]
-```
-
-```yaml
-# origintracer.yaml - project root
-probes:
-  - django
-  - asyncio
-```
-
-```python
-# apps.py
-from django.apps import AppConfig
-
-class MyAppConfig(AppConfig):
-    name = "myapp"
-
-    def ready(self):
-        import origintracer
-        origintracer.init(debug=True, onfig=BASE_DIR / "origintracer.yaml")
-```
-
-Send requests to your views, and open the REPL in a second terminal:
-
-```bash
-python -m origintracer.repl.repl
-
-› SHOW nodes
-› CAUSAL
-```
-
----
+- [Installation and Django instrumentation](getting-started/installation.md)
+- [Run the local applications](getting-started/run-locally.md), including
+  Keycloak, FastAPI, the Agent Server, and either UI.
+- [Authentication setup](getting-started/authentication.md) for Keycloak
+  clients, token audience, and worker API keys.
+- [Production deployment](deployment/production.md) for the service layout
+  and production configuration.
 
 ## Architecture
 
@@ -111,6 +72,6 @@ repository's `applications/langgraph/README.md` explains its Agent Server, provi
 
 ---
 
-See [Getting Started](getting-started/installation.md)for full instructions.
+See [Getting Started](getting-started/installation.md) for instrumentation instructions and the deployment guides above.
 
 For the optional natural-language investigation service, start with the [Agentic Investigation overview](agentic/overview.md).

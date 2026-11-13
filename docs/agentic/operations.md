@@ -17,13 +17,14 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Configure the environment variables in the table below in the Agent Server process environment. The service also loads `agent/.env.example` as defaults;
-shell variables take precedence. For secrets and machine-specific settings, prefer shell exports or your process manager's secret store.
+Configure the environment variables in the table below in the Agent Server process environment. The service loads the ignored `agent/.env.example` file named by `langgraph.json`;
+shell variables take precedence. For secrets and machine-specific settings, prefer shell exports or your process manager's secret store. For Keycloak clients, callback URLs, and the API audience, follow the
+[authentication setup](../getting-started/authentication.md).
 
 | Variable | Purpose |
 |---|---|
 | `ORIGINTRACER_API_URL` | Base URL for the FastAPI backend. |
-| `ORIGINTRACER_API_KEY` | Backend bearer key used for worker reads and approved writes. |
+| `ORIGINTRACER_API_KEY` | Worker key used by the Agent Server's own uploader. It is also the fallback backend credential when no signed-in user token is active; authenticated tool reads use the caller's access token. |
 | `ORIGINTRACER_AGENT_MODEL` | Provider-prefixed chat model, such as `ollama:qwen3:4b`, `groq:openai/gpt-oss-20b`, or `mistral:mistral-small-latest`. Defaults to Ollama. |
 | `OLLAMA_BASE_URL` | Ollama endpoint; defaults to the local server. |
 | `GROQ_API_KEY` | Credential when using a `groq:` model. |
@@ -47,11 +48,14 @@ Enable the `langgraph` probe in the target application's OriginTracer config. Se
 
 ## Start the services
 
-For local development, start the in-memory backend from `backend/` in one terminal:
+For local development, start Keycloak and configure its `origintracer` realm
+first. Then start the in-memory backend from `backend/` in one terminal:
 
 ```bash
 cd backend
 ORIGINTRACER_API_KEYS=test-key-123:local-dev \
+  ORIGINTRACER_OIDC_ISSUER=http://localhost:8080/realms/origintracer \
+  ORIGINTRACER_OIDC_AUDIENCE=origintracer-api \
   uvicorn main:app --host 0.0.0.0 --port 8001
 ```
 
@@ -61,21 +65,30 @@ observed and enable the `langgraph` probe for LangGraph workloads.
 
 ## Run
 
-Start the backend using its normal deployment command, start the instrumented target application, then start the Agent Server from `agent/`:
+Start the backend and target application, then start the Agent Server from
+`agent/`:
 
 ```bash
-langgraph dev --n-jobs-per-worker 1
+langgraph dev --no-reload --no-browser --port 8123
 ```
 
-The local server prints its address; the LangGraph development default is `http://127.0.0.1:2024`, with API docs at `/docs`. Use a reporting worker's PID as `worker_pid` in a run.
+The local server is available at `http://127.0.0.1:8123`, with its API
+documentation at `/docs`. Use a reporting worker's PID as `worker_pid` in a
+run.
 
-The sections below show how to discover a worker, send requests, approve actions, and troubleshoot common setup problems.
+The sections below show how to discover a worker, send requests, and approve
+actions. The supported HTTP endpoints and authentication contract are also
+summarized in the [Agent Server API guide](api.md).
 
 ## Select a worker
 
-The backend, target application, and Agent Server are separate processes. The target must initialize OriginTracer with the `langgraph` probe enabled in the
-same process that runs its LangGraph model and tools, while the Agent Server also starts OriginTracer in its own FastAPI lifespan, so it reports a distinct
-worker PID, and both processes must be able to reach the backend; when local socket discovery is used, they must share the relevant host/container PID and Unix socket namespace.
+The target application and Agent Server are separate processes, and each
+initializes OriginTracer in its own process. Both upload snapshots and runtime
+heartbeats to FastAPI, so each needs a reachable backend URL and worker key.
+The Agent Server's worker PID identifies its own graph; the target application's
+PID identifies the application being investigated. Reads use stored snapshots
+and events, so the processes do not need to share a PID or Unix socket
+namespace.
 
 To store LLM and tool previews, set these before starting the instrumented target process:
 
@@ -95,10 +108,15 @@ Use the selected row's `pid` as `worker_pid`. The agent resolves it to a stable 
 
 ## Send an investigation request
 
-Create a thread and copy its returned `thread_id`:
+Set the Agent Server URL and a short-lived Keycloak access token, then create
+a thread and copy its returned `thread_id`:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:2024/threads \
+AGENT_SERVER_URL=http://127.0.0.1:8123
+ACCESS_TOKEN=your-short-lived-access-token
+
+curl -sS -X POST "$AGENT_SERVER_URL/threads" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" -d '{}'
 ```
 
@@ -107,7 +125,8 @@ Replace `12345` with a reporting worker PID:
 ```bash
 THREAD_ID="paste-thread-id-here"
 curl -sS -X POST \
-  "http://127.0.0.1:2024/threads/${THREAD_ID}/runs/wait" \
+  "$AGENT_SERVER_URL/threads/${THREAD_ID}/runs/wait" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "assistant_id": "origintracer_investigator",
@@ -125,11 +144,13 @@ Send a later run to the same thread to continue. For a fresh conversation set `n
 
 ## Approve or reject a write action
 
-Ask the agent to record a deployment marker or evaluate and record causal rules. The run will then pauses with an approval request, and reject or approve for the thread to resume.
+Ask the agent to record a deployment marker or evaluate and record causal rules. The run pauses with an approval request. Resume the same thread with an
+approval decision to execute or cancel the action.
 
 ```bash
 curl -sS -X POST \
-  "http://127.0.0.1:2024/threads/${THREAD_ID}/runs/wait" \
+  "$AGENT_SERVER_URL/threads/${THREAD_ID}/runs/wait" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "assistant_id": "origintracer_investigator",

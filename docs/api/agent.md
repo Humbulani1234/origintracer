@@ -1,11 +1,14 @@
-# Agent Service API
+# Python Agent API Reference
 
-The Agent Server is an optional Python application in `agent/`, separate from
-the core `origintracer` distribution. Its API documentation is generated from
-the source docstrings by `mkdocstrings`; signatures and docstrings update when
-the static site is rebuilt. Only the symbols listed on these pages are
-published, so add a directive and navigation entry when introducing a new
-important public interface.
+This page documents Python symbols in the optional Agent Server application
+under `agent/`; it is not the HTTP API used by the chat client. The Agent
+Server's LangGraph HTTP contract, authentication, thread, run, and resume flows
+are described in the [Agent Server API guide](../agentic/api.md).
+
+The reference below is generated from source docstrings by `mkdocstrings`.
+Signatures and docstrings update when the static site is rebuilt. Only listed
+symbols are published, so add a directive when introducing an important
+interface.
 
 ## Reference pages
 

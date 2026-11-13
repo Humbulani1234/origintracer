@@ -1,6 +1,7 @@
 # Investigation Flow
 
-An investigation is a bounded, evidence-linked workflow scoped to one worker process instance.
+An investigation is a bounded, evidence-linked workflow scoped to one worker
+process instance.
 
 1. **Classify the request.** Product questions and general chat use a separate route. Worker questions proceed to investigation; supported write requests enter an approval flow.
 2. **Resolve scope.** The caller supplies `worker_pid`. The agent resolves it through the backend inventory and records both PID and stable `worker_instance_id`. A missing or stale worker is surfaced rather than silently replaced.
@@ -14,8 +15,10 @@ An investigation is a bounded, evidence-linked workflow scoped to one worker pro
 
 ## Thread continuity
 
-LangGraph checkpoints conversation and investigation state by thread, and related turns can reuse evidence when the planner determines that the new request
-continues the same investigation and the worker PID and instance still match. Set `new_investigation: true`to start fresh on the same worker, and also changing the worker starts fresh automatically.
+LangGraph checkpoints conversation and investigation state by thread. Related
+turns can reuse evidence when the request continues the same investigation and
+the worker PID and instance still match. Set `new_investigation: true` to start
+fresh on the same worker. Changing the worker starts a fresh investigation.
 
 Worker evidence is retrieved from the backend, while investigation state is carried in the Agent Server thread checkpoint.
 
@@ -24,7 +27,9 @@ Worker evidence is retrieved from the backend, while investigation state is carr
 !!! warning "Writes require approval"
     The graph pauses before a deployment marker or causal-rule evaluation is recorded. The caller must resume the same thread with approval.
 
-Write actions use a separate route, where the agent prepares the action and pauses; the caller must explicitly approve it on the same thread before execution. Supported actions are: recording a deployment marker and evaluating/recording
-causal rules.
+The graph prepares the requested action and pauses. The caller resumes the
+same thread with an approval decision before execution. Supported actions are
+recording a deployment marker and evaluating and recording causal rules.
 
-For the corresponding Python interfaces, see the [workflow graph API](../api/agent_graph.md), [tool API](../api/agent_tools.md), and [investigation data models](../api/agent_models.md).
+The HTTP request and resume shapes are described in the [Agent Server API](api.md).
+The Python graph, tools, and data models are documented in the API reference.

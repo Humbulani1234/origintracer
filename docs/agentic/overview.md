@@ -1,25 +1,58 @@
 # Agentic Investigation
 
-The optional OriginTracer Agent Server answers product questions and investigates uploaded worker evidence through a LangGraph workflow. It complements the React
-dashboard and REPL: the agent queries the FastAPI backend's stored snapshots and events, while the REPL remains the interface for direct live socket queries.
+The OriginTracer Agent Server is an optional LangGraph application for product
+questions and evidence-based investigations of workers. It complements the
+React dashboard and REPL: the agent reads snapshots and events stored by
+FastAPI, while the REPL queries a running process directly.
 
-## What it can do
+## What it does
 
-!!! info "Where evidence comes from"
-    The Agent Server investigates snapshots and events uploaded to the FastAPI backend. Direct live socket queries remain the REPL's role.
+- Answers OriginTracer product questions using the published documentation
+  search index when it is available.
+- Inspects reporting workers, their graphs, events, traces, hotspots, causal
+  rules, and graph changes.
+- Plans bounded reads, assesses findings against the request, cites evidence,
+  and explains what remains uncertain.
+- Continues conversations through LangGraph threads and checkpoints.
+- Pauses for explicit approval before recording supported deployment markers
+  or causal-rule evaluations.
 
-- Inspect reporting workers, status, graph nodes and edges, hotspots, events, traces, causal rules, and graph changes.
-- Plan bounded evidence gathering, assess findings against the request, cite evidence, and state what remains uncertain.
-- Continue an investigation on a LangGraph thread, or start a fresh one for the same worker. Switching to another worker starts a separate investigation.
-- Prepare supported write actions, such as recording a deployment marker or causal-rule evaluation, and wait for explicit approval before executing them.
-- Answer OriginTracer product questions using the published documentation search index when it is available.
+The Agent Server exposes the LangGraph HTTP API and registers the graph as
+`origintracer_investigator`. The Chat UI uses that API for thread and run
+requests. A run supplies a worker PID; the agent resolves it to a stable
+`worker_instance_id` and scopes its stored-data reads to that process instance.
 
-Each request follows one route. If evidence cannot distinguish possible explanations, the report preserve that uncertainty instead of guessing at a cause.
+## Authentication boundary
 
-The caller supplies the worker PID. It is the service responsibility to resolve that PID to a stable `worker_instance_id` and scopes every backend read to that process instance. The agent does not connect to the worker's local socket, and read-only investigations do not modify OriginTracer state.
+Users sign in through Keycloak. The Agent Server validates the short-lived user
+access token through FastAPI and applies the user's identity to thread access.
+Each user can create and use their own threads. Instrumented processes, including
+the Agent Server itself, use separate worker API keys to upload snapshots and
+events. A worker key is not a user's sign-in token; authenticated tool reads use
+the caller's access token.
+
+## Data flow
+
+```mermaid
+flowchart LR
+    UI[Chat UI] -->|OIDC access token and thread/run requests| AS[LangGraph Agent Server]
+    AS -->|validate user token| API[OriginTracer FastAPI]
+    AS -->|graph run| G[origintracer_investigator]
+    G -->|scoped snapshot and event reads| API
+    W[Instrumented workers] -->|worker API key: snapshots and events| API
+```
+
+Rule matches and graph relationships are evidence for investigation, not proof
+of cause. When the available stored data cannot distinguish explanations, the
+report should keep that uncertainty explicit.
 
 ## Guides
 
-- [Investigation flow](investigation-flow.md) explains routing, worker identity, evidence collection, assessment, report construction, and approval.
-- [Setup and operations](operations.md) covers local setup, configuration, request examples, approval handling, and troubleshooting.
-- [Agent service API](../api/agent.md) is the entry point for the Python API reference, generated from documented classes and functions.
+- [Investigation flow](investigation-flow.md) covers worker identity, evidence
+  collection, assessment, report construction, and approval.
+- [Agent Server API](api.md) describes the HTTP contract used by clients and
+  the authentication boundary.
+- [Setup and operations](operations.md) covers configuration, startup, and
+  direct API examples.
+- [Python agent reference](../api/agent.md) covers the graph, tools, data
+  models, and backend client symbols.
