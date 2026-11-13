@@ -81,7 +81,7 @@ Authorization header to FastAPI; it must not inject one shared user credential.
 
 ## Sign-in and worker API keys
 
-For the complete local Keycloak client, audience, issuer, and worker-key setup, see the [agent authentication setup guide](../agent/AUTHENTICATION_SETUP.md).
+For the complete Keycloak client, audience, issuer, and worker-key setup, see the [authentication guide](../docs/getting-started/authentication.md).
 
 
 The dashboard can use Keycloak OpenID Connect. Configure a public Keycloak client
@@ -98,5 +98,6 @@ building. The browser sends its short-lived OIDC access token to the same-origin
 not put a production API key in a `VITE_*` variable. Signed-in users can create,
 list, and revoke per-worker API keys from the **api keys** view. A new key is
 shown only once and should be stored in the instrumented worker's environment.
-Without OIDC settings, local development keeps using the configured development
-API key.
+Without OIDC settings, local development can use the configured development
+API key. See [Run OriginTracer locally](../docs/getting-started/run-locally.md)
+for the full startup sequence.

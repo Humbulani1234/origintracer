@@ -9,9 +9,9 @@ license and attribution in [`LICENSE`](LICENSE).
 
 ## Run locally
 
-Start the OriginTracer backend, an instrumented worker, and the Agent Server as
-described in [`agent/OPERATIONS.md`](../OPERATIONS.md). Then, from this
-directory:
+Start Keycloak, FastAPI, an instrumented worker, and the Agent Server as
+described in the [local run guide](../../../docs/getting-started/run-locally.md).
+Then, from this directory:
 
 ```bash
 corepack pnpm install --frozen-lockfile
@@ -25,25 +25,20 @@ through chat. The UI does not execute eval files or grading logic.
 
 The local environment expects:
 
-- Agent Server at `http://127.0.0.1:2024`
+- Agent Server at `http://127.0.0.1:8123`
 - OriginTracer backend at `http://127.0.0.1:8001`
 - Development backend key `test-key-123`
-- Sidebar label `127.0.0.1:2024` for the Agent Server
+- Sidebar label `127.0.0.1:8123` for the Agent Server
 
 If a service prints a different address or uses a different key, update
 `.env.local` and restart the UI. `LANGGRAPH_API_URL` is the server-side target
 for the chat proxy; `NEXT_PUBLIC_AGENT_SERVER_LABEL` controls the address shown
 in the sidebar. The browser calls the same-origin `/api` route.
 
-For an Nginx deployment mounted under a path such as `/chat-agent`, set
-`NEXT_BASE_PATH` before building and include the same prefix in
-`NEXT_PUBLIC_API_URL` (for example, `https://example.com/chat-agent/api`). The
-Next.js config exposes the prefix to the worker selector as well. See the
-[production runbook](../PRODUCTION.md) for the full setup.
-
-Static demo build and Nginx deployment steps are documented separately in
-[`STATIC_DEMO.md`](STATIC_DEMO.md). For the EC2 production deployment, including
-the Linux ARM64 build workaround, see [`../PRODUCTION.md`](../PRODUCTION.md).
+For an Nginx deployment mounted under `/chat-agent`, set `NEXT_BASE_PATH`
+before building and include the prefix in `NEXT_PUBLIC_API_URL` (for example,
+`https://example.com/chat-agent/api`). For the complete production layout, see
+the [production deployment guide](../../../docs/deployment/production.md).
 
 The startup agent connectivity warning is disabled by default. To enable the
 `/info` reachability check and show a warning when the Agent Server is

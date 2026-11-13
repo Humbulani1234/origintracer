@@ -5,7 +5,8 @@ model, starting the services it depends on, and sending a test investigation.
 It also explains how to approve a supported write action. For a closer look at
 the graph's state and routing, see [Agent Architecture](ARCHITECTURE.md); the
 [evaluation guide](evals/README.md) covers the end-to-end evaluation cases.
-For the single-host EC2 deployment, see the [production runbook](PRODUCTION.md).
+For the production service layout and configuration, see the
+[production deployment guide](../docs/deployment/production.md).
 
 ## Install
 
@@ -17,11 +18,12 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-The Agent Server, its Python configuration, and the evaluation runner read
-`agent/.env.example` directly, so use it to set machine-specific service
-addresses, model choices, and API keys. Values already exported in the shell
-take precedence over the file, while Python settings fall back to localhost
-when a value is not provided.
+The Agent Server reads the environment file named by `agent/langgraph.json`
+(currently `agent/.env.example`). This file is ignored by Git and must be
+created locally; keep real credentials there or in the service manager, never
+in a committed example. Shell environment values take precedence. The
+[local run guide](../docs/getting-started/run-locally.md) gives the complete
+service startup order, including Keycloak.
 
 To install development tools and run source checks:
 
@@ -101,8 +103,8 @@ ORIGINTRACER_EVAL_JUDGE_MODEL=groq:openai/gpt-oss-20b
 The Groq integration is installed with the agent dependencies, so after
 changing these settings, restart the Agent Server to apply them. Because the
 evaluation runner reads the same file, it will also use Groq for quality
-judging. The example environment file is tracked in the repository: keep your
-key private and do not commit a local change containing it. When you use Groq,
+judging. The runtime environment file is ignored by Git. Keep the key private
+and do not commit it. When you use Groq,
 prompts and investigation evidence are sent to the provider. Free-tier limits
 vary by model and account, so check the
 [Groq rate-limit page](https://console.groq.com/docs/rate-limits) before a
@@ -120,11 +122,15 @@ the Agent Server after changing the provider or model settings.
 ## Start and observe the services
 
 The backend, the instrumented target application, and the Agent Server run as
-separate processes. Start the backend first; for local development with the
-in-memory store, run this command from the repository's `backend/` directory:
+separate processes. Start Keycloak and configure its realm first when testing
+signed-in UIs. Then start the backend; for local development with the in-memory
+store, run
+this command from the repository's `backend/` directory:
 
 ```bash
 ORIGINTRACER_API_KEYS=test-key-123:local-dev \
+  ORIGINTRACER_OIDC_ISSUER=http://localhost:8080/realms/origintracer \
+  ORIGINTRACER_OIDC_AUDIENCE=origintracer-api \
   uvicorn main:app --host 0.0.0.0 --port 8001
 ```
 

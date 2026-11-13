@@ -46,7 +46,7 @@ OriginTracer also includes an optional agentic layer for natural-language invest
 
 For the agent's architecture, setup, and operating details, see the [agent README](agent/README.md).
 
-## Multi-Language Support Potential
+## Multi-Language Support
 
 OriginTracer’s core engine is **completely language-agnostic**. It only understands a clean, normalized event protocol (`NormalizedEvent`). The graph, deduplication, causal rules, REPL, and UI have no idea whether events came from Python, Node.js, or another language.
 
