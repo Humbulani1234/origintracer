@@ -657,7 +657,9 @@ async def test_direct_graph_inventory_uses_plan_not_request_keywords(
                 next_steps=[],
             )
 
-    monkeypatch.setattr(graph, "_assessor", AssessorStub())
+    monkeypatch.setattr(
+        graph, "_assessor_without_hypotheses", AssessorStub()
+    )
 
     state = {
         "current_request": "Inspect this topology",
