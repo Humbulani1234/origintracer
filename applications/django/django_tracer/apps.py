@@ -29,7 +29,16 @@ class WorkerConfig(AppConfig):
         base_dir = Path(__file__).resolve().parent.parent
         config_path = str(base_dir / "origintracer.yaml")
 
-        origintracer.init(config=config_path)
+        origintracer.init(
+            api_key=os.environ.get(
+                "ORIGINTRACER_API_KEY",
+                "ot_live_z4OOiNel_W255FDKIwmZh0hCQkxJmrrw0c4_uEAnLfA",
+            ),
+            endpoint=os.environ.get(
+                "ORIGINTRACER_API_URL", "http://localhost:8001"
+            ),
+            config=config_path,
+        )
         origintracer.mark_deployment("deployment")
 
     def _init_otel(self):

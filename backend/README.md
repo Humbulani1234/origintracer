@@ -107,6 +107,22 @@ are sent every `snapshot_interval` seconds (default 15).
 | `POST` | `/api/v1/deployment` | Mark a deployment `{"label": "deployment"}` |
 | `GET`  | `/health` | Liveness probe |
 
+Trace responses preserve span IDs, parent span IDs, timestamps, and recorded
+durations. The `timing` object reports trace wall duration only when complete
+request boundaries or one complete root span support it. It also includes
+inclusive span intervals, self-time estimates, same-trace interval overlaps,
+and cumulative inclusive duration.
+
+Self-time subtracts returned direct-child intervals and may include unobserved
+child work. Parentless overlaps show temporal co-occurrence, not known lineage
+or CPU parallelism. Cumulative inclusive duration includes nested work and may
+count overlapping intervals more than once. Traces reaching the 1,000-event
+retrieval limit are marked as potentially truncated and do not receive a trace
+wall-duration value.
+
+The legacy event `duration_ms` is an inter-event gap; legacy `total_ms` is the
+sum of recorded event durations. Neither is trace wall time.
+
 Captured-content responses expose only the bounded prompt, response, tool
 input, or tool output/error preview fields, plus trace and investigation IDs.
 They are read from uploaded event storage and scoped to one worker instance;

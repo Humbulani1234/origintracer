@@ -790,7 +790,13 @@ async def get_worker_trace(
     Returns
     -------
     dict[str, Any]
-        Ordered stages and timing data for the selected trace.
+        Ordered event rows with span identity and parent lineage. The timing
+        section includes trace wall duration when a request boundary pair or
+        complete root span exists, span intervals, inclusive durations,
+        observed-child self-time estimates, sibling overlap, and cumulative
+        inclusive duration. Self-time may include unobserved child work, and
+        overlap does not establish CPU parallelism. Event gaps and duration
+        sums are labeled separately.
     """
     query = build_trace_query(trace_id)
     return await query_worker(
@@ -838,8 +844,8 @@ async def get_worker_stitched_trace(
         "errors": errors,
         "interpretation_limits": [
             (
-                "duration_ms values are returned per-worker inter-event "
-                "intervals; no cross-process duration is computed."
+                "duration_ms is each event's recorded duration when "
+                "available; no cross-process wall-clock duration is computed."
             ),
             (
                 "A worker with no matching retained events is not evidence "
@@ -1029,9 +1035,11 @@ READ_ONLY_TOOL_PROFILES = (
             "average duration by a call count or infer per-user impact."
         ),
         research_guidance=(
-            "get_live_workers_overview lists recently reporting process "
-            "instances from FastAPI snapshot storage and inspects each one. Do not "
-            "pass a PID or make separate selected-worker reads for this scope."
+            "Use get_live_workers_overview when the plan requests all "
+            "recently reporting workers. Its trusted backend inventory "
+            "selects process instances with fresh runtime heartbeats, then "
+            "the tool inspects each returned worker. Do not pass a PID or "
+            "make separate selected-worker reads for this all-worker scope."
         ),
         requires_selected_worker=False,
     ),
@@ -1372,13 +1380,15 @@ def select_planned_read_only_tools(
 def read_only_tool_catalog(
     request: str, *, selected_worker: bool = True
 ) -> list[dict[str, str]]:
-    """Return compact tool capabilities and descriptions, relevant tools first.
+    """Return compact tool capabilities and complete summaries, relevant first.
 
-    Each entry contains a bounded description so planning can match requested
-    outputs to what a tool actually returns. Request wording ranks capabilities
-    within the current worker scope. Tools requiring a selected PID are hidden
-    when the run has no selected worker; the planner's tool names later
-    determine which eligible full schemas are bound for evidence gathering.
+    Each entry contains the complete opening summary paragraph from the tool
+    description, avoiding arbitrary mid-sentence truncation while keeping
+    parameter details and full schemas for evidence gathering. Request wording
+    ranks capabilities within the current worker scope. Tools requiring a
+    selected PID are hidden when the run has no selected worker; the planner's
+    tool names later determine which eligible full schemas are bound for
+    evidence gathering.
 
     Parameters
     ----------
@@ -1411,9 +1421,11 @@ def read_only_tool_catalog(
         {
             "name": profile.tool.name,
             "capability": profile.capability,
-            "description": (profile.tool.description or "")[
-                :220
-            ],
+            "description": (
+                (profile.tool.description or "")
+                .partition("\n\n")[0]
+                .strip()
+            ),
         }
         for profile in ordered_profiles
     ]

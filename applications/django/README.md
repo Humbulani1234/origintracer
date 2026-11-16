@@ -39,6 +39,14 @@ pip install origintracer gunicorn uvicorn django redis
 `TracerMiddleware` **must be the first entry** in `MIDDLEWARE`. Without this,
 `get_trace_id()` returns `None` in all probes - events are silently dropped.
 
+The middleware assigns one span ID to each request entry and exit. Class-based
+view entry and exit events share their own span ID and link to the request span;
+database query events record the active view as their parent when available.
+These links let stored trace reports derive request and view intervals and
+subtract observed child intervals for a self-time estimate. The estimate can
+include work from child operations that were not captured. Async view spans
+remain active while the returned coroutine is awaited.
+
 ```python
 MIDDLEWARE = [
     "origintracer.probes.django_probe.TracerMiddleware", # MUST be first

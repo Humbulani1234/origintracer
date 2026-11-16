@@ -623,6 +623,164 @@ class TestTraces:
             "metadata": {},
         }
 
+    async def test_trace_derives_inclusive_self_and_parallel_timing(
+        self,
+    ):
+        import backend.main as api
+
+        events = [
+            {
+                "span_id": "root",
+                "parent_span_id": None,
+                "probe": "langgraph.chain.enter",
+                "service": "langgraph",
+                "name": "request",
+                "wall_time": 100.000,
+            },
+            {
+                "span_id": "child-a",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.enter",
+                "service": "langgraph",
+                "name": "tool-a",
+                "wall_time": 100.001,
+            },
+            {
+                "span_id": "child-b",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.enter",
+                "service": "langgraph",
+                "name": "tool-b",
+                "wall_time": 100.004,
+            },
+            {
+                "span_id": "child-a",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.exit",
+                "service": "langgraph",
+                "name": "tool-a",
+                "wall_time": 100.007,
+            },
+            {
+                "span_id": "child-b",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.exit",
+                "service": "langgraph",
+                "name": "tool-b",
+                "wall_time": 100.009,
+            },
+            {
+                "span_id": "root",
+                "parent_span_id": None,
+                "probe": "langgraph.chain.exit",
+                "service": "langgraph",
+                "name": "request",
+                "wall_time": 100.010,
+            },
+        ]
+
+        timing = api._derive_trace_spans(events)
+        spans = {
+            span["span_id"]: span for span in timing["spans"]
+        }
+
+        assert spans["root"]["inclusive_duration_ms"] == 10.0
+        assert spans["root"]["self_time_ms"] == 2.0
+        assert spans["root"]["self_time_child_count"] == 2
+        assert spans["child-a"]["inclusive_duration_ms"] == 6.0
+        assert spans["child-b"]["inclusive_duration_ms"] == 5.0
+        assert timing["trace_wall_duration_ms"] == 10.0
+        assert timing["cumulative_inclusive_duration_ms"] == 21.0
+        assert timing["parallel_overlaps"] == [
+            {
+                "parent_span_id": "root",
+                "relationship": "shared_parent",
+                "span_ids": ["child-a", "child-b"],
+                "overlap_ms": 3.0,
+            }
+        ]
+
+    async def test_trace_with_event_cap_does_not_claim_complete_wall_time(
+        self,
+    ):
+        import backend.main as api
+
+        events = [
+            {"probe": "request.entry", "wall_time": 300.0},
+            *(
+                {
+                    "probe": "runtime.event",
+                    "wall_time": 300.0 + index / 1000,
+                }
+                for index in range(998)
+            ),
+            {"probe": "request.exit", "wall_time": 301.0},
+        ]
+
+        timing = api._derive_trace_spans(events)
+
+        assert timing["events_may_be_truncated"] is True
+        assert timing["request_wall_duration_ms"] is None
+        assert timing["trace_wall_duration_ms"] is None
+
+    async def test_trace_reports_asyncio_tick_overlap_without_parent_ids(
+        self,
+    ):
+        import backend.main as api
+
+        timing = api._derive_trace_spans(
+            [
+                {
+                    "span_id": "tick-a",
+                    "probe": "asyncio.loop.tick",
+                    "service": "asyncio",
+                    "name": "task-a",
+                    "wall_time": 10.0,
+                    "duration_ns": 5_000_000,
+                },
+                {
+                    "span_id": "tick-b",
+                    "probe": "asyncio.loop.tick",
+                    "service": "asyncio",
+                    "name": "task-b",
+                    "wall_time": 10.004,
+                    "duration_ns": 5_000_000,
+                },
+            ]
+        )
+
+        assert timing["parallel_overlaps"] == [
+            {
+                "parent_span_id": None,
+                "relationship": "trace_cooccurrence",
+                "span_ids": ["tick-a", "tick-b"],
+                "overlap_ms": 1.0,
+            }
+        ]
+
+    async def test_trace_uses_request_boundaries_for_wall_duration(
+        self,
+    ):
+        import backend.main as api
+
+        timing = api._derive_trace_spans(
+            [
+                {"probe": "request.entry", "wall_time": 200.0},
+                {
+                    "probe": "django.view.enter",
+                    "wall_time": 200.010,
+                },
+                {"probe": "request.exit", "wall_time": 200.125},
+            ]
+        )
+
+        assert timing["request_wall_duration_ms"] == 125.0
+        assert timing["trace_wall_duration_ms"] == 125.0
+        assert (
+            timing["trace_wall_duration_source"]
+            == "request_entry_exit_boundaries"
+        )
+
     async def test_trace_returns_critical_path(self, client):
         trace_id = "trace-abc-123"
         customer_id = TEST_CUSTOMER

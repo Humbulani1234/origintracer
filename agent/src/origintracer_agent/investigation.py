@@ -151,8 +151,11 @@ class ActionIntent(BaseModel):
     ] = Field(
         default="investigate",
         description=(
-            "Choose chat for greetings, date/time, and OriginTracer or "
-            "observability questions. Choose out_of_scope for unrelated topics."
+            "Choose chat for greetings, date/time, OriginTracer questions, "
+            "observability, and general computer science, computing, and "
+            "systems topics. Choose "
+            "investigate for live worker inspection or explicit actions. "
+            "Choose out_of_scope for unrelated topics."
         ),
     )
 

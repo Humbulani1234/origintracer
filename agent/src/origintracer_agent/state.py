@@ -28,9 +28,9 @@ class InvestigationState(AgentState):
         worker inventory. The prepare node verifies it against the backend
         inventory before any worker-scoped tool runs.
     caller_selected_worker_pid : str, optional
-        Worker PID supplied by the caller when the thread began. It remains
-        available as the reference point for later requests after an
-        all-worker overview clears the active worker scope.
+        Most recent worker PID supplied by the caller. It remains available as
+        the UI-selection reference after an all-worker overview clears the
+        active worker scope, and is distinct from a planner-resolved target.
     worker_inventory : list of dict, optional
         Recent worker identities returned by an all-worker overview. This
         supports later references such as another worker while each query
@@ -61,11 +61,15 @@ class InvestigationState(AgentState):
         ID of the last user message handled by the graph, used to avoid
         processing the same message twice.
     question : str, optional
-        Original question for the active investigation.
+        First request that started the active investigation. Prompt context
+        exposes this persisted value as ``investigation_origin_question``.
     current_request : str, optional
         Newest user request being handled.
     questions : list[str], optional
         Requests added to the current investigation across related turns.
+        The latest item is projected into planner context as
+        ``existing_question``; those context names are not separate state
+        fields.
     plan : list[dict], optional
         Evidence-gathering steps and their status.
     deliverables : list[dict], optional

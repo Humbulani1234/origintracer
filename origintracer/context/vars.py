@@ -71,6 +71,33 @@ def reset_investigation_id(token: Token) -> None:
     current_investigation_id.reset(token)
 
 
+def set_span_id(span_id: Optional[str]) -> Token:
+    """Set the active span ID and return its context token.
+
+    Parameters
+    ----------
+    span_id : str or None
+        Span to use as the current parent for events emitted in this context.
+
+    Returns
+    -------
+    Token
+        Token that restores the previous span when reset.
+    """
+    return current_span_id.set(span_id)
+
+
+def reset_span_id(token: Token) -> None:
+    """Restore the previous active span ID.
+
+    Parameters
+    ----------
+    token : Token
+        Token returned by :func:`set_span_id`.
+    """
+    current_span_id.reset(token)
+
+
 def get_investigation_id() -> Optional[str]:
     """Return the active investigation grouping identifier, if any."""
     return current_investigation_id.get()

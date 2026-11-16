@@ -35,6 +35,18 @@ Evidence gathering is bounded to **four rounds**, with a maximum of **four tool 
 
 The read-only tools operate on the same stored snapshot and event data used by the React application. They cover worker status and inventory, graph nodes and edges, hotspots, latency, recent events, trace paths, causal rules, and graph changes. To retrieve this information, the agent first resolves the selected PID to its stable `worker_instance_id` and then calls the corresponding FastAPI stored-data routes using that instance ID.
 
+Trace reads preserve each event's span ID, parent span ID, and timing fields.
+When the trace contains complete request boundaries or a complete root span,
+the backend reports its wall-clock duration. It also reports inclusive span
+intervals, temporal overlaps between observed intervals, and self-time
+estimates after subtracting returned direct-child intervals. Self-time may
+include work from child operations that were not captured. Parentless overlaps
+show temporal co-occurrence in the same trace; they do not establish
+parent-child relationships or CPU parallelism. Cumulative inclusive time sums
+observed span intervals, so nested and overlapping work can be counted more
+than once. A trace that reaches the event retrieval cap is marked as possibly
+truncated, and its wall-clock duration is withheld.
+
 > **Important:** The agent never connects directly to a worker's Unix socket. FastAPI exposes the uploaded snapshot, event, and runtime APIs, while live socket inspection remains the responsibility of the OriginTracer REPL and local query server. For example, `get_worker_snapshot` retrieves the stored graph using the exact process-instance ID, event reads come from the backend event repository, and trace stitching combines uploaded event rows.
 
 Some runtime information cannot be reconstructed from a graph snapshot alone. To make these fields available to the backend, the uploader sends them to `POST /api/v1/worker/runtime`. The heartbeat includes:

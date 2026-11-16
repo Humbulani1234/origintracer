@@ -889,6 +889,20 @@ def test_trace_assessment_preview_preserves_every_returned_stage():
     trace = {
         "verb": "TRACE",
         "trace_id": "trace-abc",
+        "timing": {
+            "trace_wall_duration_ms": 82.0,
+            "trace_wall_duration_source": "request_entry_exit_boundaries",
+            "spans": [
+                {
+                    "span_id": "span-1",
+                    "parent_span_id": None,
+                    "inclusive_duration_ms": 82.0,
+                    "self_time_ms": 12.0,
+                    "self_time_scope": "observed child intervals",
+                    "timing_source": "paired_event_timestamps",
+                }
+            ],
+        },
         "stages": 82,
         "data": [
             {
@@ -912,6 +926,8 @@ def test_trace_assessment_preview_preserves_every_returned_stage():
     assert len(preview["stages"]) == 82
     assert preview["stages"][0]["duration_ms"] == 2.5
     assert preview["stages"][-1]["name"] == "stage-81"
+    assert preview["timing"]["trace_wall_duration_ms"] == 82.0
+    assert preview["timing"]["spans"][0]["span_id"] == "span-1"
 
 
 def test_event_preview_groups_trace_types_without_dropping_rows():
@@ -967,17 +983,34 @@ def test_event_preview_groups_trace_types_without_dropping_rows():
     assert groups["request-1"]["events"][0]["ts"] == 10.0
 
 
-def test_trace_report_summary_lists_all_returned_stage_durations():
+def test_trace_report_summary_distinguishes_trace_and_event_timing():
     summary = _tool_result_summary(
         "get_worker_trace",
         {
             "result": {
                 "trace_id": "trace-a",
+                "event_duration_sum_ms": 40.0,
+                "timing": {
+                    "trace_wall_duration_ms": 12.0,
+                    "trace_wall_duration_source": "single_complete_root_span",
+                    "cumulative_inclusive_duration_ms": 30.0,
+                    "parallel_overlaps": [{"overlap_ms": 2.0}],
+                    "spans": [
+                        {
+                            "service": "web",
+                            "name": "request",
+                            "inclusive_duration_ms": 12.0,
+                            "self_time_ms": 7.0,
+                            "self_time_scope": "observed child intervals",
+                            "timing_source": "paired_event_timestamps",
+                        }
+                    ],
+                },
                 "data": [
                     {
                         "service": "web",
                         "name": f"stage-{index}",
-                        "duration_ms": float(index),
+                        "inter_event_gap_ms": float(index),
                     }
                     for index in range(5)
                 ],
@@ -986,8 +1019,13 @@ def test_trace_report_summary_lists_all_returned_stage_durations():
     )
 
     assert "Trace trace-a" in summary
-    assert "stage-0: duration_ms=0.0" in summary
-    assert "stage-4: duration_ms=4.0" in summary
+    assert "trace_wall_duration_ms=12.0" in summary
+    assert "cumulative_inclusive_duration_ms=30.0" in summary
+    assert "parallel_overlap_pairs=1" in summary
+    assert "web::request: inclusive_duration_ms=12.0" in summary
+    assert "self_time_ms=7.0" in summary
+    assert "stage-0: inter_event_gap_ms=0.0" in summary
+    assert "stage-4: inter_event_gap_ms=4.0" in summary
 
 
 @pytest.mark.anyio
@@ -1035,8 +1073,9 @@ async def test_stitched_trace_reads_stored_trace_for_exact_id(
         "202",
     ]
     assert result["stages"][0]["duration_ms"] is None
-    assert "no cross-process duration is computed" in (
-        result["interpretation_limits"][0]
+    assert (
+        "no cross-process wall-clock duration is computed"
+        in (result["interpretation_limits"][0])
     )
 
 

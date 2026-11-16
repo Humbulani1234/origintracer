@@ -46,7 +46,7 @@ import re
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     Depends,
@@ -1590,6 +1590,265 @@ async def diff(
 
 
 # tra
+def _derive_trace_spans(
+    events: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Derive span intervals and timing metrics from explicit event lineage.
+
+    Parameters
+    ----------
+    events : list[dict[str, Any]]
+        Chronologically ordered event rows for one trace.
+
+    Returns
+    -------
+    dict[str, Any]
+        Observed span intervals, request or trace wall duration when complete
+        boundaries exist, estimated self-time after subtracting returned child
+        intervals, and overlap pairs. Self-time can include unobserved child
+        work. Parentless overlaps establish temporal co-occurrence in the trace
+        only. Trace wall duration is withheld when the event sample may be
+        truncated.
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for event in events:
+        span_id = event.get("span_id")
+        if span_id:
+            grouped.setdefault(str(span_id), []).append(event)
+
+    spans: List[Dict[str, Any]] = []
+    for span_id, rows in grouped.items():
+        starts = [
+            row
+            for row in rows
+            if str(row.get("probe") or "").endswith(
+                (".enter", ".start")
+            )
+        ]
+        ends = [
+            row
+            for row in rows
+            if str(row.get("probe") or "").endswith(
+                (".exit", ".end", ".error", ".exception")
+            )
+        ]
+        start_row = starts[0] if starts else None
+        end_row = ends[-1] if ends else None
+        terminal = end_row or (
+            rows[-1] if len(rows) == 1 else None
+        )
+        if start_row is not None and end_row is not None:
+            start = start_row.get("wall_time") or start_row.get(
+                "timestamp"
+            )
+            end = end_row.get("wall_time") or end_row.get(
+                "timestamp"
+            )
+        elif (
+            terminal is not None
+            and terminal.get("duration_ns") is not None
+        ):
+            end = terminal.get("wall_time") or terminal.get(
+                "timestamp"
+            )
+            start = (
+                end - terminal["duration_ns"] / 1e9
+                if end is not None
+                else None
+            )
+        else:
+            continue
+        if (
+            not isinstance(start, (int, float))
+            or not isinstance(end, (int, float))
+            or end < start
+        ):
+            continue
+        spans.append(
+            {
+                "span_id": span_id,
+                "parent_span_id": (
+                    end_row or start_row or terminal
+                ).get("parent_span_id"),
+                "service": (
+                    end_row or start_row or terminal
+                ).get("service"),
+                "name": (end_row or start_row or terminal).get(
+                    "name"
+                ),
+                "probe_start": (
+                    start_row.get("probe") if start_row else None
+                ),
+                "probe_end": (
+                    end_row.get("probe") if end_row else None
+                ),
+                "start_timestamp": start,
+                "end_timestamp": end,
+                "inclusive_duration_ms": round(
+                    (end - start) * 1000, 3
+                ),
+                "timing_source": (
+                    "paired_event_timestamps"
+                    if start_row and end_row
+                    else "recorded_duration_ns_and_end_timestamp"
+                ),
+            }
+        )
+
+    for span in spans:
+        children = [
+            child
+            for child in spans
+            if child.get("parent_span_id") == span["span_id"]
+        ]
+        intervals = sorted(
+            (
+                max(
+                    span["start_timestamp"],
+                    child["start_timestamp"],
+                ),
+                min(
+                    span["end_timestamp"], child["end_timestamp"]
+                ),
+            )
+            for child in children
+            if child["start_timestamp"] < span["end_timestamp"]
+            and child["end_timestamp"] > span["start_timestamp"]
+        )
+        covered = 0.0
+        if intervals:
+            left, right = intervals[0]
+            for next_left, next_right in intervals[1:]:
+                if next_left <= right:
+                    right = max(right, next_right)
+                else:
+                    covered += right - left
+                    left, right = next_left, next_right
+            covered += right - left
+        span["self_time_ms"] = round(
+            max(
+                0.0,
+                (
+                    span["end_timestamp"]
+                    - span["start_timestamp"]
+                    - covered
+                )
+                * 1000,
+            ),
+            3,
+        )
+        span["self_time_scope"] = (
+            "observed exclusive interval after subtracting returned direct-child intervals; unobserved child work may remain"
+        )
+        span["self_time_child_count"] = sum(
+            child["start_timestamp"] < span["end_timestamp"]
+            and child["end_timestamp"] > span["start_timestamp"]
+            for child in children
+        )
+
+    siblings: Dict[Optional[str], List[Dict[str, Any]]] = {}
+    for span in spans:
+        parent_id = span.get("parent_span_id")
+        siblings.setdefault(parent_id, []).append(span)
+    overlaps = []
+    for parent_id, rows in siblings.items():
+        rows.sort(key=lambda item: item["start_timestamp"])
+        for index, left in enumerate(rows):
+            for right in rows[index + 1 :]:
+                overlap = min(
+                    left["end_timestamp"], right["end_timestamp"]
+                ) - max(
+                    left["start_timestamp"],
+                    right["start_timestamp"],
+                )
+                if overlap > 0:
+                    overlaps.append(
+                        {
+                            "parent_span_id": parent_id,
+                            "relationship": (
+                                "shared_parent"
+                                if parent_id is not None
+                                else "trace_cooccurrence"
+                            ),
+                            "span_ids": [
+                                left["span_id"],
+                                right["span_id"],
+                            ],
+                            "overlap_ms": round(
+                                overlap * 1000, 3
+                            ),
+                        }
+                    )
+    request_starts = [
+        row
+        for row in events
+        if row.get("probe") == "request.entry"
+    ]
+    request_ends = [
+        row
+        for row in events
+        if row.get("probe")
+        in {"request.exit", "django.exception"}
+    ]
+    events_may_be_truncated = len(events) >= 1000
+    request_duration = None
+    if (
+        not events_may_be_truncated
+        and len(request_starts) == 1
+        and len(request_ends) == 1
+    ):
+        start = request_starts[0].get(
+            "wall_time"
+        ) or request_starts[0].get("timestamp")
+        end = request_ends[-1].get("wall_time") or request_ends[
+            -1
+        ].get("timestamp")
+        if (
+            isinstance(start, (int, float))
+            and isinstance(end, (int, float))
+            and end >= start
+        ):
+            request_duration = round((end - start) * 1000, 3)
+    complete_roots = [
+        span
+        for span in spans
+        if span.get("parent_span_id") is None
+        and span.get("probe_start")
+        and span.get("probe_end")
+    ]
+    trace_wall_duration = request_duration
+    trace_wall_source = (
+        "request_entry_exit_boundaries"
+        if request_duration is not None
+        else None
+    )
+    if (
+        trace_wall_duration is None
+        and not events_may_be_truncated
+        and len(complete_roots) == 1
+    ):
+        root = complete_roots[0]
+        trace_wall_duration = root["inclusive_duration_ms"]
+        trace_wall_source = "single_complete_root_span"
+    return {
+        "spans": spans,
+        "request_wall_duration_ms": request_duration,
+        "trace_wall_duration_ms": trace_wall_duration,
+        "trace_wall_duration_source": trace_wall_source,
+        "parallel_overlaps": overlaps,
+        "parallel_overlap_scope": "interval overlaps among returned spans in this trace; parentless pairs establish trace co-occurrence only, and sibling intervals may be omitted if events were truncated",
+        "events_may_be_truncated": events_may_be_truncated,
+        "cumulative_inclusive_duration_ms": round(
+            sum(span["inclusive_duration_ms"] for span in spans),
+            3,
+        ),
+        "cumulative_scope": (
+            "sum of observed span inclusive intervals; includes nested work and may include overlapping spans"
+        ),
+        "interval_basis": "event wall timestamps and recorded duration_ns; only spans with explicit paired identity or duration are included",
+    }
+
+
 @app.get("/api/v1/traces/{trace_id}")
 async def get_trace(
     trace_id: str,
@@ -1679,33 +1938,48 @@ async def get_trace(
 
     path = []
     last_ts = None
-    total_ms = 0.0
-    for e in events:
-        ts = e.get("timestamp") or e.get("wall_time")
-        duration_ms: Optional[float] = (
+    event_duration_sum_ms = 0.0
+    for event in events:
+        ts = event.get("timestamp") or event.get("wall_time")
+        inter_event_gap_ms = (
             round((ts - last_ts) * 1000, 3)
-            if last_ts and ts
+            if last_ts is not None and ts is not None
             else None
         )
-        dur_ns = e.get("duration_ns")
-        dur_ms = round(dur_ns / 1e6, 3) if dur_ns else None
-        if dur_ms:
-            total_ms += dur_ms
+        duration_ns = event.get("duration_ns")
+        recorded_duration_ms = (
+            round(duration_ns / 1e6, 3)
+            if duration_ns is not None
+            else None
+        )
+        if recorded_duration_ms is not None:
+            event_duration_sum_ms += recorded_duration_ms
         path.append(
             {
-                "probe": e.get("probe"),
-                "service": e.get("service"),
-                "name": e.get("name"),
+                "probe": event.get("probe"),
+                "service": event.get("service"),
+                "name": event.get("name"),
+                "trace_id": event.get("trace_id"),
+                "span_id": event.get("span_id"),
+                "parent_span_id": event.get("parent_span_id"),
                 "timestamp": ts,
-                "wall_time": e.get("wall_time"),
-                "duration_ms": duration_ms,
-                "metadata": e.get("metadata"),
+                "wall_time": event.get("wall_time"),
+                "duration_ns": duration_ns,
+                "recorded_duration_ms": recorded_duration_ms,
+                "inter_event_gap_ms": inter_event_gap_ms,
+                "duration_ms": inter_event_gap_ms,
+                "pid": event.get("pid"),
+                "tid": event.get("tid"),
+                "metadata": event.get("metadata"),
             }
         )
         last_ts = ts
+    timing = _derive_trace_spans(events)
     return {
         "data": path,
-        "total_ms": round(total_ms, 3),
+        "total_ms": round(event_duration_sum_ms, 3),
+        "event_duration_sum_ms": round(event_duration_sum_ms, 3),
+        "timing": timing,
         "warnings": warnings,
     }
 
@@ -1752,6 +2026,12 @@ def stitch_stored_trace(
             "service": event.get("service"),
             "name": event.get("name"),
             "timestamp": event.get("wall_time"),
+            "span_id": event.get("span_id"),
+            "parent_span_id": event.get("parent_span_id"),
+            "duration_ns": event.get("duration_ns"),
+            "worker_instance_id": (
+                event.get("metadata") or {}
+            ).get("worker_instance_id"),
             "duration_ms": (
                 round(event["duration_ns"] / 1e6, 3)
                 if event.get("duration_ns") is not None

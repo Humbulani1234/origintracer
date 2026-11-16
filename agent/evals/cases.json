@@ -188,8 +188,11 @@
         "lines": [
           "Use a trace ID actually returned by the event query and keep it consistent.",
           "Select a trace whose observed event type matches the request; for request critical paths prefer request start/entry and exit/end boundaries, and for worker lifecycle questions use spawn/start/ready/exit events.",
-          "Describe every returned trace stage's duration_ms exactly as returned, and state when a stage has no returned duration.",
-          "Do not calculate stage durations by subtracting event timestamps or invent stages absent from get_worker_trace.",
+            "Report trace_wall_duration_ms only when returned, with its trace_wall_duration_source. Distinguish it from cumulative_inclusive_duration_ms, which includes nested work and may count overlapping spans more than once.",
+            "For returned spans, preserve inclusive_duration_ms and timing_source. Describe self_time_ms together with self_time_scope; it is an observed estimate and may include unobserved child work.",
+            "Describe parallel_overlaps only as temporal overlap among returned spans in the same trace. Preserve relationship: shared_parent is supported by lineage; trace_cooccurrence means parentage was unavailable. Do not call either CPU parallelism or causation.",
+            "Treat inter_event_gap_ms (and its legacy duration_ms alias) as the gap between adjacent event rows, not an operation duration. Treat event_duration_sum_ms and legacy total_ms as event-duration sums, not wall-clock time.",
+            "State when events_may_be_truncated is true and do not present partial measurements as complete. If a timing field is absent, say it could not be derived from the returned boundaries or lineage; do not calculate it from aggregate graph edges or event names.",
           "Do not claim a component caused latency without supporting trace evidence."
         ]
       }
@@ -1143,6 +1146,53 @@
           "Describe OriginTracer using the supplied product overview.",
           "When mentioning official documentation, render it as a clickable Markdown link, using retrieved page links when available.",
           "Do not claim to have inspected this user's OriginTracer data."
+        ]
+      }
+    }
+  },
+  {
+    "id": "general_chat_computer_science_concept",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "What is the difference between a process and a thread?"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "chat",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Answer this as a general computer-science question, without requiring an OriginTracer connection.",
+          "Clearly explain the distinction between a process and a thread.",
+          "Do not invent OriginTracer-specific behavior or claim a worker was inspected."
+        ]
+      }
+    }
+  },
+  {
+    "id": "general_chat_contextual_computing_follow_up",
+    "inputs": {
+      "requires_worker": false,
+      "turns": [
+        "I'm learning how a browser connects to a web server.",
+        "TCP"
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "expected_response_mode": "chat",
+      "must_not_use_tools": true,
+      "min_evidence": 0,
+      "min_hypotheses": 0,
+      "quality_criteria": {
+        "lines": [
+          "Use the prior turn to understand TCP as a request for a networking explanation.",
+          "Explain TCP's role in communication between a browser and a web server.",
+          "Do not route the fragment to worker investigation or force an unrelated OriginTracer connection."
         ]
       }
     }
