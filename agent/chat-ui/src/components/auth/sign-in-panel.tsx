@@ -13,14 +13,18 @@ function GoogleMark() {
   );
 }
 
-export function SignInPanel() {
+export function SignInPanel({
+  sessionExpired = false,
+}: {
+  sessionExpired?: boolean;
+}) {
   const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
 
   function callbackUrl() {
-    if (typeof window !== "undefined" && window.location.pathname.endsWith("/account")) {
-      return `${basePath}/account`;
-    }
-    return `${basePath}/`;
+    if (typeof window === "undefined") return `${basePath}/`;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("session");
+    return `${url.pathname}${url.search}`;
   }
 
   return (
@@ -31,6 +35,11 @@ export function SignInPanel() {
             ORIGINTRACER
           </p>
         </div>
+        {sessionExpired && (
+          <p className="text-muted-foreground mb-5 text-sm" role="status">
+            Your sign-in session expired. Sign in again to continue.
+          </p>
+        )}
         <button
           type="button"
           className="h-11 w-full cursor-pointer rounded-lg border bg-white px-4 text-sm font-medium text-[#1f1f1f] hover:bg-[#f8faff]"

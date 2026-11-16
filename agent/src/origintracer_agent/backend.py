@@ -410,6 +410,100 @@ async def _snapshot_for_pid(pid: int) -> dict[str, Any]:
     )
 
 
+def _bound_trace_result(
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep trace lifecycle metadata when bounding a large tool result.
+
+    Parameters
+    ----------
+    result : dict[str, Any]
+        Full trace response returned by the backend.
+
+    Returns
+    -------
+    dict[str, Any]
+        Trace data shortened to the tool-result budget while retaining
+        lifecycle, capture-loss, and timing summary fields.
+    """
+    rows = result.get("data")
+    rows = rows if isinstance(rows, list) else []
+    timing = result.get("timing")
+    timing = dict(timing) if isinstance(timing, dict) else {}
+
+    for key in ("spans", "parallel_overlaps"):
+        values = timing.get(key)
+        if isinstance(values, list) and len(values) > 50:
+            timing[f"{key}_count"] = len(values)
+            timing[f"{key}_truncated"] = True
+            timing[key] = values[:50]
+
+    candidate = dict(result)
+    candidate["timing"] = timing
+    original_count = len(rows)
+    for keep_count in (40, 20, 10, 5, 2, 0):
+        bounded_count = min(keep_count, original_count)
+        first_count = (bounded_count + 1) // 2
+        last_count = bounded_count - first_count
+        selected = rows[:first_count]
+        if last_count:
+            selected.extend(rows[-last_count:])
+        candidate["data"] = selected
+        candidate["data_truncated"] = (
+            bounded_count < original_count
+        )
+        candidate["events_omitted"] = (
+            original_count - bounded_count
+        )
+        if (
+            len(
+                json.dumps(
+                    candidate, ensure_ascii=False, default=str
+                )
+            )
+            <= _MAX_TOOL_RESULT_CHARS
+        ):
+            return candidate
+
+    # If timing arrays are themselves large, retain their counts and scalar
+    # summaries while preserving the trace-completeness object in full.
+    for key in ("spans", "parallel_overlaps"):
+        values = timing.get(key)
+        if isinstance(values, list):
+            timing[f"{key}_count"] = timing.get(
+                f"{key}_count", len(values)
+            )
+            timing[f"{key}_truncated"] = True
+            timing[key] = []
+    candidate["data"] = []
+    candidate["data_truncated"] = original_count > 0
+    candidate["events_omitted"] = original_count
+    if (
+        len(
+            json.dumps(
+                candidate, ensure_ascii=False, default=str
+            )
+        )
+        <= _MAX_TOOL_RESULT_CHARS
+    ):
+        return candidate
+
+    return {
+        "metric": "trace",
+        "notice": "Trace rows and detailed timing exceeded the tool-result budget.",
+        "events_returned": 0,
+        "events_omitted": original_count,
+        "trace_completeness": result.get(
+            "trace_completeness", {}
+        ),
+        "timing": {
+            key: value
+            for key, value in timing.items()
+            if not isinstance(value, (list, dict))
+        },
+    }
+
+
 async def query_worker(
     pid: int,
     query: str,
@@ -471,6 +565,12 @@ async def query_worker(
         result = {
             "metric": "trace",
             "data": payload.get("data", []),
+            "timing": payload.get("timing", {}),
+            "trace_completeness": payload.get(
+                "trace_completeness", {}
+            ),
+            "warnings": payload.get("warnings", []),
+            "total_ms": payload.get("total_ms"),
         }
     elif parsed.verb == "CAUSAL":
         payload = await _request(
@@ -670,14 +770,20 @@ async def query_worker(
         )
     encoded = json.dumps(result, ensure_ascii=False, default=str)
     if len(encoded) > _MAX_TOOL_RESULT_CHARS:
-        result = {
-            "truncated": True,
-            "notice": (
-                "The worker result was shortened to fit the tool response. "
-                "Use a narrower query or lower limit for more detail."
-            ),
-            "preview": encoded[:_MAX_TOOL_RESULT_CHARS],
-        }
+        if (
+            isinstance(result, dict)
+            and result.get("metric") == "trace"
+        ):
+            result = _bound_trace_result(result)
+        else:
+            result = {
+                "truncated": True,
+                "notice": (
+                    "The worker result was shortened to fit the tool response. "
+                    "Use a narrower query or lower limit for more detail."
+                ),
+                "preview": encoded[:_MAX_TOOL_RESULT_CHARS],
+            }
     return {
         "source": "OriginTracer stored snapshot/event query",
         "worker_pid": str(pid),

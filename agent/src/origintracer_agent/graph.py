@@ -321,6 +321,16 @@ _TRACE_TIMING_ASSESS_GUIDANCE = """
 - For `get_worker_stitched_trace`, each stage's `duration_ms` is the event's
   recorded duration when available, not an inter-event gap. It does not
   provide cross-worker wall-clock duration.
+- For `get_worker_trace.trace_completeness`, report the observed request
+  boundaries, tracker state, capture-loss counters, and heartbeat freshness
+  separately. A tracker state is scoped to its recorded heartbeat; do not
+  present stale `active` state as current.
+- A missing request boundary means it was not observed in the returned trace
+  data. Do not say the request never completed, is still running, crashed, or
+  lost events unless the returned lifecycle or per-trace capture evidence
+  supports that specific statement. Worker-wide drop counters do not prove
+  that this trace lost events. If per-trace counters were truncated, absence
+  of a matching counter does not establish that this trace had no drops.
 - If the tool omits a metric because boundaries, lineage, or durations are
   missing, say that directly. Do not reconstruct it from aggregate graph edges
   or operation names.
@@ -5495,6 +5505,9 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
         )
         if tool_name == "get_worker_trace":
             timing = trace_result.get("timing") or {}
+            completeness = (
+                trace_result.get("trace_completeness") or {}
+            )
             spans = timing.get("spans", [])
             span_summaries = []
             for span in spans:
@@ -5524,6 +5537,48 @@ def _tool_result_summary(tool_name: str, result: Any) -> str:
                 f"parallel_overlap_pairs="
                 f"{len(timing.get('parallel_overlaps', []))}"
             )
+            if trace_result.get("data_truncated"):
+                summary_parts.append(
+                    "trace_event_rows_truncated="
+                    f"{trace_result.get('events_omitted', 'unknown')} omitted"
+                )
+            if completeness:
+                summary_parts.append(
+                    "trace_completeness="
+                    f"{completeness.get('status', 'not stated')}; "
+                    f"request_entry_observed="
+                    f"{completeness.get('request_entry_observed', 'not stated')}; "
+                    f"request_terminal_observed="
+                    f"{completeness.get('request_terminal_observed', 'not stated')}; "
+                    f"events_returned={completeness.get('events_returned', 'not stated')}"
+                )
+                lifecycle = completeness.get("lifecycle_record")
+                if isinstance(lifecycle, dict):
+                    summary_parts.append(
+                        "lifecycle_record="
+                        f"{lifecycle.get('state', 'not stated')}"
+                        + (
+                            f" ({lifecycle.get('reason')})"
+                            if lifecycle.get("reason")
+                            else ""
+                        )
+                    )
+                capture_loss = completeness.get("capture_loss")
+                if isinstance(capture_loss, dict):
+                    summary_parts.append(
+                        "per_trace_capture_drops="
+                        f"{capture_loss.get('dropped_events', 0)}; "
+                        "capture_drop_sources="
+                        f"{capture_loss.get('sources', [])}"
+                    )
+                    worker_loss = capture_loss.get(
+                        "worker_wide_loss_totals"
+                    )
+                    if worker_loss:
+                        summary_parts.append(
+                            "worker_wide_capture_loss_totals="
+                            f"{worker_loss} (not trace-correlated)"
+                        )
             if span_summaries:
                 summary_parts.append(
                     "spans: " + "; ".join(span_summaries[:20])

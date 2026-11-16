@@ -10,7 +10,12 @@ export const oidcAuthEnabled = Boolean(issuer && clientId && clientSecret);
 async function refreshAccessToken(token: Record<string, unknown>) {
   const refreshToken = token.refreshToken;
   if (!issuer || !clientId || !clientSecret || typeof refreshToken !== "string") {
-    return { ...token, error: "RefreshAccessTokenError" };
+    return {
+      ...token,
+      accessToken: undefined,
+      accessTokenExpiresAt: 0,
+      error: "RefreshAccessTokenError",
+    };
   }
   try {
     const response = await fetch(
@@ -37,7 +42,12 @@ async function refreshAccessToken(token: Record<string, unknown>) {
       error: undefined,
     };
   } catch {
-    return { ...token, error: "RefreshAccessTokenError" };
+    return {
+      ...token,
+      accessToken: undefined,
+      accessTokenExpiresAt: 0,
+      error: "RefreshAccessTokenError",
+    };
   }
 }
 
@@ -76,7 +86,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async session({ session, token }) {
       session.accessToken =
-        typeof token.accessToken === "string" ? token.accessToken : undefined;
+        !token.error && typeof token.accessToken === "string"
+          ? token.accessToken
+          : undefined;
       session.error =
         typeof token.error === "string" ? token.error : undefined;
       return session;

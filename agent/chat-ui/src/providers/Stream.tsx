@@ -113,6 +113,19 @@ const StreamSession = ({
   });
 
   useEffect(() => {
+    const streamError = streamValue.error;
+    const message =
+      streamError instanceof Error
+        ? streamError.message
+        : String(streamError ?? "");
+    if (!message.includes("Your sign-in session expired.")) return;
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("session", "expired");
+    window.location.replace(`${url.pathname}${url.search}`);
+  }, [streamValue.error]);
+
+  useEffect(() => {
     if (
       isStaticDemo ||
       process.env.NEXT_PUBLIC_CHECK_AGENT_CONNECTION !== "true"

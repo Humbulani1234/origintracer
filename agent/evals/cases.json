@@ -193,6 +193,7 @@
             "Describe parallel_overlaps only as temporal overlap among returned spans in the same trace. Preserve relationship: shared_parent is supported by lineage; trace_cooccurrence means parentage was unavailable. Do not call either CPU parallelism or causation.",
             "Treat inter_event_gap_ms (and its legacy duration_ms alias) as the gap between adjacent event rows, not an operation duration. Treat event_duration_sum_ms and legacy total_ms as event-duration sums, not wall-clock time.",
             "State when events_may_be_truncated is true and do not present partial measurements as complete. If a timing field is absent, say it could not be derived from the returned boundaries or lineage; do not calculate it from aggregate graph edges or event names.",
+            "When trace_completeness is returned, report its lifecycle status and observed request boundaries. Distinguish trace-specific capture-loss counts from worker-wide totals; do not infer a crash, hang, or loss from missing boundaries alone.",
           "Do not claim a component caused latency without supporting trace evidence."
         ]
       }

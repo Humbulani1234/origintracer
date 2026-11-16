@@ -794,9 +794,11 @@ async def get_worker_trace(
         section includes trace wall duration when a request boundary pair or
         complete root span exists, span intervals, inclusive durations,
         observed-child self-time estimates, sibling overlap, and cumulative
-        inclusive duration. Self-time may include unobserved child work, and
-        overlap does not establish CPU parallelism. Event gaps and duration
-        sums are labeled separately.
+        inclusive duration. The response also reports observed lifecycle
+        boundaries, any matching tracker record, and recorded capture-loss
+        counters when those are available. Self-time may include unobserved
+        child work, and overlap does not establish CPU parallelism. Event gaps
+        and duration sums are labeled separately.
     """
     query = build_trace_query(trace_id)
     return await query_worker(

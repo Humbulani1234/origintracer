@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from typing import List, Optional
 
 import origintracer
@@ -47,6 +47,53 @@ class _DrainEventBuffer:
         self._q: deque[NormalizedEvent] = deque(maxlen=max_size)
         self._lock = threading.Lock()
         self._dropped = 0
+        self._dropped_by_trace: OrderedDict[str, int] = (
+            OrderedDict()
+        )
+        self._trace_counts_truncated = False
+        self._loss_by_reason: dict[
+            str, OrderedDict[str, int]
+        ] = {}
+
+    def record_loss(
+        self, event: NormalizedEvent, reason: str
+    ) -> None:
+        """Record one capture loss for the event's trace.
+
+        Parameters
+        ----------
+        event : NormalizedEvent
+            Event discarded before it could be processed.
+        reason : str
+            Capture stage and reason for the discard.
+
+        Returns
+        -------
+        None
+        """
+        trace_id = str(event.trace_id or "")
+        with self._lock:
+            counters = self._loss_by_reason.setdefault(
+                reason, OrderedDict()
+            )
+            if trace_id in counters:
+                counters[trace_id] += 1
+                counters.move_to_end(trace_id)
+            else:
+                if len(counters) >= 256:
+                    counters.popitem(last=False)
+                    self._trace_counts_truncated = True
+                counters[trace_id] = 1
+
+    def _record_drop_locked(self, trace_id: str) -> None:
+        if trace_id in self._dropped_by_trace:
+            self._dropped_by_trace[trace_id] += 1
+            self._dropped_by_trace.move_to_end(trace_id)
+            return
+        if len(self._dropped_by_trace) >= 256:
+            self._dropped_by_trace.popitem(last=False)
+            self._trace_counts_truncated = True
+        self._dropped_by_trace[trace_id] = 1
 
     def push(self, event: NormalizedEvent) -> None:
         with self._lock:
@@ -55,6 +102,9 @@ class _DrainEventBuffer:
                 and len(self._q) >= self._q.maxlen
             ):
                 self._dropped += 1
+                self._record_drop_locked(
+                    str(event.trace_id or "")
+                )
                 return
             self._q.append(event)
 
@@ -69,7 +119,33 @@ class _DrainEventBuffer:
 
     @property
     def dropped(self) -> int:
-        return self._dropped
+        with self._lock:
+            return self._dropped
+
+    def diagnostics(self) -> dict:
+        """Return bounded event-buffer loss counters.
+
+        Returns
+        -------
+        dict
+            Aggregate and trace-specific loss counts by capture stage.
+        """
+        with self._lock:
+            return {
+                "buffer_dropped_total": self._dropped,
+                "buffer_dropped_by_trace": dict(
+                    self._dropped_by_trace
+                ),
+                **{
+                    f"{reason}_by_trace": dict(counters)
+                    for reason, counters in self._loss_by_reason.items()
+                },
+                **{
+                    f"{reason}_total": sum(counters.values())
+                    for reason, counters in self._loss_by_reason.items()
+                },
+                "trace_counts_truncated": self._trace_counts_truncated,
+            }
 
 
 class _DrainThread(threading.Thread):
@@ -104,9 +180,17 @@ class _DrainThread(threading.Thread):
                         try:
                             _engine.process(event)
                         except Exception as exc:
+                            self._buffer.record_loss(
+                                event, "engine_processing_failed"
+                            )
                             logger.debug(
                                 "drain: process error: %s", exc
                             )
+                else:
+                    for event in events:
+                        self._buffer.record_loss(
+                            event, "engine_unavailable"
+                        )
             except Exception as exc:
                 logger.debug("drain: loop error: %s", exc)
 
@@ -161,6 +245,9 @@ def unbind_engine() -> None:
     with _buffer._lock:
         _buffer._q.clear()
         _buffer._dropped = 0
+        _buffer._dropped_by_trace.clear()
+        _buffer._loss_by_reason.clear()
+        _buffer._trace_counts_truncated = False
 
 
 def emit(event: NormalizedEvent) -> None:
@@ -169,6 +256,7 @@ def emit(event: NormalizedEvent) -> None:
     This is the ONLY function probes should call.
     """
     if _engine is None:
+        _buffer.record_loss(event, "engine_unavailable")
         return
 
     try:
@@ -177,6 +265,7 @@ def emit(event: NormalizedEvent) -> None:
         else:
             _buffer.push(event)
     except Exception as exc:
+        _buffer.record_loss(event, "engine_processing_failed")
         if (
             _SYNC_MODE
         ):  # Only log in sync mode to avoid spamming the buffer
@@ -198,8 +287,14 @@ def emit_direct(event: NormalizedEvent) -> None:
     engine = (
         origintracer.get_engine()
     )  # always reads current live engine
-    if engine is not None:
+    if engine is None:
+        _buffer.record_loss(event, "engine_unavailable")
+        return
+    try:
         engine.process(event)
+    except Exception as exc:
+        _buffer.record_loss(event, "engine_processing_failed")
+        logger.debug("direct event processing failed: %s", exc)
 
 
 def _restart_drain_thread() -> None:
@@ -229,8 +324,14 @@ def flush() -> None:
         return
     for event in _buffer.drain():
         try:
-            _engine.process(event)
+            if _engine is None:
+                _buffer.record_loss(event, "engine_unavailable")
+            else:
+                _engine.process(event)
         except Exception as exc:
+            _buffer.record_loss(
+                event, "engine_processing_failed"
+            )
             logger.debug(
                 "Engine.process error during flush: %s", exc
             )
@@ -238,6 +339,7 @@ def flush() -> None:
 
 def stats() -> dict:
     return {
+        **_buffer.diagnostics(),
         "buffer_dropped": _buffer.dropped,
         "engine_bound": _engine is not None,
     }

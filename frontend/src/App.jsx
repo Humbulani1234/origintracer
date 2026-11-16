@@ -267,6 +267,9 @@ export default function App() {
         setTrace({
           id: traceCommand[1],
           stages: response?.data ?? [],
+          timing: response?.timing ?? null,
+          traceCompleteness: response?.trace_completeness ?? null,
+          warnings: response?.warnings ?? [],
           source: "history",
         });
         setView("trace");

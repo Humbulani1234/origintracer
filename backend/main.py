@@ -928,6 +928,7 @@ async def ingest_events(
 
     stored = 0
     errors = 0
+    errors_by_trace: Dict[str, int] = {}
     worker_pid = payload.get("worker_pid")
     if worker_pid is not None:
         with _active_pid_lock:
@@ -962,11 +963,24 @@ async def ingest_events(
             stored += 1
         except Exception as exc:
             errors += 1
+            trace_id = (
+                str(raw.get("trace_id") or "")
+                if isinstance(raw, dict)
+                else ""
+            )
+            errors_by_trace[trace_id] = (
+                errors_by_trace.get(trace_id, 0) + 1
+            )
             logger.debug(
                 "Event store error: %s | raw=%s", exc, raw
             )
 
-    return {"status": "ok", "stored": stored, "errors": errors}
+    return {
+        "status": "ok",
+        "stored": stored,
+        "errors": errors,
+        "errors_by_trace": errors_by_trace,
+    }
 
 
 @app.get("/api/v1/events")
@@ -1788,7 +1802,12 @@ def _derive_trace_spans(
         row
         for row in events
         if row.get("probe")
-        in {"request.exit", "django.exception"}
+        in {
+            "request.exit",
+            "request.error",
+            "request.exception",
+            "django.exception",
+        }
     ]
     events_may_be_truncated = len(events) >= 1000
     request_duration = None
@@ -1849,6 +1868,218 @@ def _derive_trace_spans(
     }
 
 
+def _trace_completeness(
+    trace_id: str,
+    events: List[Dict[str, Any]],
+    timing: Dict[str, Any],
+    runtime: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Summarize observed lifecycle and capture evidence for one trace.
+
+    Missing boundaries are reported as missing observations. This function
+    does not infer request failure, process death, or event loss from absence.
+
+    Parameters
+    ----------
+    trace_id : str
+        Trace identifier requested by the caller.
+    events : list of dict[str, Any]
+        Stored event rows returned for the trace.
+    timing : dict[str, Any]
+        Derived timing metadata for the returned event sample.
+    runtime : dict[str, Any] or None
+        Latest heartbeat for the selected worker instance, if available.
+
+    Returns
+    -------
+    dict[str, Any]
+        Bounded lifecycle, boundary, heartbeat, and capture-loss evidence.
+    """
+    probes = [str(event.get("probe") or "") for event in events]
+    request_entry = any(
+        probe == "request.entry" for probe in probes
+    )
+    request_exit = any(
+        probe == "request.exit" for probe in probes
+    )
+    request_error_probes = sorted(
+        {
+            probe
+            for probe in probes
+            if probe
+            in {
+                "request.error",
+                "request.exception",
+                "django.exception",
+            }
+        }
+    )
+    activity_terminal_probes = sorted(
+        {
+            probe
+            for probe in probes
+            if probe.endswith(
+                (".exit", ".end", ".error", ".exception")
+            )
+        }
+    )
+
+    runtime_status = (runtime or {}).get("status") or {}
+    lifecycle_snapshot = (
+        runtime_status.get("trace_lifecycle") or {}
+    )
+    lifecycle_record = None
+    for collection in ("active", "recent"):
+        rows = lifecycle_snapshot.get(collection, [])
+        if not isinstance(rows, list):
+            continue
+        lifecycle_record = next(
+            (
+                row
+                for row in reversed(rows)
+                if isinstance(row, dict)
+                and str(row.get("trace_id")) == trace_id
+            ),
+            None,
+        )
+        if lifecycle_record:
+            break
+
+    event_capture = runtime_status.get("event_capture") or {}
+    loss_sources: Dict[str, int] = {}
+    worker_wide_loss: Dict[str, int] = {}
+    trace_counts_truncated = False
+    for group_name, group in event_capture.items():
+        if not isinstance(group, dict):
+            continue
+        trace_counts_truncated = trace_counts_truncated or bool(
+            group.get("trace_counts_truncated")
+        )
+        for field, value in group.items():
+            if field.endswith("_by_trace") and isinstance(
+                value, dict
+            ):
+                try:
+                    count = int(value.get(trace_id, 0))
+                except (TypeError, ValueError):
+                    count = 0
+                if count > 0:
+                    loss_sources[f"{group_name}.{field}"] = count
+            elif field.endswith("_total"):
+                try:
+                    count = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if count > 0:
+                    worker_wide_loss[f"{group_name}.{field}"] = (
+                        count
+                    )
+
+    dropped_events = sum(loss_sources.values())
+    heartbeat = _worker_runtime_view(runtime)
+    heartbeat_fresh = heartbeat.get("online") is True
+    if request_exit:
+        status = "request_completed"
+        status_basis = "request.exit event observed"
+    elif request_error_probes:
+        status = "request_error_observed"
+        status_basis = "request error event observed"
+    elif lifecycle_record:
+        state = lifecycle_record.get("state")
+        if state == "active":
+            status = (
+                "active_at_last_heartbeat"
+                if heartbeat_fresh
+                else "was_active_at_last_heartbeat"
+            )
+            status_basis = (
+                "trace-scoped active-request tracker record"
+            )
+        elif state == "completed":
+            status = "tracker_recorded_completion"
+            status_basis = (
+                "trace-scoped tracker lifecycle record"
+            )
+        elif state == "failed":
+            status = "tracker_recorded_failure"
+            status_basis = (
+                "trace-scoped tracker lifecycle record"
+            )
+        elif state == "stale":
+            status = "tracker_evicted_after_inactivity"
+            status_basis = (
+                "tracker TTL eviction; request outcome unknown"
+            )
+        elif state == "evicted":
+            status = "tracker_evicted"
+            status_basis = str(
+                lifecycle_record.get("reason")
+                or "tracker eviction"
+            )
+        else:
+            status = "lifecycle_recorded"
+            status_basis = (
+                "trace-scoped tracker lifecycle record"
+            )
+    elif not events and dropped_events > 0:
+        status = "capture_loss_observed_no_stored_events"
+        status_basis = (
+            "trace-correlated capture loss was recorded and no event rows "
+            "were returned; this does not establish that every event was lost"
+        )
+    elif (
+        timing.get("trace_wall_duration_source")
+        == "single_complete_root_span"
+    ):
+        status = "complete_root_span_observed"
+        status_basis = "one complete root span observed"
+    elif activity_terminal_probes:
+        status = "terminal_activity_observed"
+        status_basis = "terminal span event(s) observed; request outcome not inferred"
+    elif not events:
+        status = "no_events_returned"
+        status_basis = (
+            "no stored event rows were returned; capture loss and request "
+            "outcome are unknown without matching lifecycle evidence"
+        )
+    else:
+        status = "completion_unknown"
+        status_basis = (
+            "no request completion boundary or matching lifecycle record "
+            "observed"
+        )
+
+    return {
+        "status": status,
+        "status_basis": status_basis,
+        "request_entry_observed": request_entry,
+        "request_exit_observed": request_exit,
+        "request_error_observed": bool(request_error_probes),
+        "request_terminal_observed": (
+            request_exit or bool(request_error_probes)
+        ),
+        "request_error_probes": request_error_probes,
+        "terminal_activity_probes": activity_terminal_probes,
+        "events_returned": len(events),
+        "events_may_be_truncated": bool(
+            timing.get("events_may_be_truncated")
+        ),
+        "lifecycle_record": lifecycle_record,
+        "lifecycle_heartbeat": {
+            "observed_at": (runtime or {}).get("observed_at"),
+            "fresh": heartbeat_fresh,
+            "heartbeat_age_s": heartbeat.get("heartbeat_age_s"),
+        },
+        "capture_loss": {
+            "dropped_events": dropped_events,
+            "sources": loss_sources,
+            "worker_wide_loss_totals": worker_wide_loss,
+            "trace_counts_truncated": trace_counts_truncated,
+            "per_trace_loss_observed": dropped_events > 0,
+        },
+    }
+
+
 @app.get("/api/v1/traces/{trace_id}")
 async def get_trace(
     trace_id: str,
@@ -1889,11 +2120,6 @@ async def get_trace(
     events.sort(
         key=lambda e: e.get("timestamp") or e.get("wall_time", 0)
     )
-    if not events:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No events found for trace '{trace_id}'",
-        )
     registered = ProbeTypes.all()
     unregistered_probe_types = sorted(
         {
@@ -1906,7 +2132,45 @@ async def get_trace(
     missing_probe_name_count = sum(
         not event.get("probe") for event in events
     )
+    runtime = (
+        repository.get_worker_runtime(
+            customer_id, worker_instance_id
+        )
+        if worker_instance_id and repository is not None
+        else None
+    )
+    if not events:
+        empty_completeness = _trace_completeness(
+            trace_id,
+            events,
+            {"events_may_be_truncated": False},
+            runtime,
+        )
+        has_trace_diagnostics = empty_completeness.get(
+            "lifecycle_record"
+        ) is not None or empty_completeness.get(
+            "capture_loss", {}
+        ).get(
+            "per_trace_loss_observed"
+        )
+        if not has_trace_diagnostics:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No stored events found for trace '{trace_id}'",
+            )
+
     warnings = []
+    if not events:
+        warnings.append(
+            {
+                "code": "no_stored_events",
+                "message": (
+                    "No stored event rows were returned for this trace "
+                    "and worker instance. Lifecycle and capture evidence "
+                    "are reported separately when available."
+                ),
+            }
+        )
     if unregistered_probe_types:
         warnings.append(
             {
@@ -1975,11 +2239,15 @@ async def get_trace(
         )
         last_ts = ts
     timing = _derive_trace_spans(events)
+    trace_completeness = _trace_completeness(
+        trace_id, events, timing, runtime
+    )
     return {
         "data": path,
         "total_ms": round(event_duration_sum_ms, 3),
         "event_duration_sum_ms": round(event_duration_sum_ms, 3),
         "timing": timing,
+        "trace_completeness": trace_completeness,
         "warnings": warnings,
     }
 

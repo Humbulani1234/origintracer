@@ -215,6 +215,11 @@ class TracerMiddleware:
         )
         error_event.span_id = request._st_span_id
         emit(error_event)
+        engine = origintracer.get_engine()
+        if engine:
+            engine.tracker.fail(
+                trace_id, exception_type=type(exc).__name__
+            )
 
 
 # ------------- View.dispatch: CBV observation ----------

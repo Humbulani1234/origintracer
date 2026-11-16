@@ -4,7 +4,7 @@ import logging
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
@@ -27,9 +27,33 @@ class _UploaderEventBuffer:
     def __init__(self, maxlen: int = 20_000) -> None:
         self._q: deque = deque(maxlen=maxlen)
         self._lock = Lock()
+        self._dropped_total = 0
+        self._dropped_by_trace: OrderedDict[str, int] = (
+            OrderedDict()
+        )
+        self._trace_counts_truncated = False
+
+    def _record_drop_locked(self, trace_id: str) -> None:
+        if trace_id in self._dropped_by_trace:
+            self._dropped_by_trace[trace_id] += 1
+            self._dropped_by_trace.move_to_end(trace_id)
+            return
+        if len(self._dropped_by_trace) >= 256:
+            self._dropped_by_trace.popitem(last=False)
+            self._trace_counts_truncated = True
+        self._dropped_by_trace[trace_id] = 1
 
     def push(self, event_dict: Dict) -> None:
         with self._lock:
+            if (
+                self._q.maxlen is not None
+                and len(self._q) >= self._q.maxlen
+            ):
+                dropped = self._q.popleft()
+                self._dropped_total += 1
+                self._record_drop_locked(
+                    str(dropped.get("trace_id") or "")
+                )
             self._q.append(event_dict)
 
     def drain(self, max_batch: int) -> List[Dict]:
@@ -40,7 +64,25 @@ class _UploaderEventBuffer:
             return batch
 
     def __len__(self) -> int:
-        return len(self._q)
+        with self._lock:
+            return len(self._q)
+
+    def diagnostics(self) -> Dict[str, Any]:
+        """Return bounded queue-overflow counters.
+
+        Returns
+        -------
+        dict[str, Any]
+            Aggregate and per-trace event loss counts.
+        """
+        with self._lock:
+            return {
+                "buffer_dropped_total": self._dropped_total,
+                "buffer_dropped_by_trace": dict(
+                    self._dropped_by_trace
+                ),
+                "trace_counts_truncated": self._trace_counts_truncated,
+            }
 
 
 def _serialize_events(payload: Dict) -> tuple:
@@ -175,6 +217,20 @@ class Uploader:
         self._snapshots_sent: int = 0
         self._diffs_sent: int = 0
         self._failed_event_sends: int = 0
+        self._failed_event_events_total = 0
+        self._failed_event_by_trace: OrderedDict[str, int] = (
+            OrderedDict()
+        )
+        self._backend_rejected_events_total = 0
+        self._backend_rejected_by_trace: OrderedDict[
+            str, int
+        ] = OrderedDict()
+        self._event_serialization_failures = 0
+        self._event_serialization_failed_by_trace: OrderedDict[
+            str, int
+        ] = OrderedDict()
+        self._capture_lock = Lock()
+        self._capture_trace_counts_truncated = False
         self._failed_snap_sends: int = 0
         self._failed_diffs_sends: int = 0
 
@@ -200,8 +256,15 @@ class Uploader:
         """
         try:
             self._event_buffer.push(event.to_dict())
-        except Exception:
-            pass
+        except Exception as exc:
+            with self._capture_lock:
+                self._event_serialization_failures += 1
+                self._increment_trace_counter(
+                    self._event_serialization_failed_by_trace,
+                    str(getattr(event, "trace_id", "") or ""),
+                    1,
+                )
+            logger.debug("Event serialization failed: %s", exc)
 
     def bind_engine(self, engine: Any) -> None:
         """Attach the engine whose graph and runtime state will be uploaded.
@@ -340,6 +403,74 @@ class Uploader:
                 last_status = now
             time.sleep(1)
 
+    def _increment_trace_counter(
+        self,
+        counters: OrderedDict[str, int],
+        trace_id: str,
+        count: int,
+    ) -> None:
+        if trace_id in counters:
+            counters[trace_id] += count
+            counters.move_to_end(trace_id)
+            return
+        if len(counters) >= 256:
+            counters.popitem(last=False)
+            self._capture_trace_counts_truncated = True
+        counters[trace_id] = count
+
+    def _record_failed_event_batch(
+        self, batch: List[Dict]
+    ) -> None:
+        with self._capture_lock:
+            self._failed_event_sends += 1
+            self._failed_event_events_total += len(batch)
+            for event in batch:
+                self._increment_trace_counter(
+                    self._failed_event_by_trace,
+                    str(event.get("trace_id") or ""),
+                    1,
+                )
+
+    def _record_backend_rejections(
+        self, rejected_by_trace: Dict[str, Any]
+    ) -> None:
+        with self._capture_lock:
+            for trace_id, count in rejected_by_trace.items():
+                try:
+                    rejected = max(0, int(count))
+                except (TypeError, ValueError):
+                    continue
+                if not rejected:
+                    continue
+                self._backend_rejected_events_total += rejected
+                self._increment_trace_counter(
+                    self._backend_rejected_by_trace,
+                    str(trace_id),
+                    rejected,
+                )
+
+    def _capture_diagnostics(self) -> Dict[str, Any]:
+        with self._capture_lock:
+            return {
+                "upload_failed_events_total": self._failed_event_events_total,
+                "upload_failed_events_by_trace": dict(
+                    self._failed_event_by_trace
+                ),
+                "backend_rejected_events_total": (
+                    self._backend_rejected_events_total
+                ),
+                "event_serialization_failed_total": (
+                    self._event_serialization_failures
+                ),
+                "event_serialization_failed_by_trace": dict(
+                    self._event_serialization_failed_by_trace
+                ),
+                "backend_rejected_events_by_trace": dict(
+                    self._backend_rejected_by_trace
+                ),
+                "trace_counts_truncated": self._capture_trace_counts_truncated,
+            }
+
     def _flush_events(self) -> None:
         """
         Drain the event buffer and POST to /api/v1/events.
@@ -368,13 +499,23 @@ class Uploader:
             )
             if response.status_code == 200:
                 self._events_sent_total += len(batch)
+                try:
+                    rejected_by_trace = response.json().get(
+                        "errors_by_trace", {}
+                    )
+                except Exception:
+                    rejected_by_trace = {}
+                if isinstance(rejected_by_trace, dict):
+                    self._record_backend_rejections(
+                        rejected_by_trace
+                    )
                 logger.debug(
                     "Events uploaded: %d  total=%d",
                     len(batch),
                     self._events_sent_total,
                 )
             else:
-                self._failed_event_sends += 1
+                self._record_failed_event_batch(batch)
                 logger.warning(
                     "Event upload failed: HTTP %d — %s",
                     response.status_code,
@@ -382,18 +523,21 @@ class Uploader:
                 )
 
         except ImportError:
+            self._record_failed_event_batch(batch)
             logger.debug(
                 "httpx not installed - uploader inactive  "
                 "(pip install httpx)"
             )
         except httpx.TimeoutException as e:
+            self._record_failed_event_batch(batch)
             logger.debug(
                 "Timeout — backend not responding: %s", e
             )
         except httpx.ConnectError as e:
+            self._record_failed_event_batch(batch)
             logger.debug("Connection error: %s", e)
         except Exception as exc:
-            self._failed_event_sends += 1
+            self._record_failed_event_batch(batch)
             logger.debug("Event upload error: %s", exc)
 
     def _flush_snapshot(self) -> None:
@@ -576,6 +720,14 @@ class Uploader:
         graph = engine.graph
         tracker = getattr(engine, "tracker", None)
         probes = getattr(engine, "probes", None) or []
+        try:
+            from origintracer.sdk.emitter import (
+                stats as emitter_stats,
+            )
+
+            emitter_capture = emitter_stats()
+        except Exception:
+            emitter_capture = {"available": False}
         with graph._lock:
             graph_nodes = len(graph._nodes)
             graph_edges = len(graph._edge_index)
@@ -595,6 +747,14 @@ class Uploader:
             "active_requests": (
                 tracker.active_count() if tracker else 0
             ),
+            "trace_lifecycle": (
+                tracker.diagnostics() if tracker else None
+            ),
+            "event_capture": {
+                "emitter": emitter_capture,
+                "uploader_queue": self._event_buffer.diagnostics(),
+                "uploader": self._capture_diagnostics(),
+            },
             "probes_active": [
                 str(getattr(probe, "name", probe))
                 for probe in probes
@@ -725,6 +885,8 @@ class Uploader:
             "events_sent_total": self._events_sent_total,
             "snapshots_sent": self._snapshots_sent,
             "failed_event_sends": self._failed_event_sends,
+            "failed_event_events_total": self._failed_event_events_total,
+            "event_serialization_failures": self._event_serialization_failures,
             "failed_snap_sends": self._failed_snap_sends,
             "event_buffer_size": len(self._event_buffer),
             "engine_bound": self._engine is not None,
