@@ -94,8 +94,8 @@ selected worker context, available evidence, and available tool capabilities.
   when the request concerns one worker; it does not override the meaning of
   the current request or prior conversation. If the user refers to a group of
   snapshots or continues an all-worker overview, plan for all recently
-  reporting workers and use
-  `get_live_workers_overview`, even when one worker is selected in the UI.
+  reporting workers and use `get_live_workers_overview`, even when one worker
+  is selected in the UI.
 - Resolve references to an individual worker using `worker_inventory` and
   the conversation. Set `target_worker_pid` to the resolved PID when the
   request targets a worker other than `selected_worker`; never invent one.
@@ -136,6 +136,10 @@ selected worker context, available evidence, and available tool capabilities.
   interpretation of observed evidence; represent it as a deliverable. It does
   not by itself ask for competing causal hypotheses or root-cause analysis.
 - Give every step at least one relevant tool name from the available catalog.
+- For reads scoped to exact entities or filters, use the exact identifiers
+  stated in the request. The graph enforces explicit identifiers against
+  supported tool filters and evidence. Split reads when one tool call accepts
+  only one identifier.
 - Keep the plan short.
 - Select tools that can answer the requested scope. Use the all-worker overview
   capability when the request concerns multiple workers, including a follow-up
@@ -213,6 +217,10 @@ You gather evidence for an OriginTracer investigation.
 
 ## Choose reads
 - Follow the next pending plan steps.
+- Pass every exact value in a step's `selectors` to the matching tool filter.
+  A result from the same tool but for a different selector does not satisfy
+  that step. If a tool returns rows for a different selector, do not treat it
+  as evidence for the requested entity.
 - For competing explanations, choose reads that can support or weaken them.
 - Reuse relevant existing evidence; do not repeat an observation without need.
 - You may call independent tools in parallel, with no more than four calls in
@@ -314,10 +322,10 @@ _TRACE_TIMING_ASSESS_GUIDANCE = """
   be incomplete if `events_may_be_truncated` is true. It is not wall-clock
   trace duration.
 - Event `inter_event_gap_ms` (also exposed as the legacy `duration_ms`) is
-  only the gap between adjacent records.
-  `event_duration_sum_ms` is a sum of event durations and is neither
-  wall-clock trace duration nor necessarily non-overlapping cumulative work.
-  The legacy `total_ms` field is the same event-duration sum.
+  only the gap between adjacent records. `event_duration_sum_ms` is a sum of
+  event durations and is neither wall-clock trace duration nor necessarily
+  non-overlapping cumulative work. The legacy `total_ms` field is the same
+  event-duration sum.
 - For `get_worker_stitched_trace`, each stage's `duration_ms` is the event's
   recorded duration when available, not an inter-event gap. It does not
   provide cross-worker wall-clock duration.
@@ -560,6 +568,9 @@ required by the schema.
 - A citation must support the specific statement that cites it. Check each
   number, comparison, and inference against the cited evidence; a valid ID by
   itself does not make a claim supported.
+- Evidence must match the exact selectors attached to the requested step or
+  deliverable. Prior evidence for a different identifier does not satisfy a
+  requested read, even when it came from the same tool or investigation.
 - Event rows show recorded events in the returned sample. Their presence can
   establish that an event was recorded for that trace. Their absence from a
   bounded sample does not establish that an event never occurs or identify an
@@ -1310,6 +1321,343 @@ def _deliverable_id(description: str) -> str:
         description.strip().casefold().encode("utf-8")
     ).hexdigest()[:10]
     return f"deliverable-{digest}"
+
+
+def _explicit_request_selectors(
+    request: str,
+) -> dict[str, list[str]]:
+    """Extract explicit, labeled selector values from a request.
+
+    Parameters
+    ----------
+    request : str
+        Latest user request.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        Exact values introduced by a recognizable selector label.
+    """
+    selector_fields = {
+        "worker_pid",
+        "worker_instance_id",
+    }
+    for tool in READ_ONLY_TOOLS:
+        for field in getattr(tool, "args", {}):
+            if field in {
+                "service",
+                "service_name",
+                "probe",
+                "probe_type",
+                "system",
+                "pid",
+            } or field.endswith(
+                ("_id", "_pid", "_name", "_type")
+            ):
+                selector_fields.add(field)
+
+    selectors: dict[str, list[str]] = {}
+    for field in selector_fields:
+        labels = {field.replace("_", " ")}
+        if field.endswith("_id"):
+            label = field[:-3].replace("_", " ")
+            labels.add(f"{label} id")
+            if label == "trace":
+                labels.add("trace with id")
+        if field == "service_name":
+            labels.add("service")
+        elif field == "probe_type":
+            labels.add("probe")
+        elif field == "pid":
+            labels.add("worker pid")
+
+        result_field = {
+            "service_name": "service",
+            "probe_type": "probe",
+            "pid": "worker_pid",
+        }.get(field, field)
+        matches: list[str] = []
+        for label in labels:
+            plural_id = r"s?" if label.endswith(" id") else ""
+            pattern = (
+                rf"\b{re.escape(label)}{plural_id}\b\s*"
+                rf"(?:(?:is|:|=|#)\s*)?[`\"']?"
+                r"([A-Za-z0-9_.:@/-]{2,}"
+                r"(?:\s*(?:,|and|&)\s*[A-Za-z0-9_.:@/-]{2,})*)"
+            )
+            for match in re.finditer(
+                pattern, request, re.IGNORECASE
+            ):
+                matches.extend(
+                    value.rstrip(".,;:)")
+                    for value in re.split(
+                        r"\s*(?:,|and|&)\s*", match.group(1)
+                    )
+                )
+        values = _unique(matches)
+        if values:
+            selectors[result_field] = _unique(
+                selectors.get(result_field, []) + values
+            )
+    return selectors
+
+
+def _selector_values(value: Any, field: str) -> set[str]:
+    """Collect exact returned values for one selector field.
+
+    Parameters
+    ----------
+    value : Any
+        Nested tool result to inspect.
+    field : str
+        Selector name whose returned values should be collected.
+
+    Returns
+    -------
+    set[str]
+        Distinct values found under the selector's recognized result keys.
+    """
+    aliases = {
+        "worker_pid": {"worker_pid", "pid"},
+        "worker_instance_id": {"worker_instance_id"},
+        "service": {"service", "service_name"},
+        "service_name": {"service", "service_name"},
+        "probe": {"probe", "probe_type"},
+        "probe_type": {"probe", "probe_type"},
+        "node_id": {"node_id", "id"},
+        "rule": {"rule", "rule_name"},
+    }.get(field, {field})
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in aliases and isinstance(nested, (str, int)):
+                found.add(str(nested))
+            found.update(_selector_values(nested, field))
+    elif isinstance(value, list):
+        for nested in value:
+            found.update(_selector_values(nested, field))
+    return found
+
+
+def _evidence_matches_selectors(
+    evidence: dict[str, Any], selectors: dict[str, Any]
+) -> bool:
+    """Check that evidence matches the supplied selector values.
+
+    Parameters
+    ----------
+    evidence : dict[str, Any]
+        Recorded tool evidence, including its result and query string.
+    selectors : dict[str, list[str]]
+        Exact expected selector values.
+
+    Returns
+    -------
+    bool
+        Whether the evidence result or its exact query matches the selectors.
+    """
+    if not selectors:
+        return True
+    result = evidence.get("result")
+    query = str(evidence.get("query", ""))
+    for field, raw_values in selectors.items():
+        values = (
+            [str(value) for value in raw_values]
+            if isinstance(raw_values, list)
+            else [str(raw_values)]
+        )
+        returned = _selector_values(result, field)
+        if field in evidence:
+            returned.add(str(evidence[field]))
+        if returned:
+            if not set(values).issubset(returned):
+                return False
+        else:
+            serialized = json.dumps(
+                result, ensure_ascii=False, default=str
+            )
+            if not any(
+                expected.casefold() in query.casefold()
+                or expected.casefold() in serialized.casefold()
+                for expected in values
+            ):
+                return False
+    return True
+
+
+def _tool_selector_fields(tool_names: set[str]) -> set[str]:
+    """Return selector fields supported by planned read tools.
+
+    Parameters
+    ----------
+    tool_names : set[str]
+        Read-only tool names planned for a step or deliverable.
+
+    Returns
+    -------
+    set[str]
+        Tool argument names that can be populated from explicit selectors.
+    """
+    fields: set[str] = set()
+    for tool in READ_ONLY_TOOLS:
+        if getattr(tool, "name", None) in tool_names:
+            fields.update(getattr(tool, "args", {}).keys())
+    if fields.intersection({"service", "service_name"}):
+        fields.add("service")
+    if fields.intersection({"probe", "probe_type"}):
+        fields.add("probe")
+    return fields
+
+
+def _step_has_matching_evidence(
+    step: dict[str, Any], evidence: list[dict[str, Any]]
+) -> bool:
+    """Return whether planned reads have evidence in the step's scope.
+
+    Parameters
+    ----------
+    step : dict[str, Any]
+        Planned step with tool names and exact selectors.
+    evidence : list of dict[str, Any]
+        Recorded tool observations.
+
+    Returns
+    -------
+    bool
+        Whether each planned tool has at least one matching observation.
+    """
+    tool_names = {
+        str(name) for name in step.get("suggested_tools", [])
+    }
+    selectors = step.get("selectors", {})
+    return bool(tool_names) and all(
+        any(
+            str(item.get("tool")) == tool_name
+            and _evidence_matches_selectors(item, selectors)
+            for item in evidence
+        )
+        for tool_name in tool_names
+    )
+
+
+def _bind_planned_selectors_to_calls(
+    tool_calls: list[dict[str, Any]],
+    pending_steps: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply planned selector values to compatible tool arguments.
+
+    Parameters
+    ----------
+    tool_calls : list of dict[str, Any]
+        Model-proposed read-only calls for the current round.
+    pending_steps : list of dict[str, Any]
+        Planned reads that still lack matching evidence.
+
+    Returns
+    -------
+    list of dict[str, Any]
+        Calls with selector arguments aligned to the planned reads.
+    """
+    aliases = {
+        "service": {"service", "service_name"},
+        "probe": {"probe", "probe_type"},
+        "worker_pid": {"worker_pid", "pid"},
+        "node_id": {"node_id", "node"},
+        "rule": {"rule", "rule_name", "rule_id"},
+    }
+    schemas = {
+        str(tool.name): set(tool.args)
+        for tool in READ_ONLY_TOOLS
+    }
+    used_steps: set[str] = set()
+    bound_calls: list[dict[str, Any]] = []
+    for call in tool_calls:
+        name = str(call.get("name", ""))
+        candidates = [
+            step
+            for step in pending_steps
+            if name in step.get("suggested_tools", [])
+            and str(step.get("id", "")) not in used_steps
+        ]
+        if not candidates:
+            bound_calls.append(call)
+            continue
+        selected = candidates[0]
+        args = dict(call.get("args") or {})
+        for field, expected in selected.get(
+            "selectors", {}
+        ).items():
+            if isinstance(expected, list):
+                if len(expected) != 1:
+                    continue
+                expected = expected[0]
+            supported = aliases.get(
+                field, {field}
+            ) & schemas.get(name, set())
+            if supported:
+                arg_name = next(
+                    (
+                        key
+                        for key in sorted(supported)
+                        if key in args
+                    ),
+                    sorted(supported)[0],
+                )
+                args[arg_name] = expected
+        updated = dict(call)
+        updated["args"] = args
+        bound_calls.append(updated)
+        used_steps.add(str(selected.get("id", "")))
+    return bound_calls
+
+
+def _cited_evidence_covers_selectors(
+    evidence: list[dict[str, Any]],
+    evidence_ids: set[str],
+    selectors: dict[str, Any],
+    tool_names: set[str] | None = None,
+) -> bool:
+    """Check whether cited evidence covers every requested selector.
+
+    Parameters
+    ----------
+    evidence : list of dict[str, Any]
+        All recorded evidence available to the assessment.
+    evidence_ids : set[str]
+        Evidence identifiers cited by the assessment.
+    selectors : dict[str, Any]
+        Exact selector values required by the requested output.
+    tool_names : set[str], optional
+        Tool names allowed to support the output.
+
+    Returns
+    -------
+    bool
+        Whether cited evidence from the allowed tools matches each value.
+    """
+    selected = [
+        item
+        for item in evidence
+        if str(item.get("evidence_id")) in evidence_ids
+        and (
+            not tool_names or str(item.get("tool")) in tool_names
+        )
+    ]
+    for field, raw_values in selectors.items():
+        values = (
+            [str(value) for value in raw_values]
+            if isinstance(raw_values, list)
+            else [str(raw_values)]
+        )
+        for expected in values:
+            if not any(
+                _evidence_matches_selectors(
+                    item, {field: [expected]}
+                )
+                for item in selected
+            ):
+                return False
+    return True
 
 
 def _claim_id(claim: str) -> str:
@@ -3336,10 +3684,45 @@ async def plan_investigation(
         )
 
     available_tool_names = set(tool_names)
-    planned_deliverables = [
+    request_selectors = _explicit_request_selectors(
+        str(state.get("current_request", ""))
+    )
+
+    def bind_step_selectors(names: list[str]) -> dict[str, str]:
+        supported = _tool_selector_fields(set(names))
+        bound: dict[str, str] = {}
+        for field, values in request_selectors.items():
+            if (
+                field in supported
+                or field in {"worker_pid", "worker_instance_id"}
+            ) and len(values) == 1:
+                bound[field] = values[0]
+        return bound
+
+    def bind_deliverable_selectors(
+        names: list[str],
+    ) -> dict[str, list[str]]:
+        supported = _tool_selector_fields(set(names))
+        bound: dict[str, list[str]] = {}
+        for field, values in request_selectors.items():
+            if field in supported or field in {
+                "worker_pid",
+                "worker_instance_id",
+            }:
+                bound[field] = list(values)
+        return bound
+
+    planned_deliverables: list[dict[str, Any]] = [
         {
             "id": _deliverable_id(item.description),
             "description": item.description,
+            "selectors": bind_deliverable_selectors(
+                [
+                    name
+                    for name in item.suggested_tools
+                    if name in available_tool_names
+                ],
+            ),
             "suggested_tools": [
                 name
                 for name in item.suggested_tools
@@ -3362,21 +3745,97 @@ async def plan_investigation(
         investigation_deliverables = list(by_id.values())
     else:
         investigation_deliverables = list(planned_deliverables)
-    planned_steps = [
-        {
-            "id": f"step-{index}",
-            **step.model_dump(
-                include={"description", "purpose"}
-            ),
-            "suggested_tools": [
-                name
-                for name in step.suggested_tools
-                if name in available_tool_names
-            ],
-            "status": "pending",
-        }
-        for index, step in enumerate(plan_result.steps, start=1)
-    ]
+    planned_steps: list[dict[str, Any]] = []
+    for index, plan_step in enumerate(
+        plan_result.steps, start=1
+    ):
+        step_tool_names: list[str] = [
+            name
+            for name in plan_step.suggested_tools
+            if name in available_tool_names
+        ]
+        planned_steps.append(
+            {
+                "id": f"step-{index}",
+                **plan_step.model_dump(
+                    include={"description", "purpose"}
+                ),
+                "selectors": bind_step_selectors(
+                    step_tool_names
+                ),
+                "suggested_tools": step_tool_names,
+                "status": "pending",
+            }
+        )
+
+    next_step_index = len(planned_steps) + 1
+    for field, values in request_selectors.items():
+        if len(values) < 2 or field in {
+            "worker_pid",
+            "worker_instance_id",
+        }:
+            continue
+        supporting_steps = [
+            step
+            for step in planned_steps
+            if field
+            in _tool_selector_fields(
+                set(step.get("suggested_tools", []))
+            )
+        ]
+        if not supporting_steps:
+            continue
+        template = supporting_steps[0]
+        for value in values[: _MAX_RESEARCH_ROUNDS * 4]:
+            if any(
+                str(step.get("selectors", {}).get(field))
+                == value
+                for step in supporting_steps
+            ):
+                continue
+            reusable = next(
+                (
+                    step
+                    for step in supporting_steps
+                    if field not in step.get("selectors", {})
+                ),
+                None,
+            )
+            if reusable is not None:
+                reusable["selectors"][field] = value
+                continue
+            clone = dict(template)
+            clone["id"] = f"step-{next_step_index}"
+            clone["selectors"] = dict(
+                template.get("selectors", {})
+            )
+            clone["selectors"][field] = value
+            clone["status"] = "pending"
+            planned_steps.append(clone)
+            supporting_steps.append(clone)
+            next_step_index += 1
+
+    for deliverable in planned_deliverables:
+        if deliverable["selectors"]:
+            continue
+        deliverable_tools = set(
+            deliverable.get("suggested_tools", [])
+        )
+        matching_steps: list[dict[str, Any]] = [
+            planned_step
+            for planned_step in planned_steps
+            if deliverable_tools.intersection(
+                planned_step.get("suggested_tools", [])
+            )
+            and planned_step.get("selectors")
+        ]
+        for matching_step in matching_steps:
+            for field, value in matching_step[
+                "selectors"
+            ].items():
+                deliverable["selectors"].setdefault(
+                    field, [value]
+                )
 
     return {
         "investigation_id": investigation_id,
@@ -3554,22 +4013,24 @@ async def gather_evidence(
     set when no further read is needed.
     """
     request = str(state.get("current_request", ""))
+    evidence = list(state.get("evidence", []))
+    plan_steps = list(state.get("plan", []))
     suggested_names = [
         str(name)
-        for step in state.get("plan", [])
-        if step.get("status") == "pending"
+        for step in plan_steps
         for name in step.get("suggested_tools", [])
     ]
-    observed_tools = {
-        str(item.get("tool"))
-        for item in state.get("evidence", [])
-        if item.get("tool")
-    }
+    pending_steps = [
+        step
+        for step in plan_steps
+        if step.get("status") != "complete"
+        and not _step_has_matching_evidence(step, evidence)
+    ]
     pending_tools = list(
         dict.fromkeys(
-            name
-            for name in suggested_names
-            if name not in observed_tools
+            str(name)
+            for step in pending_steps
+            for name in step.get("suggested_tools", [])
         )
     )
     plan = [
@@ -3577,16 +4038,13 @@ async def gather_evidence(
             **step,
             "status": (
                 "complete"
-                if step.get("suggested_tools")
-                and set(step["suggested_tools"]).issubset(
-                    observed_tools
-                )
-                else step.get("status", "pending")
+                if _step_has_matching_evidence(step, evidence)
+                else "pending"
             ),
         }
-        for step in state.get("plan", [])
+        for step in plan_steps
     ]
-    if suggested_names and not pending_tools:
+    if suggested_names and not pending_steps:
         # A planned read already has evidence. Don't fall back to the full
         # catalog and let the model repeat it just because the stored plan
         # status has not yet been reconciled by assessment.
@@ -3632,6 +4090,9 @@ async def gather_evidence(
             for call in tool_calls
             if str(call.get("name", "")) in pending_tools
         ]
+    tool_calls = _bind_planned_selectors_to_calls(
+        tool_calls, pending_steps
+    )
     if tool_calls != list(getattr(response, "tool_calls", [])):
         response = response.model_copy(
             update={"tool_calls": tool_calls}
@@ -3668,6 +4129,9 @@ async def gather_evidence(
                 for call in tool_calls
                 if str(call.get("name", "")) in pending_tools
             ]
+        tool_calls = _bind_planned_selectors_to_calls(
+            tool_calls, pending_steps
+        )
         response = response.model_copy(
             update={"tool_calls": tool_calls}
         )
@@ -3859,6 +4323,7 @@ def _assessment_context(
             {
                 "id": item.get("id"),
                 "description": item.get("description"),
+                "selectors": item.get("selectors", {}),
                 "suggested_tools": item.get(
                     "suggested_tools", []
                 ),
@@ -3869,6 +4334,7 @@ def _assessment_context(
             {
                 "id": step.get("id"),
                 "description": step.get("description"),
+                "selectors": step.get("selectors", {}),
                 "suggested_tools": step.get(
                     "suggested_tools", []
                 ),
@@ -4303,6 +4769,74 @@ async def assess_evidence(
         str(evidence_id)
         for finding in assessment.findings
         for evidence_id in getattr(finding, "evidence_ids", [])
+    } | set(answer_evidence_ids)
+    selector_scopes = [
+        (
+            item.get("selectors", {}),
+            {
+                str(tool)
+                for tool in item.get("suggested_tools", [])
+            },
+        )
+        for item in deliverables
+        if item.get("selectors")
+    ]
+
+    def evidence_matches_requested_scope(
+        evidence_item: dict[str, Any],
+    ) -> bool:
+        """Check scoped tool evidence against a requested deliverable."""
+        evidence_tool = str(evidence_item.get("tool", ""))
+        applicable_scopes = [
+            selectors
+            for selectors, tools in selector_scopes
+            if not tools or evidence_tool in tools
+        ]
+        if not applicable_scopes:
+            return True
+        return any(
+            _evidence_matches_selectors(evidence_item, selectors)
+            for selectors in applicable_scopes
+        )
+
+    answer_has_scope_mismatch = any(
+        evidence_id in evidence_by_id
+        and not evidence_matches_requested_scope(
+            evidence_by_id[evidence_id]
+        )
+        for evidence_id in answer_evidence_ids
+    )
+    selector_mismatch_ids = {
+        str(item.get("id"))
+        for item in deliverables
+        if item.get("selectors")
+        and (
+            not _cited_evidence_covers_selectors(
+                list(evidence_by_id.values()),
+                cited_evidence_ids,
+                item.get("selectors", {}),
+                {
+                    str(tool)
+                    for tool in item.get("suggested_tools", [])
+                }
+                or None,
+            )
+            or any(
+                not _evidence_matches_selectors(
+                    evidence_by_id[evidence_id],
+                    item.get("selectors", {}),
+                )
+                for evidence_id in cited_evidence_ids
+                if evidence_id in evidence_by_id
+                and (
+                    not item.get("suggested_tools")
+                    or str(
+                        evidence_by_id[evidence_id].get("tool")
+                    )
+                    in item.get("suggested_tools", [])
+                )
+            )
+        )
     }
     for item in deliverables:
         item_id = str(item.get("id"))
@@ -4311,14 +4845,24 @@ async def assess_evidence(
         linked_tools = {
             str(tool) for tool in item.get("suggested_tools", [])
         }
-        has_cited_linked_evidence = any(
-            evidence_id in evidence_by_id
-            and (
-                not linked_tools
-                or str(evidence_by_id[evidence_id].get("tool"))
-                in linked_tools
+        has_cited_linked_evidence = (
+            _cited_evidence_covers_selectors(
+                list(evidence_by_id.values()),
+                cited_evidence_ids,
+                item.get("selectors", {}),
+                linked_tools or None,
             )
-            for evidence_id in cited_evidence_ids
+            and any(
+                evidence_id in evidence_by_id
+                and (
+                    not linked_tools
+                    or str(
+                        evidence_by_id[evidence_id].get("tool")
+                    )
+                    in linked_tools
+                )
+                for evidence_id in cited_evidence_ids
+            )
         )
         if has_cited_linked_evidence:
             answered.add(item_id)
@@ -4332,10 +4876,20 @@ async def assess_evidence(
     for item in deliverables:
         item_id = str(item.get("id"))
         linked_tools = set(item.get("suggested_tools", []))
+        has_selector_evidence = _cited_evidence_covers_selectors(
+            list(evidence_by_id.values()),
+            cited_evidence_ids,
+            item.get("selectors", {}),
+            linked_tools or None,
+        )
         if (
             item_id in answered
             and linked_tools
-            and not (linked_tools & evidence_tools)
+            and (
+                not (linked_tools & evidence_tools)
+                or not has_selector_evidence
+                or item_id in selector_mismatch_ids
+            )
         ):
             answered.remove(item_id)
             unanswered.add(item_id)
@@ -4343,25 +4897,19 @@ async def assess_evidence(
     unanswered_ids = sorted(unanswered)
 
     findings = list(state.get("findings", []))
-    observed_tools = {
-        str(item.get("tool"))
-        for item in state.get("evidence", [])
-        if item.get("tool")
-    }
-    pending_trace_read = any(
-        step.get("status") != "complete"
-        and "get_worker_trace" in step.get("suggested_tools", [])
-        and "get_worker_trace" not in observed_tools
+    pending_scoped_read = any(
+        step.get("suggested_tools")
+        and not _step_has_matching_evidence(
+            step, state.get("evidence", [])
+        )
         for step in state.get("plan", [])
     )
-    if pending_trace_read:
-        # Event rows contain timestamps, not stage durations. Until the
-        # planned trace read returns, discard interim findings (including
-        # previously accumulated ones) so timestamp arithmetic cannot leak
-        # into the final report if the model keeps circling.
+    if pending_scoped_read or selector_mismatch_ids:
+        # Do not synthesize a conclusion unless the requested identifiers
+        # are represented in matching tool evidence and citations.
         findings = []
     for finding in assessment.findings:
-        if pending_trace_read:
+        if pending_scoped_read:
             continue
         evidence_ids = canonical_evidence_ids(
             finding.evidence_ids
@@ -4371,10 +4919,23 @@ async def assess_evidence(
             for evidence_id in finding.evidence_ids
             if not canonical_evidence_id(evidence_id)
         ]
+        cited_rows = [
+            evidence_by_id[evidence_id]
+            for evidence_id in evidence_ids
+            if evidence_id in evidence_by_id
+        ]
         if invalid_ids:
             logger.warning(
                 "Discarding finding with invalid evidence references: %s",
                 ", ".join(invalid_ids[:5]),
+            )
+            continue
+        if any(
+            not evidence_matches_requested_scope(item)
+            for item in cited_rows
+        ):
+            logger.warning(
+                "Discarding finding whose citations do not match the requested selectors"
             )
             continue
         if not evidence_ids:
@@ -4467,28 +5028,15 @@ async def assess_evidence(
             "the assessment cited plan step IDs that were not supplied: "
             + ", ".join(invalid_step_ids[:5]),
         )
-    completed = set(assessment.completed_step_ids)
     plan = [
         {
             **step,
             "status": (
                 "complete"
-                if (
-                    not step.get("suggested_tools")
-                    or set(step["suggested_tools"]).issubset(
-                        observed_tools
-                    )
+                if _step_has_matching_evidence(
+                    step, state.get("evidence", [])
                 )
-                and (
-                    step.get("id") in completed
-                    or (
-                        step.get("suggested_tools")
-                        and set(
-                            step["suggested_tools"]
-                        ).issubset(observed_tools)
-                    )
-                )
-                else step.get("status", "pending")
+                else "pending"
             ),
         }
         for step in state.get("plan", [])
@@ -4558,8 +5106,8 @@ async def assess_evidence(
         for step in plan
         if step.get("status") != "complete"
         and step.get("suggested_tools")
-        and not set(step["suggested_tools"]).issubset(
-            observed_tools
+        and not _step_has_matching_evidence(
+            step, state.get("evidence", [])
         )
     ]
     sufficient = (
@@ -4572,26 +5120,19 @@ async def assess_evidence(
     if not unanswered_ids:
         unresolved = []
         next_steps = []
-    if pending_trace_read:
-        # Keep interim assessment content from turning into a premature
-        # trace report. The next graph turn should perform the pending trace
-        # read; only that tool can supply stage duration_ms values.
-        findings = []
-        unresolved = [
-            "The planned trace lookup has not returned, so stage durations "
-            "cannot be summarized yet."
-        ]
-        limitations = [
-            "Event timestamps do not provide trace stage durations."
-        ]
-        next_steps = []
-        sufficient = False
     if pending_plan_steps:
         pending_descriptions = [
             str(step.get("description", ""))
             for step in pending_plan_steps
             if step.get("description")
         ]
+        unresolved = _unique(
+            unresolved
+            + [
+                f"The planned read has not returned yet: {description}."
+                for description in pending_descriptions
+            ]
+        )
         if pending_descriptions:
             limitations = _unique(
                 limitations
@@ -4617,6 +5158,9 @@ async def assess_evidence(
                 "evidence_ids": answer_evidence_ids,
             }
             if answer_statement
+            and not pending_scoped_read
+            and not selector_mismatch_ids
+            and not answer_has_scope_mismatch
             else {}
         ),
         "findings": findings,
@@ -4764,18 +5308,13 @@ def route_after_recorded_evidence(
         for item in state.get("tool_results", [])
     ):
         return "assess"
-    observed_tools = {
-        str(item.get("tool"))
-        for item in state.get("evidence", [])
-        if item.get("tool")
-    }
     pending_steps = [
         step
         for step in state.get("plan", [])
         if step.get("status") != "complete"
         and step.get("suggested_tools")
-        and not set(step["suggested_tools"]).issubset(
-            observed_tools
+        and not _step_has_matching_evidence(
+            step, state.get("evidence", [])
         )
     ]
     return "research" if pending_steps else "assess"

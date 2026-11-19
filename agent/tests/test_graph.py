@@ -1396,12 +1396,10 @@ async def test_assessor_cannot_invent_hypotheses_or_complete_unrun_tools(
     assert result["plan"][1]["status"] == "pending"
     assert result["assessment_sufficient"] is False
     assert result["unresolved_questions"] == [
-        "The planned trace lookup has not returned, so stage durations "
-        "cannot be summarized yet."
+        "The planned read has not returned yet: Inspect the selected trace."
     ]
     assert result["limitations"] == [
-        "Event timestamps do not provide trace stage durations.",
-        "Planned evidence reads did not return: Inspect the selected trace",
+        "Planned evidence reads did not return: Inspect the selected trace"
     ]
     assert (
         route_after_assessment({**state, **result}) == "research"
