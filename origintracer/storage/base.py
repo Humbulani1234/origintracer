@@ -377,7 +377,7 @@ class BaseRepository(ABC):
 
 
 _PG_CREATE_EVENTS = """
-CREATE TABLE IF NOT EXISTS st_events (
+CREATE TABLE IF NOT EXISTS ot_events (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL DEFAULT 'default',
     worker_pid TEXT,
@@ -393,17 +393,17 @@ CREATE TABLE IF NOT EXISTS st_events (
     tid INT,
     metadata JSONB
 );
-CREATE INDEX IF NOT EXISTS idx_st_events_trace ON st_events (trace_id);
-CREATE INDEX IF NOT EXISTS idx_st_events_customer ON st_events (customer_id, wall_time DESC);
-CREATE INDEX IF NOT EXISTS idx_st_events_worker ON st_events (customer_id, pid, wall_time DESC);
-CREATE INDEX IF NOT EXISTS idx_st_events_service ON st_events (service);
-CREATE INDEX IF NOT EXISTS idx_st_events_probe ON st_events (probe);
-CREATE INDEX IF NOT EXISTS idx_st_events_instance_probe
-    ON st_events (customer_id, (metadata->>'worker_instance_id'), probe, wall_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ot_events_trace ON ot_events (trace_id);
+CREATE INDEX IF NOT EXISTS idx_ot_events_customer ON ot_events (customer_id, wall_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ot_events_worker ON ot_events (customer_id, pid, wall_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ot_events_service ON ot_events (service);
+CREATE INDEX IF NOT EXISTS idx_ot_events_probe ON ot_events (probe);
+CREATE INDEX IF NOT EXISTS idx_ot_events_instance_probe
+    ON ot_events (customer_id, (metadata->>'worker_instance_id'), probe, wall_time DESC);
 """
 
 _PG_CREATE_SNAPSHOTS = """
-CREATE TABLE IF NOT EXISTS st_snapshots (
+CREATE TABLE IF NOT EXISTS ot_snapshots (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL,
     worker_instance_id TEXT,
@@ -414,14 +414,14 @@ CREATE TABLE IF NOT EXISTS st_snapshots (
     edge_count INT,
     data BYTEA NOT NULL
 );
-ALTER TABLE st_snapshots ADD COLUMN IF NOT EXISTS worker_instance_id TEXT;
-ALTER TABLE st_snapshots ADD COLUMN IF NOT EXISTS worker_pid TEXT;
-ALTER TABLE st_snapshots ALTER COLUMN worker_pid TYPE TEXT USING worker_pid::text;
-UPDATE st_snapshots SET worker_instance_id = 'legacy-' || id::text
+ALTER TABLE ot_snapshots ADD COLUMN IF NOT EXISTS worker_instance_id TEXT;
+ALTER TABLE ot_snapshots ADD COLUMN IF NOT EXISTS worker_pid TEXT;
+ALTER TABLE ot_snapshots ALTER COLUMN worker_pid TYPE TEXT USING worker_pid::text;
+UPDATE ot_snapshots SET worker_instance_id = 'legacy-' || id::text
     WHERE worker_instance_id IS NULL;
-ALTER TABLE st_snapshots ALTER COLUMN worker_instance_id SET NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_st_snapshots_customer
-    ON st_snapshots (customer_id, worker_instance_id, received_at DESC);
+ALTER TABLE ot_snapshots ALTER COLUMN worker_instance_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ot_snapshots_customer
+    ON ot_snapshots (customer_id, worker_instance_id, received_at DESC);
 """
 
 _PG_CREATE_WORKER_RUNTIME = """
@@ -438,7 +438,7 @@ CREATE INDEX IF NOT EXISTS idx_worker_runtime_seen
 """
 
 _PG_CREATE_MARKERS = """
-CREATE TABLE IF NOT EXISTS st_markers (
+CREATE TABLE IF NOT EXISTS ot_markers (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL,
     worker_instance_id TEXT,
@@ -490,13 +490,13 @@ class PGEventRepository(BaseRepository):
         with self._conn.cursor() as cur:
             cur.execute(_PG_CREATE_EVENTS)
             cur.execute(
-                "ALTER TABLE st_events ADD COLUMN IF NOT EXISTS pid INT"
+                "ALTER TABLE ot_events ADD COLUMN IF NOT EXISTS pid INT"
             )
             cur.execute(
-                "ALTER TABLE st_events ADD COLUMN IF NOT EXISTS worker_pid TEXT"
+                "ALTER TABLE ot_events ADD COLUMN IF NOT EXISTS worker_pid TEXT"
             )
             cur.execute(
-                "UPDATE st_events SET pid = NULLIF(worker_pid, '')::integer "
+                "UPDATE ot_events SET pid = NULLIF(worker_pid, '')::integer "
                 "WHERE pid IS NULL AND worker_pid ~ '^[0-9]+$'"
             )
             cur.execute(_PG_CREATE_SNAPSHOTS)
@@ -504,22 +504,22 @@ class PGEventRepository(BaseRepository):
             cur.execute(_PG_CREATE_MARKERS)
             cur.execute(_PG_CREATE_GRAPH_DIFFS)
             cur.execute(
-                "ALTER TABLE st_markers ADD COLUMN IF NOT EXISTS worker_pid TEXT"
+                "ALTER TABLE ot_markers ADD COLUMN IF NOT EXISTS worker_pid TEXT"
             )
             cur.execute(
-                "ALTER TABLE st_markers ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
+                "ALTER TABLE ot_markers ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
             )
             cur.execute(
-                "UPDATE st_markers SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
+                "UPDATE ot_markers SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
             )
             cur.execute(
-                "UPDATE st_markers SET worker_pid = 'unknown' WHERE worker_pid IS NULL"
+                "UPDATE ot_markers SET worker_pid = 'unknown' WHERE worker_pid IS NULL"
             )
             cur.execute(
-                "ALTER TABLE st_markers ALTER COLUMN worker_instance_id SET NOT NULL"
+                "ALTER TABLE ot_markers ALTER COLUMN worker_instance_id SET NOT NULL"
             )
             cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_st_markers_worker ON st_markers (customer_id, worker_instance_id, created_at DESC)"
+                "CREATE INDEX IF NOT EXISTS idx_ot_markers_worker ON ot_markers (customer_id, worker_instance_id, created_at DESC)"
             )
             cur.execute(
                 "ALTER TABLE graph_diffs ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
@@ -611,7 +611,7 @@ class PGEventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_events
+                    INSERT INTO ot_events
                         (customer_id, worker_pid, trace_id, span_id, parent_span_id,
                          probe, service, name, wall_time,
                          duration_ns, pid, tid, metadata)
@@ -696,7 +696,7 @@ class PGEventRepository(BaseRepository):
         sql = f"""
             SELECT trace_id, span_id, parent_span_id, probe, service, name,
                    wall_time, duration_ns, pid, tid, metadata
-            FROM   st_events
+            FROM   ot_events
             {where}
             ORDER  BY wall_time DESC
             LIMIT  %s
@@ -737,7 +737,7 @@ class PGEventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_snapshots
+                    INSERT INTO ot_snapshots
                         (customer_id, worker_instance_id, worker_pid, received_at, content_type,
                          node_count, edge_count, data)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -768,7 +768,7 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     SELECT data, content_type, received_at, worker_pid, worker_instance_id, node_count, edge_count
-                    FROM   st_snapshots
+                    FROM   ot_snapshots
                     WHERE  customer_id = %s AND worker_instance_id = %s
                     ORDER  BY received_at DESC
                     LIMIT  1
@@ -803,7 +803,7 @@ class PGEventRepository(BaseRepository):
                 """
                 SELECT DISTINCT ON (worker_instance_id) worker_instance_id, worker_pid,
                        data, content_type, received_at, node_count, edge_count
-                FROM st_snapshots WHERE customer_id = %s
+                FROM ot_snapshots WHERE customer_id = %s
                 ORDER BY worker_instance_id, received_at DESC
             """,
                 (customer_id,),
@@ -966,7 +966,7 @@ class PGEventRepository(BaseRepository):
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO st_markers (customer_id, worker_instance_id, worker_pid, label, created_at)
+                    INSERT INTO ot_markers (customer_id, worker_instance_id, worker_pid, label, created_at)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
@@ -993,7 +993,7 @@ class PGEventRepository(BaseRepository):
                 cur.execute(
                     """
                     SELECT created_at
-                    FROM st_markers
+                    FROM ot_markers
                     WHERE customer_id = %s
                       AND worker_instance_id = %s
                       AND label = %s

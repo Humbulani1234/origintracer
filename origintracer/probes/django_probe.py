@@ -86,7 +86,7 @@ class TracerMiddleware:
             raise
         finally:
             reset_trace(token)
-            reset_span_id(request._st_span_token)
+            reset_span_id(request._ot_span_token)
 
     async def __acall__(self, request: Any) -> Any:
         trace_id, token = self._begin(request)
@@ -99,7 +99,7 @@ class TracerMiddleware:
             raise
         finally:
             reset_trace(token)
-            reset_span_id(request._st_span_token)
+            reset_span_id(request._ot_span_token)
 
     def _begin(self, request: Any):
         trace_id = (
@@ -108,10 +108,10 @@ class TracerMiddleware:
             or str(uuid.uuid4())
         )
         token = set_trace(trace_id)
-        request._st_parent_span_id = get_span_id()
-        request._st_t0 = time.perf_counter()
-        request._st_span_id = uuid.uuid4().hex
-        request._st_span_token = set_span_id(request._st_span_id)
+        request._ot_parent_span_id = get_span_id()
+        request._ot_t0 = time.perf_counter()
+        request._ot_span_id = uuid.uuid4().hex
+        request._ot_span_token = set_span_id(request._ot_span_id)
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
         # start the ActiveRequest tracker
@@ -147,17 +147,17 @@ class TracerMiddleware:
                 start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
-            request._st_bridge_tid = [loop_tid, handler_tid]
+            request._ot_bridge_tids = [loop_tid, handler_tid]
         entry_event = NormalizedEvent.now(
             probe="request.entry",
             trace_id=trace_id,
             service="django",
             name=request.path,
-            parent_span_id=request._st_parent_span_id,
+            parent_span_id=request._ot_parent_span_id,
             method=request.method,
             http_host=request.META.get("HTTP_HOST", ""),
         )
-        entry_event.span_id = request._st_span_id
+        entry_event.span_id = request._ot_span_id
         emit(entry_event)
         return trace_id, token
 
@@ -166,19 +166,19 @@ class TracerMiddleware:
     ) -> None:
 
         duration_ns = int(
-            (time.perf_counter() - request._st_t0) * 1e9
+            (time.perf_counter() - request._ot_t0) * 1e9
         )
         exit_event = NormalizedEvent.now(
             probe="request.exit",
             trace_id=trace_id,
             service="django",
             name=request.path,
-            parent_span_id=request._st_parent_span_id,
+            parent_span_id=request._ot_parent_span_id,
             method=request.method,
             status_code=response.status_code,
             duration_ns=duration_ns,
         )
-        exit_event.span_id = request._st_span_id
+        exit_event.span_id = request._ot_span_id
         emit(exit_event)
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
@@ -194,14 +194,14 @@ class TracerMiddleware:
         # remove the or deregister the bridge context
         bridge = get_bridge()
         if bridge.available:
-            for tid in getattr(request, "_st_bridge_tids", []):
+            for tid in getattr(request, "_ot_bridge_tids", []):
                 bridge.unregister_trace(tid)
 
     def _error(
         self, request: Any, exc: Exception, trace_id: str
     ) -> None:
         duration_ns = int(
-            (time.perf_counter() - request._st_t0) * 1e9
+            (time.perf_counter() - request._ot_t0) * 1e9
         )  # how long before exception
         error_event = NormalizedEvent.now(
             probe="django.exception",
@@ -213,7 +213,7 @@ class TracerMiddleware:
             exception_msg=str(exc)[:200],
             source="middleware",
         )
-        error_event.span_id = request._st_span_id
+        error_event.span_id = request._ot_span_id
         emit(error_event)
         engine = origintracer.get_engine()
         if engine:

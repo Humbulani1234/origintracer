@@ -303,7 +303,7 @@ def _restart_drain_thread() -> None:
 
     Threads do not survive fork - the child process has the parent's
     buffer but no running drain thread. Call this in post_fork hooks
-    (gunicorn st_post_fork, celery worker_process_init) before any
+    (gunicorn post_fork, celery worker_process_init) before any
     emit() calls so the buffer drains correctly in the worker.
     """
     global _drain_thread

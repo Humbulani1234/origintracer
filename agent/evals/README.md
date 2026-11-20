@@ -58,6 +58,11 @@ and evidence links; the model judge scores the answer against the case's
 criteria. Neither substitutes for a controlled benchmark with a known latency
 baseline.
 
+The `follow_up_trace_id_selection` case needs recent events on the selected
+worker containing at least two distinct trace IDs. Generate traffic that emits
+multiple traces before running this case; otherwise it cannot check selection
+of a different trace in the follow-up.
+
 Each case has two graders:
 
 * A pathway grader checks the graph state and tool path. It checks things such

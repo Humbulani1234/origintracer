@@ -62,7 +62,7 @@ def benchmark_process(n_events: int = 10_000, n_nodes: int = 50):
     origintracer.init(debug=False)
     engine = origintracer.get_engine()
     if engine is None:
-        print("Engine not started - check stacktracer.init()")
+        print("Engine not started - check origintracer.init()")
         return
 
     warm_up_graph(engine, n_nodes)

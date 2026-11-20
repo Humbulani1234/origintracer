@@ -200,6 +200,53 @@
     }
   },
   {
+    "id": "follow_up_trace_id_selection",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Show recent events from this worker and identify at least two",
+            "distinct trace IDs if the returned events contain them."
+          ]
+        },
+        {
+          "lines": [
+            "Inspect the second trace ID you identified in your previous",
+            "answer. Summarize its returned spans, timing, and completeness.",
+            "Keep it distinct from the first trace ID."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "required_tools": [
+        "get_worker_events",
+        "get_worker_trace"
+      ],
+      "required_observation_tools": [
+        "get_worker_events",
+        "get_worker_trace"
+      ],
+      "min_evidence": 2,
+      "min_hypotheses": 0,
+      "min_findings": 1,
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the second distinct trace ID identified from the first turn's",
+          "returned events; do not reuse the first trace ID.",
+          "The get_worker_trace evidence query and returned trace details must",
+          "refer to that same second ID.",
+          "Summarize only timing and completeness fields returned for that",
+          "trace. If fewer than two distinct IDs are available, state that",
+          "limitation instead of substituting another trace."
+        ]
+      }
+    }
+  },
+  {
     "id": "stitched_trace_across_workers",
     "inputs": {
       "requires_worker": true,

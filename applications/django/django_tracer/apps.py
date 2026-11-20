@@ -32,7 +32,7 @@ class WorkerConfig(AppConfig):
         origintracer.init(
             api_key=os.environ.get(
                 "ORIGINTRACER_API_KEY",
-                "ot_live_z4OOiNel_W255FDKIwmZh0hCQkxJmrrw0c4_uEAnLfA",
+                "",
             ),
             endpoint=os.environ.get(
                 "ORIGINTRACER_API_URL", "http://localhost:8001"

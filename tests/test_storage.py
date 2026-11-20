@@ -372,8 +372,8 @@ class TestBaseRepositoryInterface:
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    not os.getenv("STACKTRACER_TEST_DB_DSN"),
-    reason="Set STACKTRACER_TEST_DB_DSN to run PostgreSQL tests",
+    not os.getenv("ORIGINTRACER_TEST_DB_DSN"),
+    reason="Set ORIGINTRACER_TEST_DB_DSN to run PostgreSQL tests",
 )
 class TestEventRepositoryPostgres:
 
@@ -384,19 +384,19 @@ class TestEventRepositoryPostgres:
         from origintracer.storage.base import PGEventRepository
 
         conn = psycopg2.connect(
-            os.environ["STACKTRACER_TEST_DB_DSN"]
+            os.environ["ORIGINTRACER_TEST_DB_DSN"]
         )
         repo = PGEventRepository(conn)
         yield repo
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM st_events    WHERE customer_id = 'test'"
+                "DELETE FROM ot_events    WHERE customer_id = 'test'"
             )
             cur.execute(
-                "DELETE FROM st_snapshots WHERE customer_id = 'test'"
+                "DELETE FROM ot_snapshots WHERE customer_id = 'test'"
             )
             cur.execute(
-                "DELETE FROM st_markers   WHERE customer_id = 'test'"
+                "DELETE FROM ot_markers   WHERE customer_id = 'test'"
             )
         conn.commit()
         conn.close()
