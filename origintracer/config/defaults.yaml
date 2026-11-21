@@ -24,6 +24,7 @@ probes:
 builtin_rules:
   - ".rules.asyncio_rules"
   - ".rules.django_rules"
+  - ".rules.external_http_rules"
   - ".rules.langgraph_rules"
 
 rules:
@@ -31,6 +32,7 @@ rules:
   - asyncio_event_loop_starvation
   - n_plus_one_queries
   - db_query_hotspot
+  - write_call_amplification
 
 # ---- Event buffer -----------------------------------------
 

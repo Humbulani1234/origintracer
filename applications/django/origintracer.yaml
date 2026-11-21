@@ -23,7 +23,7 @@ rules:
   - traffic_spike
   - external_dependency_timeout
   - post_deployment_regression
-  - duplicate_transaction
+  - write_call_amplification
   - cascade_failure
   - worker_imbalance
   - retry_amplification

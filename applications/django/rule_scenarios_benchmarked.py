@@ -13,7 +13,7 @@ WHAT THIS RUN EXERCISES
 - db_query_hotspot: GET /db/ and GET /n1/ repeat ORM reads. /n1/ is most
   useful when the demo database has multiple Author rows.
 - n_plus_one_queries: GET /n1/ loops over authors and queries their books.
-- duplicate_transaction: sequential POSTs to /write-twice/ execute two UPDATEs
+- write_call_amplification: sequential POSTs to /write-twice/ execute two UPDATEs
   per view call and roll the transaction back. Enable this demo endpoint in the
   Django/Gunicorn process before startup with
   ORIGINTRACER_ENABLE_DEMO_SCENARIOS=1. It is disabled by default.

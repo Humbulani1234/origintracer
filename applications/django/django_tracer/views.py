@@ -211,7 +211,7 @@ class DuplicateWriteScenarioView(View):
     """Exercise duplicate-write detection without leaving database changes.
 
     This demo-only endpoint performs two UPDATE statements inside one
-    transaction, then rolls them back. It gives the duplicate_transaction
+    transaction, then rolls them back. It gives the write_call_amplification
     rule a real Django ORM write path to observe while keeping the demo data
     unchanged. Call it with POST from rule_scenarios_benchmarked.py.
     """

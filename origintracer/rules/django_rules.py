@@ -168,5 +168,76 @@ DB_HOTSPOT = CausalRule(
     tags=["db", "performance"],
 )
 
+WRITE_CALL_AMPLIFICATION_RATIO = 1.5
+WRITE_QUERY_PREFIXES = ("INSERT", "UPDATE", "DELETE")
+
+
+def _is_write_query_node(node) -> bool:
+    if not _is_db_node(node):
+        return False
+    statement = node.id.split("::", 1)[-1].lstrip().upper()
+    return statement.startswith(WRITE_QUERY_PREFIXES)
+
+
+def _write_call_amplification(
+    graph: RuntimeGraph,
+    temporal: TemporalStore,
+    tracker: Optional[ActiveRequestTracker] = None,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Find Django views whose observed write-query count is amplified."""
+    patterns: List[Dict[str, Any]] = []
+    for query in graph.all_nodes():
+        if (
+            not _is_write_query_node(query)
+            or query.call_count < 2
+        ):
+            continue
+        for edge in graph.callers(query.id):
+            view = graph._nodes.get(edge.source)
+            if (
+                view is None
+                or not _is_view_node(view)
+                or view.call_count <= 0
+            ):
+                continue
+            ratio = query.call_count / view.call_count
+            if ratio < WRITE_CALL_AMPLIFICATION_RATIO:
+                continue
+            patterns.append(
+                {
+                    "query": query.id,
+                    "view": view.id,
+                    "write_call_count": query.call_count,
+                    "view_call_count": view.call_count,
+                    "ratio": round(ratio, 2),
+                }
+            )
+
+    if not patterns:
+        return False, {}
+    patterns.sort(key=lambda row: row["ratio"], reverse=True)
+    return True, {
+        "write_call_patterns": patterns[:10],
+        "interpretation_limit": (
+            "Call-count amplification does not establish whether repeated "
+            "writes were intended or caused an application problem."
+        ),
+    }
+
+
+WRITE_CALL_AMPLIFICATION = CausalRule(
+    name="write_call_amplification",
+    description=(
+        "A Django view's observed write-query count is at least 1.5 times "
+        "its invocation count. This is a call-count pattern and does not "
+        "establish whether the writes were unintended or harmful."
+    ),
+    predicate=_write_call_amplification,
+    confidence=0.75,
+    tags=["db", "correctness", "django", "write"],
+)
+
+
 PatternRegistry.register(N_PLUS_ONE)
 PatternRegistry.register(DB_HOTSPOT)
+PatternRegistry.register(WRITE_CALL_AMPLIFICATION)
