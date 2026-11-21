@@ -9,7 +9,9 @@ The cases cover heartbeat-backed status and worker freshness, stored snapshot
 inventory, hotspots and events, database duration versus
 call counts, caller relationships, graph changes since deployment, configured
 causal rules, and a Django comparison of database latency with asyncio
-event-loop starvation. Docs-backed chat cases cover native Django probe setup
+event-loop starvation. Rule-review cases also exercise Nginx retry evidence,
+Gunicorn worker distribution, Uvicorn external-dependency timing, and Celery
+task rules. Docs-backed chat cases cover native Django probe setup
 and the built-in Django database rules; these require the published docs search
 index to be reachable when the agent cache is cold.
 
@@ -51,6 +53,19 @@ snapshots remain selectable for stored graph and event questions. Other
 applications can use the same diagnostics tool with their own exact service
 labels. The runner executes every case against one selected worker; run
 separate eval sessions when comparing different apps.
+
+The framework rule-review cases are live evidence checks. The Nginx,
+Gunicorn, and Uvicorn cases use a Django worker configured with the
+application-local rules in `applications/django/origintracer.yaml`; generate
+the corresponding evidence before running them. In particular, retry
+amplification needs recorded Nginx retry metadata, worker imbalance needs
+fresh request-counter samples for at least two workers under one Gunicorn
+master, and the external-dependency rule needs an observed slow outbound call.
+The Celery case must use a Celery worker configured with
+`applications/celery/origintracer.yaml` and task/database telemetry that can
+exercise its task rules. These cases require the target rule name to appear in
+the live rule evidence; an unmatched run is useful operationally, but does not
+exercise the corresponding positive-match eval.
 
 Results depend on the workload present in that worker and on the configured
 Ollama model. The pathway grader checks stable behavior such as tool selection

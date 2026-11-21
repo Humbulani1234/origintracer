@@ -676,6 +676,166 @@
     }
   },
   {
+    "id": "nginx_retry_amplification_rule_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check this worker's live causal-rule results for Nginx retry",
+            "amplification. If a match is returned, summarize its retry and",
+            "attempt counts. If not, say no match was returned for this result",
+            "without inferring that retries never occur."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "required_observation_any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "evidence_must_contain": [
+        "retry_amplification"
+      ],
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the live match evidence returned for retry_amplification; claim the rule is registered only if the result explicitly says so.",
+          "Keep retry_count, attempt_count, and observed_calls distinct and report only returned values.",
+          "No returned match does not prove retries never occur or that the rule is unregistered.",
+          "Do not infer that retries caused latency or an outage from this rule alone. Cite valid evidence IDs."
+        ]
+      }
+    }
+  },
+  {
+    "id": "gunicorn_worker_imbalance_rule_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check this worker's live causal-rule results for Gunicorn worker",
+            "imbalance.",
+            "Summarize the observed per-worker handled counts and ratio if it",
+            "matched. If no match is returned, report that without inferring",
+            "that worker distribution is always balanced. Explain what the",
+            "result does not establish."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "required_observation_any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "evidence_must_contain": [
+        "worker_imbalance"
+      ],
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the live match evidence returned for worker_imbalance; claim the rule is registered only if the result explicitly says so.",
+          "If matched, report each returned worker PID and handled count with its evidence; do not mix counts between workers.",
+          "Uneven handled counts indicate observed distribution imbalance, not proof that a worker is blocked or causing latency.",
+          "If unmatched, say the returned graph did not show a qualifying imbalance; do not claim worker distribution is always balanced. Cite valid evidence IDs."
+        ]
+      }
+    }
+  },
+  {
+    "id": "uvicorn_external_dependency_rule_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check this worker's live causal-rule results for external",
+            "dependency timeouts.",
+            "Report whether it matched and summarize any returned dependency",
+            "duration and call-count evidence. If no match is returned, say",
+            "that without inferring external calls were absent."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "required_observation_any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "evidence_must_contain": [
+        "external_dependency_timeout"
+      ],
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the live match evidence returned for external_dependency_timeout; claim the rule is registered only if the result explicitly says so.",
+          "Report dependency host, average duration, and calls only when those fields appear in the returned match evidence.",
+          "A match identifies a slow external-call pattern; it does not by itself prove that the dependency caused request latency or an outage.",
+          "No returned match is not proof that external calls were absent. Cite valid evidence IDs."
+        ]
+      }
+    }
+  },
+  {
+    "id": "celery_sync_database_rule_review",
+    "inputs": {
+      "requires_worker": true,
+      "turns": [
+        {
+          "lines": [
+            "Check this Celery worker's live causal-rule results for synchronous",
+            "database calls from tasks. Summarize any matching task and database",
+            "evidence. If no match is returned, say so without inferring the rule",
+            "is unregistered or the behavior never occurs. Do not infer request",
+            "latency impact."
+          ]
+        }
+      ]
+    },
+    "outputs": {
+      "expected_status": "completed",
+      "any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "required_observation_any_tools": [
+        "evaluate_worker_rules"
+      ],
+      "min_evidence": 1,
+      "min_hypotheses": 0,
+      "evidence_must_contain": [
+        "sync_db_in_celery"
+      ],
+      "findings_need_evidence": true,
+      "quality_criteria": {
+        "lines": [
+          "Use the live match evidence returned for sync_db_in_celery; claim the rule is registered only if the result explicitly says so.",
+          "For sync_db_in_celery, describe only returned task, database node, average duration, and call-count evidence.",
+          "If no match is returned, do not infer the behavior never occurs or that the rule is unregistered.",
+          "Cite valid evidence IDs and do not claim the pattern caused request latency or system impact without outcome-correlated evidence."
+        ]
+      }
+    }
+  },
+  {
     "id": "follow_up_in_same_investigation",
     "inputs": {
       "requires_worker": true,

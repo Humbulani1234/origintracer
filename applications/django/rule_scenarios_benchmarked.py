@@ -62,7 +62,7 @@ from threading import Thread
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1:80"
+DEFAULT_BASE_URL = "http://localhost:80"
 ROUTES = ("/", "/async/", "/slow/", "/db/", "/n1/")
 WRITE_SCENARIO = "/write-twice/"
 EXTERNAL_SCENARIO = "/external/"
