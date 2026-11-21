@@ -1053,23 +1053,29 @@ def get_recent_events(
         service=service,
         limit=limit,
     )
-    return {
-        "metric": "events",
-        "data": [
+    data = []
+    for event in events:
+        data.append(
             {
-                "probe": e.get("probe"),
-                "service": e.get("service"),
-                "name": e.get("name"),
-                "trace_id": e.get("trace_id"),
-                "wall_time": e.get("wall_time"),
-                "duration_ns": e.get("duration_ns"),
-                "ts": e.get("timestamp")
-                or e.get("timestamp_ns")
-                or e.get("wall_time"),
+                "probe": event.get("probe"),
+                "service": event.get("service"),
+                "name": event.get("name"),
+                "trace_id": event.get("trace_id"),
+                "span_id": event.get("span_id"),
+                "parent_span_id": event.get("parent_span_id"),
+                "pid": event.get("pid"),
+                "tid": event.get("tid"),
+                "wall_time": event.get("wall_time"),
+                "duration_ns": event.get("duration_ns"),
+                "metadata": _ui_observation_metadata(
+                    event.get("metadata") or {}
+                ),
+                "ts": event.get("timestamp")
+                or event.get("timestamp_ns")
+                or event.get("wall_time"),
             }
-            for e in events
-        ],
-    }
+        )
+    return {"metric": "events", "data": data}
 
 
 @app.get("/api/v1/events/content")
@@ -2466,7 +2472,9 @@ async def get_trace(
                 "duration_ms": inter_event_gap_ms,
                 "pid": event.get("pid"),
                 "tid": event.get("tid"),
-                "metadata": event.get("metadata"),
+                "metadata": _ui_observation_metadata(
+                    event.get("metadata") or {}
+                ),
             }
         )
         last_ts = ts
@@ -2528,10 +2536,15 @@ def stitch_stored_trace(
             "timestamp": event.get("wall_time"),
             "span_id": event.get("span_id"),
             "parent_span_id": event.get("parent_span_id"),
+            "pid": event.get("pid"),
+            "tid": event.get("tid"),
             "duration_ns": event.get("duration_ns"),
             "worker_instance_id": (
                 event.get("metadata") or {}
             ).get("worker_instance_id"),
+            "metadata": _ui_observation_metadata(
+                event.get("metadata") or {}
+            ),
             "duration_ms": (
                 round(event["duration_ns"] / 1e6, 3)
                 if event.get("duration_ns") is not None
@@ -2709,7 +2722,9 @@ async def get_nodes(
                 "avg_duration_ns": node.avg_duration_ns,
                 "first_seen": node.first_seen,
                 "last_seen": node.last_seen,
-                "metadata": node.metadata,
+                "metadata": _ui_observation_metadata(
+                    node.metadata
+                ),
             }
         )
 
@@ -2873,11 +2888,95 @@ async def get_process_snapshot(
     }
 
 
+_UI_OBSERVATION_METADATA_FIELDS = (
+    "probe",
+    "customer_id",
+    "external",
+    "dependency_host",
+    "http_method",
+    "method",
+    "http_version",
+    "status_code",
+    "error_type",
+    "duration_scope",
+    "retry_count",
+    "max_retry_count",
+    "upstream_attempt_count",
+    "upstream_duration_ns",
+    "source",
+    "task_id",
+    "task_name",
+    "state",
+    "retries",
+    "max_retries",
+    "exception_type",
+    "worker_pid",
+    "master_pid",
+    "worker_class",
+    "exitcode",
+    "response_bytes",
+    "reason",
+    "success",
+    "result_type",
+    "command_count",
+    "num_workers",
+    "bind",
+    "investigation_id",
+    "langgraph_kind",
+    "is_langgraph_root",
+    "langgraph_node",
+    "langgraph_step",
+    "langgraph_triggers",
+    "langgraph_path",
+    "langgraph_checkpoint_ns",
+)
+_UI_SAFE_LIFECYCLE_REASONS = {
+    "normal_exit",
+    "SIGINT",
+    "SIGABRT_timeout",
+}
+
+
+def _ui_observation_metadata(metadata: Any) -> Dict[str, Any]:
+    """Return useful probe details while excluding payloads and secrets.
+
+    Event metadata can contain application values, request headers, SQL
+    parameters, exception text, or model content. The UI receives only this
+    explicit operational allowlist; new metadata fields stay private until
+    they are reviewed for safe display.
+    """
+    if not isinstance(metadata, dict):
+        return {}
+    safe: Dict[str, Any] = {}
+    for key in _UI_OBSERVATION_METADATA_FIELDS:
+        value = metadata.get(key)
+        if (
+            key == "reason"
+            and value not in _UI_SAFE_LIFECYCLE_REASONS
+        ):
+            continue
+        if isinstance(value, bool) or value is None:
+            if value is not None:
+                safe[key] = value
+        elif isinstance(value, (int, float)):
+            safe[key] = value
+        elif isinstance(value, str):
+            safe[key] = value[:240]
+        elif key in {
+            "langgraph_triggers",
+            "langgraph_path",
+        } and isinstance(value, (list, tuple)):
+            safe[key] = [
+                item[:120] if isinstance(item, str) else item
+                for item in value[:12]
+                if isinstance(item, (str, int, float, bool))
+            ]
+    return safe
+
+
 # Available in parser and repeated for backend standalone
 def _node_dict(n) -> Dict:
-    """
-    Full node representation - used by SHOW GRAPH.
-    """
+    """Full graph node representation with reviewed operational metadata."""
     return {
         "id": n.id,
         "service": n.service,
@@ -2891,6 +2990,7 @@ def _node_dict(n) -> Dict:
         ),
         "first_seen": n.first_seen,
         "last_seen": n.last_seen,
+        "metadata": _ui_observation_metadata(n.metadata),
     }
 
 

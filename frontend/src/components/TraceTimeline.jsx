@@ -1,4 +1,5 @@
 import { svcColor, short } from "./NodeTable";
+import ObservationDetails from "./ObservationDetails";
 
 const formatMs = (value) =>
   typeof value === "number" && Number.isFinite(value)
@@ -306,6 +307,17 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
                       {stitched && <span style={{ marginLeft: 6 }}>pid {stage.worker_pid}</span>}
                       {stage.timestamp != null && <span style={{ display: "block", fontSize: 11,
                         marginTop: 2 }}>at {formatTimestamp(stage.timestamp)}</span>}
+                      <span style={{ display: "block", marginTop: 4 }}>
+                        <ObservationDetails
+                          metadata={stage.metadata}
+                          spanId={stage.span_id}
+                          parentSpanId={stage.parent_span_id}
+                          pid={stage.pid}
+                          tid={stage.tid}
+                          workerPid={stage.worker_pid}
+                          workerInstanceId={stage.worker_instance_id}
+                        />
+                      </span>
                     </span>
                   </div>
                 );

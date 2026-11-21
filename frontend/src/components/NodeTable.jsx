@@ -1,4 +1,6 @@
 // src/components/NodeTable.jsx
+import ObservationDetails from "./ObservationDetails";
+
 export const SVC_COLORS = {
   gunicorn: "#5a8a5a", uvicorn: "#4a7fa5", django: "#e8a020",
   asyncio:  "#8060c0", celery:  "#c06040", langgraph: "#7b61a8", redis: "#409060",
@@ -28,7 +30,7 @@ export function short(s, n=38) { return s.length > n ? s.slice(0,n-1)+"…" : s;
 export default function NodeTable({ nodes }) {
   return (
     <table className="data-table">
-      <thead><tr><th>service</th><th>node</th><th>calls</th><th>avg</th></tr></thead>
+      <thead><tr><th>service</th><th>node</th><th>calls</th><th>avg</th><th>details</th></tr></thead>
       <tbody>
         {nodes.map(n => {
           const name = n.id.split("::")[1] || n.id;
@@ -38,6 +40,7 @@ export default function NodeTable({ nodes }) {
               <td className="name-cell" title={name}>{short(name)}</td>
               <td className="count">{n.call_count}</td>
               <td className="muted">{fmtMs(n.avg_duration_ns)}</td>
+              <td><ObservationDetails metadata={n.metadata} /></td>
             </tr>
           );
         })}

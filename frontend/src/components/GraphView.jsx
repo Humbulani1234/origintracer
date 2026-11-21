@@ -1,4 +1,5 @@
 import { svcColor, short } from "./NodeTable";
+import ObservationDetails from "./ObservationDetails";
 
 const EDGE_DIM = "rgba(120,120,120,0.45)";
 
@@ -7,7 +8,7 @@ function NodeRow({ node }) {
   const c = svcColor(type);
   return (
     <div style={{
-      display: "grid", gridTemplateColumns: "100px 1fr auto",
+      display: "grid", gridTemplateColumns: "100px minmax(0, 1fr) auto auto",
       gap: 10, alignItems: "center", padding: "5px 14px",
       borderBottom: "1px solid rgba(42,42,42,0.4)",
       fontFamily: "monospace", fontSize: 10,
@@ -26,6 +27,7 @@ function NodeRow({ node }) {
       <span style={{ color: "var(--cyan, #5ec4c4)" }}>
         ×{node.call_count ?? 0}
       </span>
+      <ObservationDetails metadata={node.metadata} />
     </div>
   );
 }
