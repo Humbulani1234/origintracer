@@ -243,6 +243,61 @@ class TestGraphSnapshot:
         assert row is not None
         assert row["data"] == data
 
+    async def test_snapshot_ingestion_records_worker_request_counters(
+        self, client
+    ):
+        import backend.main as m
+
+        pytest.importorskip("msgpack")
+        graphs = []
+        for request_count in (4, 7):
+            graph = RuntimeGraph()
+            graph.upsert_node(
+                "gunicorn::master",
+                "gunicorn",
+                "gunicorn",
+                metadata={
+                    "probe": "gunicorn.master.start",
+                    "master_pid": 900,
+                },
+            )
+            worker_id = "gunicorn::UvicornWorker-12345"
+            graph.upsert_node(
+                worker_id,
+                "gunicorn",
+                "gunicorn",
+                metadata={
+                    "probe": "gunicorn.worker.fork",
+                    "worker_pid": 12345,
+                    "master_pid": 900,
+                },
+            )
+            for index in range(request_count):
+                request_id = f"uvicorn::/request-{index}"
+                graph.upsert_node(
+                    request_id, "uvicorn", "uvicorn"
+                )
+                graph.upsert_edge(
+                    worker_id, request_id, "handled"
+                )
+            graphs.append(MsgpackSerializer().serialize(graph))
+
+        for snapshot in graphs:
+            response = await client.post(
+                "/api/v1/graph/snapshot",
+                content=snapshot,
+                headers={
+                    **AUTH,
+                    "content-type": "application/msgpack",
+                },
+            )
+            assert response.status_code == 200
+
+        samples = m._worker_request_samples[
+            ("test_customer", TEST_INSTANCE)
+        ]
+        assert [count for _, count in samples] == [4, 7]
+
     async def test_empty_snapshot_returns_400(self, client):
         r = await client.post(
             "/api/v1/graph/snapshot",
@@ -966,6 +1021,7 @@ def reset_backend_state():
 
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._worker_request_samples.clear()
     m._reported_causal_matches.clear()
     m._reported_causal_signatures.clear()
     with m._active_pid_lock:
@@ -975,6 +1031,7 @@ def reset_backend_state():
     yield
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._worker_request_samples.clear()
     m._reported_causal_matches.clear()
     m._reported_causal_signatures.clear()
     with m._active_pid_lock:

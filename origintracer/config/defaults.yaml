@@ -9,6 +9,7 @@ builtin_probes:
   - ".probes.asyncio_probe"
   - ".probes.django_probe"
   - ".probes.langgraph_probe"
+  - ".probes.external_http_probe"
 
 
 # probes: Names of probes to actually start.

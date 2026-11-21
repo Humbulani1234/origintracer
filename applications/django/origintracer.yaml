@@ -9,6 +9,8 @@ probes:
   - asyncio
   - django
   - langgraph
+  # Opt in to outbound HTTP client instrumentation from the core package.
+  - external_http
 
 rules:
   - new_sync_call_after_deployment

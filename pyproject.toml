@@ -30,6 +30,7 @@ dev = [
     "pre-commit>=3.7",
     "mypy>=1.9.0",
     "types-PyYAML>=6.0",
+    "types-requests>=2.31",
 ]
 
 [tool.setuptools.packages.find]

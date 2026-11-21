@@ -174,6 +174,12 @@ _graphs: Dict[tuple[str, str], Any] = {}
 # Receipt metadata is retained alongside each in-memory graph and enriched
 # with the latest runtime heartbeat when one arrives.
 _snapshot_metadata: Dict[tuple[str, str], Dict[str, Any]] = {}
+# Recent cumulative Uvicorn request counters per process snapshot. Keeping a
+# short backend-side window lets the API compare sibling Gunicorn workers even
+# though each instrumented process uploads an independent RuntimeGraph.
+_worker_request_samples: Dict[
+    tuple[str, str], list[tuple[float, int]]
+] = {}
 # Latest app-local matches are reported by the process that loaded those rules.
 _reported_causal_matches: Dict[
     tuple[str, str], list[dict[str, Any]]
@@ -665,17 +671,45 @@ async def receive_snapshot(
         )
         graph = serializer.deserialize(body)
 
-        # Store in memory - immediate query serving
+        # Store in memory - immediate query serving. Keep a short counter
+        # history so worker_imbalance can compare sibling processes without
+        # merging their full RuntimeGraphs.
+        received_at = time.time()
+        request_count = _uvicorn_request_counter(graph)
         with _graphs_lock:
             _graphs[(customer_id, worker_instance_id)] = graph
             _snapshot_metadata[
                 (customer_id, worker_instance_id)
             ] = {
                 "worker_pid": worker_pid_header,
-                "received_at": time.time(),
+                "received_at": received_at,
                 "node_count": len(graph._nodes),
                 "edge_count": len(graph._edge_index),
             }
+            sample_key = (customer_id, worker_instance_id)
+            samples = _worker_request_samples.setdefault(
+                sample_key, []
+            )
+            # Compaction or a graph reset can reduce cumulative call_count.
+            # Reset the baseline instead of treating topology churn as traffic.
+            if samples and request_count < samples[-1][1]:
+                samples.clear()
+            samples.append((received_at, request_count))
+            _worker_request_samples[sample_key] = [
+                sample
+                for sample in samples
+                if received_at - sample[0] <= 120
+            ]
+            for old_key, old_samples in list(
+                _worker_request_samples.items()
+            ):
+                if (
+                    old_key[0] == customer_id
+                    and old_key != sample_key
+                    and old_samples
+                    and received_at - old_samples[-1][0] > 120
+                ):
+                    _worker_request_samples.pop(old_key, None)
         with _active_pid_lock:
             _active_pid.setdefault(
                 customer_id, str(worker_pid_header)
@@ -1403,10 +1437,208 @@ def _evaluate_causal_rules(
         key=lambda item: item.get("confidence", 0),
         reverse=True,
     )
+    fleet_match = _fleet_worker_imbalance(
+        customer_id, worker_instance_id, tag_list
+    )
+    if fleet_match:
+        data = [
+            item
+            for item in data
+            if item.get("rule") != "worker_imbalance"
+        ]
+        data.append(fleet_match)
+        data.sort(
+            key=lambda item: item.get("confidence", 0),
+            reverse=True,
+        )
     return {
         "match_count": len(data),
         "data": data,
     }
+
+
+def _fleet_worker_imbalance(
+    customer_id: str,
+    target_instance_id: str,
+    tag_list: Optional[list[str]],
+) -> Optional[Dict[str, Any]]:
+    """Compare recent request rates for fresh workers of one Gunicorn master.
+
+    Each process owns a separate graph, so the core graph rule cannot see its
+    siblings. This API-level aggregation uses the same per-process snapshots
+    and recent request-counter deltas already received by the backend. It
+    deliberately requires fresh heartbeats and at least two measured workers.
+    """
+    if tag_list is not None:
+        worker_tags = {"gunicorn", "concurrency", "blocking"}
+        if not worker_tags.intersection(tag_list):
+            return None
+
+    now = time.time()
+    with _graphs_lock:
+        snapshots = []
+        for (owner, instance_id), graph in _graphs.items():
+            if owner != customer_id:
+                continue
+            metadata = dict(
+                _snapshot_metadata.get((owner, instance_id), {})
+            )
+            samples = list(
+                _worker_request_samples.get(
+                    (owner, instance_id), []
+                )
+            )
+            snapshots.append(
+                (instance_id, graph, metadata, samples)
+            )
+
+    records: list[dict[str, Any]] = []
+    for instance_id, graph, metadata, samples in snapshots:
+        runtime = metadata.get("runtime_status") or {}
+        heartbeat = _worker_runtime_view(
+            {
+                "status": runtime,
+                "observed_at": metadata.get(
+                    "runtime_observed_at"
+                ),
+            }
+        )
+        if not heartbeat["online"]:
+            continue
+
+        master_pid = None
+        for node in graph.all_nodes():
+            if (
+                node.metadata.get("probe")
+                == "gunicorn.master.start"
+            ):
+                master_pid = node.metadata.get("master_pid")
+                if master_pid is not None:
+                    break
+        if master_pid is None:
+            continue
+
+        try:
+            recent_samples = [
+                sample
+                for sample in samples
+                if now - sample[0] <= 60
+            ]
+            if len(recent_samples) < 2:
+                continue
+            start_at, start_count = recent_samples[0]
+            end_at, end_count = recent_samples[-1]
+            window_s = end_at - start_at
+            request_delta = end_count - start_count
+        except (TypeError, ValueError, IndexError):
+            continue
+        if window_s < 10 or request_delta < 0:
+            continue
+
+        worker_pid = metadata.get("worker_pid")
+        records.append(
+            {
+                "worker_instance_id": instance_id,
+                "worker_pid": worker_pid,
+                "gunicorn_master_pid": master_pid,
+                "request_count": request_delta,
+                "window_s": round(window_s, 1),
+                "requests_per_second": round(
+                    request_delta / window_s, 3
+                ),
+            }
+        )
+
+    target = next(
+        (
+            record
+            for record in records
+            if record["worker_instance_id"] == target_instance_id
+        ),
+        None,
+    )
+    if target is None:
+        return None
+    siblings = [
+        record
+        for record in records
+        if str(record["gunicorn_master_pid"])
+        == str(target["gunicorn_master_pid"])
+    ]
+    if len(siblings) < 2:
+        return None
+
+    rates = [
+        record["requests_per_second"] for record in siblings
+    ]
+    total_requests = sum(
+        record["request_count"] for record in siblings
+    )
+    zero_load = [
+        record
+        for record in siblings
+        if record["request_count"] == 0
+    ]
+    if total_requests < 20:
+        return None
+    if zero_load:
+        # A worker receiving no requests is a stronger signal, but require a
+        # longer window and more traffic to avoid short-window scheduling noise.
+        if min(record["window_s"] for record in siblings) < 30:
+            return None
+        ratio = None
+        imbalance_kind = "zero_requests_on_online_worker"
+    else:
+        ratio = max(rates) / min(rates)
+        if ratio < 2.0:
+            return None
+        imbalance_kind = "request_rate_ratio"
+
+    busiest = max(
+        siblings,
+        key=lambda record: record["requests_per_second"],
+    )
+    return {
+        "rule": "worker_imbalance",
+        "confidence": 0.80,
+        "explanation": (
+            "Recent request traffic is uneven across fresh workers under the "
+            "same Gunicorn master. This is an imbalance signal, not proof "
+            "that a worker is blocked."
+        ),
+        "evidence": {
+            "gunicorn_master_pid": target["gunicorn_master_pid"],
+            "workers": siblings,
+            "busiest_worker_pid": busiest["worker_pid"],
+            "imbalance_kind": imbalance_kind,
+            "rate_ratio": (
+                round(ratio, 2) if ratio is not None else None
+            ),
+            "zero_request_worker_pids": [
+                record["worker_pid"] for record in zero_load
+            ],
+            "comparison_basis": (
+                "request-counter delta over recent snapshot window"
+            ),
+        },
+        "timestamp": now,
+    }
+
+
+def _uvicorn_request_counter(graph: Any) -> int:
+    """Count Uvicorn request-entry edges from Gunicorn workers once each."""
+    worker_ids = {
+        node.id
+        for node in graph.all_nodes()
+        if node.service == "gunicorn"
+        and node.metadata.get("probe") == "gunicorn.worker.fork"
+    }
+    return sum(
+        edge.call_count
+        for edge in graph.all_edges()
+        if edge.edge_type == "handled"
+        and edge.source in worker_ids
+    )
 
 
 @app.get("/api/v1/hotspots")

@@ -19,6 +19,7 @@ repos:
         exclude: "^tests/"
         additional_dependencies:
           - types-PyYAML
+          - types-requests
       - id: mypy
         name: mypy (agent)
         args:
