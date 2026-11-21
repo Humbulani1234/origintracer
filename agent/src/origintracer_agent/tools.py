@@ -284,8 +284,8 @@ async def get_worker_nodes(
 ) -> dict[str, Any]:
     """List operation nodes from the selected worker's stored snapshot.
 
-    Rows include operation name, service, call count, and aggregate duration. Results are
-    not ranked by latency.
+    Rows include operation name, service, call count, aggregate duration, and safe
+    operational metadata when the probe recorded it. Results are not ranked by latency.
 
     Parameters
     ----------
@@ -336,8 +336,9 @@ async def get_worker_graph(
 ) -> dict[str, Any]:
     """Read the selected worker's combined node and edge graph.
 
-    Nodes describe observed operations and edges describe observed relationships. This
-    structural view does not provide per-edge latency.
+    Nodes describe observed operations and edges describe observed relationships. Node
+    rows may include safe operational metadata; this structural view does not provide
+    per-edge latency.
 
     Parameters
     ----------
@@ -757,7 +758,8 @@ async def get_worker_events(
     Returns
     -------
     dict[str, Any]
-        Recent matching events from the selected worker.
+        Recent matching events from the selected worker, including recorded duration,
+        process/thread and span identifiers, and safe operational metadata when present.
     """
     query = build_event_query(
         limit,
@@ -790,7 +792,8 @@ async def get_worker_trace(
     Returns
     -------
     dict[str, Any]
-        Ordered event rows with span identity and parent lineage. The timing
+        Ordered event rows with span identity, parent lineage, process/thread IDs,
+        and safe operational metadata when present. The timing
         section includes trace wall duration when a request boundary pair or
         complete root span exists, span intervals, inclusive durations,
         observed-child self-time estimates, sibling overlap, and cumulative

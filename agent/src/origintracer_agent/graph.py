@@ -223,6 +223,9 @@ You gather evidence for an OriginTracer investigation.
   as evidence for the requested entity.
 - For competing explanations, choose reads that can support or weaken them.
 - Reuse relevant existing evidence; do not repeat an observation without need.
+- Retain safe metadata, process/thread IDs, and span lineage returned with
+  relevant event, node, or trace rows. These fields add operational detail to
+  the observation; they do not establish causation by themselves.
 - You may call independent tools in parallel, with no more than four calls in
   one round.
 
@@ -238,10 +241,8 @@ You gather evidence for an OriginTracer investigation.
 
 _FRAMEWORK_RULE_GUIDANCE = """
 ## Rule evidence
-- For problems covered by configured Django, asyncio, Gunicorn, Uvicorn,
-  nginx, Celery or LangGraph rules, use `evaluate_worker_rules` or a
-  component diagnostic that returns live matches.
-- For a direct rule review, use `evaluate_worker_rules`.
+- When the user asks about detected patterns or rule matches, use
+  `evaluate_worker_rules` or a component diagnostic that returns live matches.
 - Check registered rules before saying a rule is unavailable or did not match.
 - Distinguish an unconfigured rule from one that was registered but did not
   match at query time.
@@ -535,6 +536,12 @@ required by the schema.
   value.
 - Include concise, evidence-cited observations when the evidence contains
   relevant measurements or rule matches, even if they establish no cause.
+- When returned event, node, or span rows contain operational `metadata`, use
+  the fields relevant to the request and keep each value attached to its row
+  and identifiers. Treat metadata as observed attributes, not proof of cause.
+- Use the complete returned `evidence` object for a matched rule. Rule evidence
+  fields vary; do not assume every rule uses the same schema or omit unfamiliar
+  fields that are relevant to the request.
 - Leave out rule matches and measurements about components the user did not
   ask about. Do not use them to explain why requested evidence is empty, and do
   not describe measurements with judgment words such as `extreme` or `severe`
@@ -1743,8 +1750,14 @@ def _event_result_preview(result: Any) -> Any:
         "ts",
         "timestamp",
         "duration_ms",
+        "duration_ns",
+        "inter_event_gap_ms",
+        "span_id",
+        "parent_span_id",
         "pid",
+        "tid",
         "worker_pid",
+        "metadata",
     )
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -1866,6 +1879,9 @@ def _assessment_result_preview(
             "timing_source",
             "worker_pid",
             "worker_instance_id",
+            "pid",
+            "tid",
+            "metadata",
         )
         trace_preview = {
             key: value
@@ -1911,6 +1927,10 @@ def _assessment_result_preview(
                 if key in row
             }
             rule_evidence = row.get("evidence")
+            if isinstance(rule_evidence, dict):
+                # Preserve rule-specific fields so new framework rules do not
+                # require custom assessor branches to remain inspectable.
+                detail["evidence"] = rule_evidence
             hotspots = (
                 rule_evidence.get("hotspot_queries", [])
                 if isinstance(rule_evidence, dict)
@@ -2021,9 +2041,12 @@ def _assessment_result_preview(
                             key: row[key]
                             for key in (
                                 "id",
+                                "service",
+                                "type",
                                 "call_count",
                                 "avg_ms",
                                 "avg_duration_ms",
+                                "metadata",
                             )
                             if key in row
                         }
@@ -2080,6 +2103,8 @@ def _assessment_result_preview(
                     if key in row
                 }
                 details = row.get("evidence")
+                if isinstance(details, dict):
+                    match["evidence"] = details
                 if isinstance(details, dict) and isinstance(
                     details.get("hotspot_queries"), list
                 ):
@@ -2170,7 +2195,16 @@ def _assessment_result_preview(
         graph_preview["graph"] = {
             "nodes": rows_preview(
                 nodes,
-                ("id", "node", "service", "type", "call_count"),
+                (
+                    "id",
+                    "node",
+                    "service",
+                    "type",
+                    "call_count",
+                    "avg_ms",
+                    "avg_duration_ms",
+                    "metadata",
+                ),
             ),
             "edges": rows_preview(
                 edges,
