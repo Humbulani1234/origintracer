@@ -340,6 +340,16 @@ def render(result: dict) -> None:
         print()
         return
 
+    # SHOW EVENTS
+    if metric == "events":
+        rows = (
+            data
+            if isinstance(data, list)
+            else (data or {}).get("data", [])
+        )
+        _render_events(rows)
+        return
+
     # TRACE/critical path
     if verb == "TRACE":
         path = (
@@ -353,31 +363,63 @@ def render(result: dict) -> None:
         print()
         total = 0
         for stage in path:
-            dur = stage.get("duration_ms")
-            dur_str = (
-                f"{dur:8.2f}ms"
-                if dur is not None
+            gap_ms = stage.get("duration_ms")
+            recorded_ns = stage.get("duration_ns")
+            gap_str = (
+                f"{gap_ms:8.2f}ms"
+                if gap_ms is not None
                 else "        —"
             )
-            bar_len = int(min((dur or 0) / 5, 40))
+            recorded_str = (
+                f"{recorded_ns / 1e6:.2f}ms"
+                if recorded_ns is not None
+                else "—"
+            )
+            bar_len = int(min((gap_ms or 0) / 5, 40))
             bar = "▓" * bar_len
             colour = (
                 RED
-                if (dur or 0) > 100
-                else YELLOW if (dur or 0) > 20 else GREEN
+                if (gap_ms or 0) > 100
+                else YELLOW if (gap_ms or 0) > 20 else GREEN
             )
             print(
-                c(f"  {dur_str}  ", WHITE)
+                c(f"  gap {gap_str}  ", WHITE)
                 + c(f"{bar:<40}", colour)
-                + c(f"  {stage['probe']}", BOLD)
+                + c(f"  {stage.get('probe', '?')}", BOLD)
                 + c(
-                    f"  {stage['service']}::{stage['name']}", DIM
+                    f"  {stage.get('service', '?')}::{stage.get('name', '?')}",
+                    DIM,
                 )
             )
-            total += dur or 0
+            identity = []
+            if stage.get("pid") is not None:
+                identity.append(f"pid={stage['pid']}")
+            if stage.get("tid") is not None:
+                identity.append(f"tid={stage['tid']}")
+            if stage.get("span_id"):
+                identity.append(f"span={stage['span_id']}")
+            if stage.get("parent_span_id"):
+                identity.append(
+                    f"parent={stage['parent_span_id']}"
+                )
+            if identity or recorded_ns is not None:
+                print(
+                    c(
+                        "      "
+                        + " · ".join(
+                            identity
+                            + [f"recorded={recorded_str}"]
+                        ),
+                        DIM,
+                    )
+                )
+            _render_observation_metadata(
+                stage.get("metadata"), indent="      "
+            )
+            total += gap_ms or 0
         print(
             c(
-                f"\n  Total: {total:.2f}ms  ·  {len(path)} stages",
+                f"\n  Sum of reported inter-event gaps: {total:.2f}ms  ·  {len(path)} stages",
                 BOLD,
                 CYAN,
             )
@@ -442,6 +484,9 @@ def render(result: dict) -> None:
                 + c(n["id"], WHITE)
                 + c(f"  ×{n['call_count']}", CYAN)
             )
+            _render_observation_metadata(
+                n.get("metadata"), indent="      "
+            )
         if edges:
             print()
             for e in edges:
@@ -486,12 +531,18 @@ def render(result: dict) -> None:
         _render_tool_content(rows)
         return
 
-    # HOTSPOT or events and nodes
-    if (
-        verb == "HOTSPOT"
-        or metric == "nodes"
-        or metric == "edges"
-    ):
+    # SHOW NODES
+    if metric == "nodes":
+        rows = (
+            data
+            if isinstance(data, list)
+            else (data or {}).get("data", [])
+        )
+        _render_node_rows(rows)
+        return
+
+    # HOTSPOT or edges
+    if verb == "HOTSPOT" or metric == "edges":
         rows = (
             data
             if isinstance(data, list)
@@ -540,6 +591,112 @@ def render(result: dict) -> None:
             default=str,
         )
     )
+
+
+def _render_node_rows(rows: list) -> None:
+    """Print graph nodes with reviewed probe metadata beneath each row."""
+    if not rows:
+        dim("No results.")
+        return
+    print()
+    for row in rows:
+        print(
+            c(f"  {row.get('service', '?'):12}  ", DIM)
+            + c(str(row.get("id", "?")), WHITE)
+            + c(f"  ×{row.get('call_count', 0)}", CYAN)
+            + c(
+                f"  avg={row.get('avg_ms') if row.get('avg_ms') is not None else '—'}ms",
+                DIM,
+            )
+        )
+        _render_observation_metadata(
+            row.get("metadata"), indent="      "
+        )
+    print()
+
+
+def _render_observation_metadata(
+    metadata, indent: str = "  "
+) -> None:
+    """Print the reviewed operational metadata attached to an observation."""
+    if not isinstance(metadata, dict) or not metadata:
+        return
+    rendered = json.dumps(
+        metadata, ensure_ascii=False, default=str
+    )
+    print(c(f"{indent}details: {rendered}", DIM))
+
+
+def _render_events(rows: list) -> None:
+    """Print event rows with timing, process lineage, and safe metadata."""
+    if not rows:
+        dim("No results.")
+        return
+    print()
+    for row in rows:
+        timestamp = row.get("ts") or row.get("wall_time")
+        event_time = (
+            time.strftime("%H:%M:%S", time.localtime(timestamp))
+            if timestamp
+            else "--:--:--"
+        )
+        duration_ns = row.get("duration_ns")
+        duration = (
+            f"{duration_ns / 1e6:.3f}ms"
+            if duration_ns is not None
+            else "—"
+        )
+        identity_parts = [
+            (
+                f"pid={row['pid']}"
+                if row.get("pid") is not None
+                else None
+            ),
+            (
+                f"tid={row['tid']}"
+                if row.get("tid") is not None
+                else None
+            ),
+        ]
+        identity = " · ".join(
+            value for value in identity_parts if value
+        )
+        print(
+            c(f"  {event_time}  ", DIM)
+            + c(f"{row.get('probe', '?')}  ", BOLD)
+            + c(
+                f"{row.get('service', '?')}::{row.get('name', '?')}  ",
+                WHITE,
+            )
+            + c(duration, CYAN)
+            + (c(f"  {identity}", DIM) if identity else "")
+        )
+        lineage_parts = [
+            (
+                f"trace={row.get('trace_id')}"
+                if row.get("trace_id")
+                else None
+            ),
+            (
+                f"span={row.get('span_id')}"
+                if row.get("span_id")
+                else None
+            ),
+            (
+                f"parent={row.get('parent_span_id')}"
+                if row.get("parent_span_id")
+                else None
+            ),
+        ]
+        lineage = " · ".join(
+            value for value in lineage_parts if value
+        )
+        if lineage:
+            print(c(f"      {lineage}", DIM))
+        _render_observation_metadata(
+            row.get("metadata"), indent="      "
+        )
+    print()
 
 
 def _render_table(rows: list) -> None:
@@ -923,16 +1080,27 @@ def cmd_stitch(trace_id: str) -> None:
         )
 
         print(
-            c(f"  {dur_str}  ", WHITE)
+            c(f"  gap {dur_str}  ", WHITE)
             + c(f"{bar:<40}", colour)
             + c(f"  {probe}", BOLD)
             + c(f"  {service}::{name}", DIM)
+        )
+        recorded_ns = stage.get("duration_ns")
+        if recorded_ns is not None:
+            print(
+                c(
+                    f"      recorded={recorded_ns / 1e6:.3f}ms",
+                    DIM,
+                )
+            )
+        _render_observation_metadata(
+            stage.get("metadata"), indent="      "
         )
         total += dur or 0
 
     print(
         c(
-            f"\n  End-to-end: {total:.2f}ms  ·  "
+            f"\n  Sum of reported inter-event gaps: {total:.2f}ms  ·  "
             f"{len(all_stages)} stages  ·  "
             f"{len(found_in)} process(es)\n",
             BOLD,
@@ -1037,8 +1205,7 @@ def main():
                 if st.get("ok"):
                     d = st["data"]
                     ok(
-                        f"Reconnected  pid={d.get('pid', '?')}  "
-                        f"nodes={d.get('graph_nodes', '?')}"
+                        f"Reconnected  pid={d.get('pid', '?')}  nodes={d.get('graph_nodes', '?')}"
                     )
             elif cmd == "stitch":
                 cmd_stitch(args.strip())
