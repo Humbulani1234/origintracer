@@ -121,7 +121,9 @@ class TracerMiddleware:
                 service="django",
                 pattern=pattern,
             )
-        # add trace_id into BPF map so epoll kprobe can attribute events
+        # Bridge kernel events to this request: BPF looks up Linux native TID,
+        # not Python's threading.get_ident() value. This libc syscall number is
+        # Linux x86_64-specific; other architectures need their own gettid path.
         _libc = ctypes.CDLL("libc.so.6", use_errno=True)
         _SYS_gettid = 186  # x86_64 Linux
 
@@ -131,6 +133,10 @@ class TracerMiddleware:
         bridge = get_bridge()
         if bridge.available:
             handler_tid = _get_os_tid()
+            # On Linux, the process ID is also the main thread's TID. Register
+            # it for event-loop syscalls and the native TID of this middleware
+            # thread. The bridge key is TID; PID is stored separately. Work later
+            # offloaded to another thread is not covered by these two mappings.
             loop_tid = os.getpid()
             bridge.register_trace(
                 tid=loop_tid,
@@ -147,6 +153,8 @@ class TracerMiddleware:
                 start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
+            # Keep the exact keys so _end can remove both mappings; stale map
+            # entries could otherwise attribute later syscalls to this trace.
             request._ot_bridge_tids = [loop_tid, handler_tid]
         entry_event = NormalizedEvent.now(
             probe="request.entry",
@@ -191,7 +199,8 @@ class TracerMiddleware:
                     pattern,
                     span.duration_ms,
                 )
-        # remove the or deregister the bridge context
+        # Remove the per-request BPF mappings registered in _begin. This bounds
+        # the context to the request lifetime and prevents stale attribution.
         bridge = get_bridge()
         if bridge.available:
             for tid in getattr(request, "_ot_bridge_tids", []):

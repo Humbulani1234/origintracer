@@ -83,7 +83,7 @@ export default function EventLog({ events }) {
                 <td style={{ ...TD, color: "var(--color-text-primary)" }}>
                   {short(e.probe || "", 28)}
                 </td>
-                <td style={{ ...TD, color: "var(--color-text-secondary)" }}
+                <td style={{ ...TD, color: "var(--color-text-primary)" }}
                   title={e.name}>
                   {short(e.name || "", 40)}
                 </td>

@@ -11,7 +11,7 @@
   --amber:  #e8a020;
   --accent: #45c4b0;
   --text:  #e0ddd5;
-  --muted: #666;
+  --muted: #9a9a9a;
   --mono:  'JetBrains Mono', monospace;
   --sans:  'DM Sans', sans-serif;
 }
@@ -182,3 +182,27 @@ body {
 .api-key-table { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); }
 .api-key-table table { width: 100%; min-width: 520px; border-collapse: collapse; text-align: left; }
 .api-key-table th, .api-key-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+
+
+/* Causal-rule evidence */
+.causal-view { padding: 14px; }
+.causal-card { margin-bottom: 14px; padding: 12px 14px; border-left: 2px solid var(--causal-color); border-bottom: 1px solid var(--border); border-radius: 0 5px 5px 0; background: var(--bg2); }
+.causal-card-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.causal-rule-name { color: var(--causal-color); font: 600 11px var(--mono); overflow-wrap: anywhere; }
+.causal-explanation { color: var(--muted); font: 11px/1.65 var(--mono); }
+.causal-evidence { margin-top: 12px; color: var(--text); font: 11px/1.55 var(--mono); }
+.causal-evidence-heading { margin-bottom: 7px; color: var(--accent); font-weight: 600; }
+.causal-evidence-object { display: grid; gap: 7px; }
+.causal-evidence-field { display: grid; grid-template-columns: minmax(110px, 150px) minmax(0, 1fr); gap: 8px; align-items: start; padding: 7px 9px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.causal-evidence-label { color: var(--muted); text-transform: capitalize; }
+.causal-evidence-value { overflow-wrap: anywhere; }
+.causal-evidence-list { border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.causal-evidence-list summary { padding: 8px 10px; color: var(--accent); cursor: pointer; user-select: none; }
+.causal-evidence-records { display: grid; gap: 7px; padding: 0 8px 8px; }
+.causal-evidence-records > .causal-evidence-object { padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg2); }
+.causal-evidence-values { display: flex; flex-wrap: wrap; gap: 5px; }
+.causal-evidence-node { padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
+.causal-evidence-primary { overflow-wrap: anywhere; line-height: 1.55; }
+.causal-evidence-metrics { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 5px; color: var(--muted); }
+.causal-evidence-metrics b { color: var(--text); }
+@media (max-width: 720px) { .causal-evidence-field { grid-template-columns: 1fr; gap: 3px; } }

@@ -3,6 +3,9 @@
 # Place this file in the project root (same directory as manage.py).
 
 probes:
+  - nginx
+  - gunicorn
+  - uvicorn
   - asyncio
   - django
   - langgraph
@@ -14,6 +17,14 @@ rules:
   - db_query_hotspot
   - loop_runaway
   - agent_latency_hotspot
+  - request_duration_anomaly
+  - traffic_spike
+  - external_dependency_timeout
+  - post_deployment_regression
+  - duplicate_transaction
+  - cascade_failure
+  - worker_imbalance
+  - retry_amplification
 
 semantic:
   - label: http

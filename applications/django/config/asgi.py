@@ -13,5 +13,11 @@ os.environ.setdefault(
 )
 
 django.setup()
-application = get_asgi_application()
-# wrap the django_app into the ASGImidlleware from uvicorn_probe
+
+# Import the app-local middleware after Django initialization; this ordering is
+# deliberate even though it triggers Ruff E402.
+from probes.uvicorn_probe import (  # noqa: E402
+    OriginTracerASGIMiddleware,
+)
+
+application = OriginTracerASGIMiddleware(get_asgi_application())

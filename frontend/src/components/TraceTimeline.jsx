@@ -22,7 +22,7 @@ function Section({ title, children, subtitle }) {
       <div style={{ padding: "9px 11px", borderBottom: "1px solid var(--border)" }}>
         <div style={{ color: "var(--text)", fontSize: 11, fontWeight: 600 }}>{title}</div>
         {subtitle && (
-          <div style={{ color: "var(--muted)", fontSize: 10, marginTop: 4 }}>{subtitle}</div>
+          <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>{subtitle}</div>
         )}
       </div>
       <div style={{ padding: 10 }}>{children}</div>
@@ -34,11 +34,11 @@ function Metric({ label, value, detail }) {
   return (
     <div style={{ minWidth: 150, flex: "1 1 150px", padding: 9,
       border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg)" }}>
-      <div style={{ color: "var(--muted)", fontSize: 9, textTransform: "uppercase",
+      <div style={{ color: "var(--muted)", fontSize: 11, textTransform: "uppercase",
         letterSpacing: "0.05em" }}>{label}</div>
       <div style={{ color: "var(--amber)", fontFamily: "monospace", fontSize: 13,
         marginTop: 5 }}>{value}</div>
-      {detail && <div style={{ color: "var(--muted)", fontSize: 9, marginTop: 4,
+      {detail && <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4,
         overflowWrap: "anywhere" }}>{detail}</div>}
     </div>
   );
@@ -47,7 +47,7 @@ function Metric({ label, value, detail }) {
 function DataRow({ label, value }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(130px, 0.7fr) minmax(0, 2fr)",
-      gap: 10, padding: "5px 0", borderBottom: "1px solid var(--border)", fontSize: 10 }}>
+      gap: 10, padding: "5px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
       <span style={{ color: "var(--muted)" }}>{label}</span>
       <span style={{ color: "var(--text)", overflowWrap: "anywhere" }}>{value ?? "—"}</span>
     </div>
@@ -58,7 +58,7 @@ function TraceCompleteness({ completeness }) {
   if (!completeness) {
     return (
       <Section title="Trace completeness">
-        <div style={{ color: "var(--muted)", fontSize: 10 }}>
+        <div style={{ color: "var(--muted)", fontSize: 11 }}>
           Lifecycle and capture diagnostics were not returned by the backend.
         </div>
       </Section>
@@ -104,7 +104,7 @@ function TraceCompleteness({ completeness }) {
           {lifecycle.last_event_at != null && <DataRow label="Last tracked event" value={formatTimestamp(lifecycle.last_event_at)} />}
         </>
       )}
-      <div style={{ marginTop: 8, color: "var(--text)", fontSize: 10 }}>{captureSummary}</div>
+      <div style={{ marginTop: 8, color: "var(--text)", fontSize: 11 }}>{captureSummary}</div>
       {Object.keys(sources).length > 0 && (
         <DataRow label="Trace-specific sources" value={Object.entries(sources)
           .map(([name, count]) => `${name}: ${count}`).join(" · ")} />
@@ -114,7 +114,7 @@ function TraceCompleteness({ completeness }) {
           .map(([name, count]) => `${name}: ${count}`).join(" · ")} (not trace-correlated)`} />
       )}
       {capture.trace_counts_truncated && (
-        <div style={{ color: "var(--muted)", fontSize: 9, marginTop: 7 }}>
+        <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 7 }}>
           Per-trace counters were truncated; an absent trace-specific count is inconclusive.
         </div>
       )}
@@ -126,7 +126,7 @@ function TraceTiming({ timing }) {
   if (!timing) {
     return (
       <Section title="Request and trace timing">
-        <div style={{ color: "var(--muted)", fontSize: 10 }}>
+        <div style={{ color: "var(--muted)", fontSize: 11 }}>
           Timing details were not returned by the backend.
         </div>
       </Section>
@@ -154,27 +154,28 @@ function TraceTiming({ timing }) {
       <Section title={`Measured spans (${spans.length}${timing.spans_truncated ? ` of ${timing.spans_count}` : ""})`}
         subtitle="Only rows with paired boundaries or an explicit recorded duration have a measured interval.">
         {spans.length === 0 ? (
-          <div style={{ color: "var(--muted)", fontSize: 10 }}>No complete span intervals were returned.</div>
+          <div style={{ color: "var(--muted)", fontSize: 11 }}>No complete span intervals were returned.</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <div style={{ minWidth: 980 }}>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 2fr) minmax(145px, 1.4fr) minmax(150px, 1.3fr) minmax(150px, 1.3fr) 90px 90px minmax(170px, 2fr)",
-                gap: 8, padding: "0 0 6px", color: "var(--muted)", fontSize: 9 }}>
+                gap: 8, padding: "0 0 6px", color: "var(--muted)", fontSize: 11 }}>
                 <span>operation</span><span>observed boundaries</span><span>start timestamp</span><span>end timestamp</span><span>inclusive</span><span>self-time</span><span>self-time scope / source</span>
               </div>
               {spans.map((span) => (
                 <div key={span.span_id} style={{ display: "grid", gridTemplateColumns: "minmax(180px, 2fr) minmax(145px, 1.4fr) minmax(150px, 1.3fr) minmax(150px, 1.3fr) 90px 90px minmax(170px, 2fr)",
                   gap: 8, padding: "6px 0", borderTop: "1px solid var(--border)",
-                  color: "var(--text)", fontSize: 10, alignItems: "start" }}>
+                  color: "var(--text)", fontSize: 11, alignItems: "start" }}>
                   <span title={span.name} style={{ overflowWrap: "anywhere" }}>
-                    <span style={{ color: svcColor(span.service) }}>{span.service ?? "unknown"}</span>
-                    <span>::</span>{span.name ?? "unnamed"}
-                    <span style={{ display: "block", color: "var(--muted)", fontSize: 9, marginTop: 3 }}>
+                    <span>{span.service ?? "unknown"}::{span.name ?? "unnamed"}</span>
+                    <span style={{ display: "block", color: "var(--muted)", fontSize: 11, marginTop: 3 }}>
                       span {span.span_id}{span.parent_span_id ? ` · parent ${span.parent_span_id}` : " · root span"}
                     </span>
                   </span>
                   <span style={{ color: "var(--muted)", overflowWrap: "anywhere" }}>
-                    {span.probe_start ?? "—"} → {span.probe_end ?? "—"}
+                    {span.probe_start || span.probe_end
+                      ? `${span.probe_start ?? "—"} → ${span.probe_end ?? "—"}`
+                      : "Duration only · no paired probes"}
                   </span>
                   <span style={{ color: "var(--muted)", fontFamily: "monospace", overflowWrap: "anywhere" }}>
                     {formatTimestamp(span.start_timestamp)}
@@ -234,7 +235,7 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
 
   return (
     <div style={{ padding: 14 }}>
-      <div style={{ fontFamily: "monospace", fontSize: 10, color: "var(--muted)",
+      <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--muted)",
         marginBottom: 8, letterSpacing: "0.06em" }}>
         {stitched ? "stitched trace " : "trace "}
         <span title={id} style={{ color: "var(--amber)", overflowWrap: "anywhere" }}>{id}</span>
@@ -254,7 +255,7 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
       {Array.isArray(trace.warnings) && trace.warnings.map((warning, index) => (
         <div key={`${warning.code ?? "warning"}-${index}`} style={{ marginTop: 8,
           padding: 8, borderLeft: "3px solid var(--amber)", background: "var(--bg2)",
-          color: "var(--muted)", fontSize: 10, overflowWrap: "anywhere" }}>
+          color: "var(--muted)", fontSize: 11, overflowWrap: "anywhere" }}>
           {warning.message ?? warning.code}
         </div>
       ))}
@@ -264,12 +265,12 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
           ? "Per-event recorded durations only; no cross-worker wall duration is calculated."
           : "Gap is elapsed time since the preceding event, not time spent in this operation. Recorded event duration is shown separately."}>
         {stages.length === 0 ? (
-          <div style={{ color: "var(--muted)", fontSize: 10 }}>No stored event rows were returned for this trace.</div>
+          <div style={{ color: "var(--muted)", fontSize: 11 }}>No stored event rows were returned for this trace.</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <div style={{ minWidth: 620 }}>
               <div style={{ display: "grid", gridTemplateColumns: "90px minmax(50px, 1fr) 100px minmax(220px, 2fr)",
-                gap: 9, padding: "0 0 6px", color: "var(--muted)", fontSize: 9 }}>
+                gap: 9, padding: "0 0 6px", color: "var(--muted)", fontSize: 11 }}>
                 <span>{stitched ? "recorded duration" : "gap from previous"}</span>
                 <span></span>
                 <span>{stitched ? "" : "event duration"}</span>
@@ -283,7 +284,7 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
                   <div key={`${stage.span_id ?? stage.timestamp ?? index}-${index}`}
                     style={{ display: "grid", gridTemplateColumns: "90px minmax(50px, 1fr) 100px minmax(220px, 2fr)",
                       gap: 9, alignItems: "center", padding: "5px 0",
-                      borderTop: "1px solid var(--border)", fontSize: 10, minHeight: 25 }}>
+                      borderTop: "1px solid var(--border)", fontSize: 11, minHeight: 25 }}>
                     <span style={{ textAlign: "right", fontFamily: "monospace",
                       color: gap > 0 ? "var(--muted)" : "var(--muted)" }}>
                       {gap != null && gap > 0 ? formatMs(gap) : "—"}
@@ -296,13 +297,14 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
                       color: recorded != null ? "var(--amber)" : "var(--muted)" }}>
                       {recorded == null ? "—" : formatMs(recorded)}
                     </span>
-                    <span style={{ color: "var(--muted)", overflowWrap: "anywhere" }}>
-                      <span style={{ color: "var(--text)" }}>{stage.probe ?? "unknown probe"}</span>
-                      <span style={{ color: "var(--muted)", marginLeft: 5 }}>
-                        {stage.service ?? "unknown"}::{short(String(stage.name ?? "unnamed"), 36)}
+                    <span style={{ color: "var(--text)", overflowWrap: "anywhere" }}>
+                      <span>{stage.probe ?? "unknown probe"}</span>
+                      <span style={{ marginLeft: 5 }}>
+                        <span style={{ color: "var(--muted)" }}>{stage.service ?? "unknown"}::</span>
+                        {short(String(stage.name ?? "unnamed"), 36)}
                       </span>
                       {stitched && <span style={{ marginLeft: 6 }}>pid {stage.worker_pid}</span>}
-                      {stage.timestamp != null && <span style={{ display: "block", fontSize: 9,
+                      {stage.timestamp != null && <span style={{ display: "block", fontSize: 11,
                         marginTop: 2 }}>at {formatTimestamp(stage.timestamp)}</span>}
                     </span>
                   </div>
@@ -312,7 +314,7 @@ export default function TraceTimeline({ trace, mode = "trace" }) {
           </div>
         )}
         {stitched && (
-          <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 10 }}>
+          <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 11 }}>
             {stages.length} events across {trace.workersFound.length} worker(s) · no combined end-to-end duration
           </div>
         )}

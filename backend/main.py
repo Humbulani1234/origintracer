@@ -1636,7 +1636,7 @@ def _derive_trace_spans(
             row
             for row in rows
             if str(row.get("probe") or "").endswith(
-                (".enter", ".start")
+                (".enter", ".entry", ".start")
             )
         ]
         ends = [

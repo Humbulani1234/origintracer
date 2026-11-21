@@ -61,3 +61,6 @@ build/
 # vite cache
 .vite/
 .cache/
+# Django example framework probes and rules
+applications/django/probes/
+applications/django/rules/
