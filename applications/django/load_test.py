@@ -11,7 +11,8 @@ URLs hit:
 Usage:
     python django_load.py
     python django_load.py --requests 200 --workers 20
-    python django_load.py --url http://127.0.0.1:8000 --requests 500 --workers 50 --delay 0
+    python django_load.py --url http://127.0.0.1:8000 --requests 500 \
+    --workers 50 --delay 0
 """
 
 import argparse
@@ -22,7 +23,7 @@ from collections import Counter
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BASE_URL = "http://localhost:80"
 DEFAULT_REQUESTS = 100
 DEFAULT_WORKERS = 10
 DEFAULT_DELAY = 0.05

@@ -1,51 +1,55 @@
 #!/usr/bin/env python3
-"""
-OriginTracer REPL - connects to a running agent via Unix socket.
+r"""Interactive terminal client for a running OriginTracer worker.
 
-Run from any terminal while gunicorn is running:
-    python -m origintracer.replrepl
+Start the application with OriginTracer initialized, then run the REPL in a
+second terminal:
 
-The REPL auto-discovers /tmp/origintracer-{pid}.sock and connects.
-All queries run against the live engine in the worker process.
+    python -m origintracer.repl.repl
 
-Protocol: JSON over Unix domain socket.
-    Send: {"id": "1", "query": "SHOW NODES"}
-    Receive: {"id": "1", "ok": true, "data": {...}}
+The REPL discovers live worker sockets under ``/tmp/origintracer-<pid>.sock``.
+If more than one worker is available, it asks which one to query. Structured
+results are shown as colored tables with measurements, process identity, and
+probe details where available.
 
-DSL queries:
+Query examples (see ``\help`` for the grouped command list):
+
     SHOW latency WHERE service = "django"
-    SHOW latency WHERE system = "export"
-    SHOW graph
+    SHOW latency WHERE system = "database"
+    SHOW nodes WHERE service = "nginx" LIMIT 20
+    SHOW edges
     SHOW graph WHERE system = "worker"
-    SHOW events WHERE probe = "db.query.start" LIMIT 20
-    SHOW llm_content WHERE trace_id = "..."
-    SHOW tool_content WHERE trace_id = "..."
+    SHOW events WHERE probe = "django.db.query" LIMIT 20
+    SHOW path WHERE trace_id = "<trace-id>"
+    SHOW llm_content WHERE trace_id = "<trace-id>"
+    SHOW tool_content WHERE trace_id = "<trace-id>"
+    SHOW status
+    SHOW active
+    SHOW probes
+    SHOW rules
+    SHOW semantic
+    TRACE <trace-id>
     HOTSPOT TOP 10
     CAUSAL
-    CAUSAL WHERE tags = "blocking, worker"
-    BLAME WHERE system = "export"
+    CAUSAL WHERE tags = "blocking,celery"
+    BLAME WHERE system = "database"
     DIFF SINCE deployment
-    TRACE <trace_id>
+    SHOW changes
 
-REPL meta-commands:
-    \\status - engine stats (graph size, uptime, etc.)
-    \\probes - registered probe adapters
-    \\rules - registered causal rules
-    \\semantic - semantic aliases
-    \\emit <probe> <svc> <n> - inject a synthetic event
-    \\snapshot [label] - capture a temporal diff snapshot
-    \\active - in-flight requests
-    \\reconnect - pick a different worker socket
-    \\help - this message
-    \\quit  or  Ctrl+C - exit
+``SHOW llm_content`` and ``SHOW tool_content`` return captured previews only
+when their respective ``ORIGINTRACER_CAPTURE_LLM_CONTENT=1`` and
+``ORIGINTRACER_CAPTURE_TOOL_CONTENT=1`` settings were enabled before the
+worker started. The capture settings are off by default.
 
-``SHOW llm_content`` displays prompt and response previews only when the
-LangGraph probe was started with ``ORIGINTRACER_CAPTURE_LLM_CONTENT=1``.
-Capture is disabled by default; ordinary ``SHOW events`` output remains a
-compact lifecycle summary.
+``TRACE`` shows the trace's ordered events and any reported timing. The gap
+column is time between events; recorded duration is a separate measurement.
+``\stitch <trace-id>`` queries every live local worker socket for that ID and
+shows a cross-process event timeline. It does not calculate a combined
+cross-worker wall duration.
 
-``SHOW tool_content`` similarly displays tool arguments, results, and errors
-only when ``ORIGINTRACER_CAPTURE_TOOL_CONTENT=1`` was set at probe startup.
+Commands beginning with ``SHOW``, ``TRACE``, ``HOTSPOT``, ``CAUSAL``,
+``BLAME``, and ``DIFF`` are query DSL commands. Backslash commands control the
+REPL session. ``\emit`` and ``\snapshot`` depend on optional socket-server
+support and may be reported as unavailable.
 """
 
 from __future__ import annotations
@@ -53,6 +57,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import shutil
 import socket
 import sys
 import textwrap
@@ -303,12 +308,22 @@ def render(result: dict) -> None:
             )
             print(c(wrapped, DIM))
             evidence = m.get("evidence", {})
-            if evidence:
-                print(
-                    c(
-                        f"        Evidence: {json.dumps(evidence)}",
-                        DIM,
-                    )
+            if isinstance(evidence, dict) and evidence:
+                print(c("        Evidence:", DIM))
+                _render_table(
+                    [
+                        {
+                            "measurement": key.replace("_", " "),
+                            "value": _format_value(value),
+                        }
+                        for key, value in evidence.items()
+                    ],
+                    indent="          ",
+                    column_colors={
+                        "measurement": CYAN,
+                        "value": WHITE,
+                    },
+                    prefer_table=True,
                 )
             print()
         return
@@ -316,28 +331,21 @@ def render(result: dict) -> None:
     # DIFF
     if verb == "DIFF":
         d = data if isinstance(data, dict) else {}
-        new = d.get("new_edges", [])
-        gone = d.get("removed_edges", [])
-        if not new and not gone:
+        changes = [
+            {"change": "added", "edge": edge}
+            for edge in d.get("new_edges", [])
+        ] + [
+            {"change": "removed", "edge": edge}
+            for edge in d.get("removed_edges", [])
+        ]
+        if not changes:
             dim("No graph changes detected.")
             return
-        if new:
-            print(
-                c(f"\n  + {len(new)} new edge(s):", GREEN, BOLD)
-            )
-            for e in new:
-                print(c(f"      {e}", GREEN))
-        if gone:
-            print(
-                c(
-                    f"\n  - {len(gone)} removed edge(s):",
-                    RED,
-                    BOLD,
-                )
-            )
-            for e in gone:
-                print(c(f"      {e}", RED))
-        print()
+        _render_table(
+            changes,
+            column_colors={"change": CYAN, "edge": WHITE},
+            prefer_table=True,
+        )
         return
 
     # SHOW EVENTS
@@ -350,7 +358,7 @@ def render(result: dict) -> None:
         _render_events(rows)
         return
 
-    # TRACE/critical path
+    # TRACE and event timelines share the REPL's measured table style.
     if verb == "TRACE":
         path = (
             data
@@ -360,66 +368,72 @@ def render(result: dict) -> None:
         if not path:
             dim("Trace not found in event log.")
             return
-        print()
-        total = 0
+        rows = []
+        total = 0.0
         for stage in path:
-            gap_ms = stage.get("duration_ms")
-            recorded_ns = stage.get("duration_ns")
-            gap_str = (
-                f"{gap_ms:8.2f}ms"
-                if gap_ms is not None
-                else "        —"
-            )
-            recorded_str = (
-                f"{recorded_ns / 1e6:.2f}ms"
-                if recorded_ns is not None
-                else "—"
-            )
-            bar_len = int(min((gap_ms or 0) / 5, 40))
-            bar = "▓" * bar_len
-            colour = (
-                RED
-                if (gap_ms or 0) > 100
-                else YELLOW if (gap_ms or 0) > 20 else GREEN
-            )
-            print(
-                c(f"  gap {gap_str}  ", WHITE)
-                + c(f"{bar:<40}", colour)
-                + c(f"  {stage.get('probe', '?')}", BOLD)
-                + c(
-                    f"  {stage.get('service', '?')}::{stage.get('name', '?')}",
-                    DIM,
+            gap = stage.get("duration_ms")
+            recorded = stage.get("duration_ns")
+            context = " · ".join(
+                value
+                for value in (
+                    (
+                        f"pid={stage['pid']}"
+                        if stage.get("pid") is not None
+                        else ""
+                    ),
+                    (
+                        f"tid={stage['tid']}"
+                        if stage.get("tid") is not None
+                        else ""
+                    ),
+                    (
+                        f"span={stage['span_id']}"
+                        if stage.get("span_id")
+                        else ""
+                    ),
+                    (
+                        f"parent={stage['parent_span_id']}"
+                        if stage.get("parent_span_id")
+                        else ""
+                    ),
                 )
+                if value
             )
-            identity = []
-            if stage.get("pid") is not None:
-                identity.append(f"pid={stage['pid']}")
-            if stage.get("tid") is not None:
-                identity.append(f"tid={stage['tid']}")
-            if stage.get("span_id"):
-                identity.append(f"span={stage['span_id']}")
-            if stage.get("parent_span_id"):
-                identity.append(
-                    f"parent={stage['parent_span_id']}"
-                )
-            if identity or recorded_ns is not None:
-                print(
-                    c(
-                        "      "
-                        + " · ".join(
-                            identity
-                            + [f"recorded={recorded_str}"]
-                        ),
-                        DIM,
-                    )
-                )
-            _render_observation_metadata(
-                stage.get("metadata"), indent="      "
+            rows.append(
+                {
+                    "gap": (
+                        f"{gap:.2f} ms"
+                        if gap is not None
+                        else "—"
+                    ),
+                    "stage": f"{stage.get('probe', '?')} · {stage.get('service', '?')}::{stage.get('name', '?')}",
+                    "recorded": (
+                        f"{recorded / 1e6:.3f} ms"
+                        if recorded is not None
+                        else "—"
+                    ),
+                    "context": context or "—",
+                    "details": (
+                        _format_value(stage.get("metadata"))
+                        if stage.get("metadata")
+                        else "—"
+                    ),
+                }
             )
-            total += gap_ms or 0
+            total += gap or 0
+        _render_table(
+            rows,
+            column_colors={
+                "stage": CYAN,
+                "context": YELLOW,
+                "details": DIM,
+            },
+            latency_columns={"gap", "recorded"},
+            prefer_table=True,
+        )
         print(
             c(
-                f"\n  Sum of reported inter-event gaps: {total:.2f}ms  ·  {len(path)} stages",
+                f"  Sum of reported inter-event gaps: {total:.2f} ms · {len(path)} stages",
                 BOLD,
                 CYAN,
             )
@@ -437,77 +451,65 @@ def render(result: dict) -> None:
         )
         resolved = d.get("resolved_nodes", [])
         if resolved:
-            print(
-                c(
-                    f"\n  System nodes: {', '.join(resolved)}",
-                    DIM,
-                )
-            )
+            dim(f"  System nodes: {', '.join(resolved)}")
         if not rows:
             dim("No upstream callers found.")
             return
-        print()
-        for row in rows:
-            print(
-                c(f"  {row['call_count']:6}x  ", YELLOW, BOLD)
-                + c(row["caller"], WHITE)
-            )
-        print()
+        _render_table(
+            [
+                {
+                    "caller": row.get("caller", "?"),
+                    "calls": row.get("call_count", 0),
+                }
+                for row in rows
+            ],
+            column_colors={"caller": WHITE, "calls": CYAN},
+            prefer_table=True,
+        )
         return
 
     # SHOW STATUS
     if verb == "STATUS":
-        header("Engine Status")
         assert isinstance(data, dict)
-        for k, v in data.items():
-            print(f"  {c(k, DIM):<30} {c(v, WHITE)}")
-        print()
+        _render_engine_status(data)
         return
 
     # SHOW GRAPH
     if metric == "graph":
         g = data if isinstance(data, dict) else {}
-        nodes = g.get("nodes", [])
-        edges = g.get("edges", [])
+        nodes, edges = g.get("nodes", []), g.get("edges", [])
         print(
             c(
-                f"\n  {len(nodes)} nodes  ·  {len(edges)} edges\n",
+                f"\n  {len(nodes)} nodes · {len(edges)} edges\n",
                 BOLD,
             )
         )
-        for n in nodes:
-            ntype = n.get(
-                "type", n.get("node_type", n.get("service", ""))
-            )
-            print(
-                c(f"  [{ntype:12}]  ", DIM)
-                + c(n["id"], WHITE)
-                + c(f"  ×{n['call_count']}", CYAN)
-            )
-            _render_observation_metadata(
-                n.get("metadata"), indent="      "
-            )
+        _render_node_rows(nodes)
         if edges:
-            print()
-            for e in edges:
-                src = e.get("source", e.get("from", "?"))
-                tgt = e.get("target", e.get("to", "?"))
-                etype = e.get("type", "")
-                cnt = e.get("call_count", e.get("weight", ""))
-                suffix = (
-                    f" [{etype}"
-                    + (f" ×{cnt}" if cnt else "")
-                    + "]"
-                    if etype or cnt
-                    else ""
-                )
-                print(
-                    c(f"  {src}", YELLOW)
-                    + c("  →  ", DIM)
-                    + c(tgt, YELLOW)
-                    + c(suffix, DIM)
-                )
-        print()
+            _render_table(
+                [
+                    {
+                        "source": edge.get(
+                            "source", edge.get("from", "?")
+                        ),
+                        "target": edge.get(
+                            "target", edge.get("to", "?")
+                        ),
+                        "relationship": edge.get("type", "—"),
+                        "calls": edge.get(
+                            "call_count", edge.get("weight", "—")
+                        ),
+                    }
+                    for edge in edges
+                ],
+                column_colors={
+                    "source": YELLOW,
+                    "target": YELLOW,
+                    "relationship": DIM,
+                    "calls": CYAN,
+                },
+                prefer_table=True,
+            )
         return
 
     # LLM content is rendered separately so prompt/response text does not make
@@ -551,7 +553,7 @@ def render(result: dict) -> None:
         if not rows:
             dim("No results.")
             return
-        _render_table(rows)
+        _render_table(rows, prefer_table=True)
         return
 
     # SNAPSHOT result
@@ -560,10 +562,14 @@ def render(result: dict) -> None:
         new_e = len(data.get("added_edges", []))
         label = data.get("label", "")
         header(f"Snapshot {'(' + label + ')' if label else ''}")
-        print(
-            f"  New nodes: {c(new_n, CYAN)}  New edges: {c(new_e, CYAN)}"
+        _render_table(
+            [
+                {"measurement": "new nodes", "count": new_n},
+                {"measurement": "new edges", "count": new_e},
+            ],
+            column_colors={"measurement": CYAN, "count": GREEN},
+            prefer_table=True,
         )
-        print()
         return
 
     # Plain list of strings (e.g. SHOW PROBES, SHOW RULES)
@@ -583,162 +589,431 @@ def render(result: dict) -> None:
         dim("No results.")
         return
 
-    # Fallback: raw JSON
-    print(
-        json.dumps(
-            data if data is not None else result,
-            indent=2,
-            default=str,
-        )
-    )
+    # Render unfamiliar structured responses as field tables instead of raw JSON.
+    fallback = data if data is not None else result
+    if isinstance(fallback, dict):
+        _render_mapping(fallback)
+    elif (
+        isinstance(fallback, list)
+        and fallback
+        and all(isinstance(item, dict) for item in fallback)
+    ):
+        _render_table(fallback, prefer_table=True)
+    else:
+        print(_format_value(fallback))
 
 
 def _render_node_rows(rows: list) -> None:
-    """Print graph nodes with reviewed probe metadata beneath each row."""
+    """Display graph nodes in measurement columns with probe details."""
     if not rows:
         dim("No results.")
         return
-    print()
+    table = []
     for row in rows:
-        print(
-            c(f"  {row.get('service', '?'):12}  ", DIM)
-            + c(str(row.get("id", "?")), WHITE)
-            + c(f"  ×{row.get('call_count', 0)}", CYAN)
-            + c(
-                f"  avg={row.get('avg_ms') if row.get('avg_ms') is not None else '—'}ms",
-                DIM,
+        metadata = row.get("metadata")
+        details = (
+            " · ".join(
+                f"{key.replace('_', ' ')}={_format_value(value)}"
+                for key, value in metadata.items()
             )
+            if isinstance(metadata, dict)
+            else "—"
         )
-        _render_observation_metadata(
-            row.get("metadata"), indent="      "
+        avg = row.get("avg_ms")
+        table.append(
+            {
+                "service": row.get(
+                    "service", row.get("type", "?")
+                ),
+                "node": row.get("id", "?"),
+                "calls": row.get("call_count", 0),
+                "avg": (
+                    f"{avg:.2f} ms"
+                    if isinstance(avg, (int, float))
+                    else "—"
+                ),
+                "details": details or "—",
+            }
         )
+    _render_table(
+        table,
+        column_colors={
+            "service": CYAN,
+            "node": WHITE,
+            "calls": CYAN,
+            "details": DIM,
+        },
+        latency_columns={"avg"},
+        prefer_table=True,
+    )
+
+
+def _render_engine_status(
+    data: dict, *, connected: bool = False
+) -> None:
+    """Render worker health as a compact, readable status summary."""
+    print()
+    if connected:
+        ok("Engine Status")
+    else:
+        header("Engine Status")
+
+    active_probes = data.get("probes_active", [])
+    active_count: int | str
+    if isinstance(active_probes, (list, tuple)):
+        probe_names = (
+            ", ".join(str(name) for name in active_probes)
+            or "none"
+        )
+        active_count = len(active_probes)
+    else:
+        probe_names = str(active_probes)
+        active_count = "?"
+    probe_total = data.get("probes_total", "?")
+
+    rows = [
+        {
+            "area": "Process",
+            "details": (
+                f"PID {data.get('pid', '?')} · "
+                f"uptime {data.get('uptime', 'unknown')}"
+            ),
+        },
+        {
+            "area": "Socket",
+            "details": str(data.get("socket", "?")),
+        },
+        {
+            "area": "Graph",
+            "details": (
+                f"{data.get('graph_nodes', '?')} nodes · "
+                f"{data.get('graph_edges', '?')} edges · "
+                f"{data.get('semantic_labels', '?')} semantic labels"
+            ),
+        },
+        {
+            "area": "Probes",
+            "details": (
+                f"{active_count} active / {probe_total} total · "
+                f"{probe_names}"
+            ),
+        },
+        {
+            "area": "Requests",
+            "details": f"{data.get('active_requests', '?')} active",
+        },
+        {
+            "area": "Events",
+            "details": f"{data.get('event_log_size', '?')} retained",
+        },
+    ]
+    _render_table(
+        rows,
+        column_colors={"area": CYAN, "details": WHITE},
+        prefer_table=True,
+    )
     print()
 
 
 def _render_observation_metadata(
     metadata, indent: str = "  "
 ) -> None:
-    """Print the reviewed operational metadata attached to an observation."""
-    if not isinstance(metadata, dict) or not metadata:
-        return
-    rendered = json.dumps(
-        metadata, ensure_ascii=False, default=str
-    )
-    print(c(f"{indent}details: {rendered}", DIM))
+    """Render nested observation metadata as readable field/value tables."""
+    if isinstance(metadata, dict) and metadata:
+        _render_mapping(metadata, indent=indent)
+
+
+def _format_value(value) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, dict):
+        return ", ".join(
+            f"{key}: {_format_value(item)}"
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple, set)):
+        return (
+            ", ".join(_format_value(item) for item in value)
+            or "—"
+        )
+    return str(value)
+
+
+def _render_mapping(mapping: dict, indent: str = "  ") -> None:
+    rows: list[dict[str, str]] = []
+    for key, value in mapping.items():
+        label = str(key).replace("_", " ")
+        if isinstance(value, dict):
+            if rows:
+                _render_table(
+                    rows,
+                    indent=indent,
+                    column_colors={
+                        "field": CYAN,
+                        "value": WHITE,
+                    },
+                    prefer_table=True,
+                )
+                rows = []
+            print(c(f"{indent}{label}", BOLD, DIM))
+            _render_mapping(value, indent=indent + "  ")
+        elif (
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, dict) for item in value)
+        ):
+            if rows:
+                _render_table(
+                    rows,
+                    indent=indent,
+                    column_colors={
+                        "field": CYAN,
+                        "value": WHITE,
+                    },
+                    prefer_table=True,
+                )
+                rows = []
+            print(c(f"{indent}{label}", BOLD, DIM))
+            _render_table(
+                value, indent=indent + "  ", prefer_table=True
+            )
+        else:
+            rows.append(
+                {"field": label, "value": _format_value(value)}
+            )
+    if rows:
+        _render_table(
+            rows,
+            indent=indent,
+            column_colors={"field": CYAN, "value": WHITE},
+            prefer_table=True,
+        )
 
 
 def _render_events(rows: list) -> None:
-    """Print event rows with timing, process lineage, and safe metadata."""
+    """Display event rows with measurements and trace/process context."""
     if not rows:
         dim("No results.")
         return
-    print()
+    table = []
     for row in rows:
-        timestamp = row.get("ts") or row.get("wall_time")
-        event_time = (
-            time.strftime("%H:%M:%S", time.localtime(timestamp))
-            if timestamp
-            else "--:--:--"
-        )
-        duration_ns = row.get("duration_ns")
-        duration = (
-            f"{duration_ns / 1e6:.3f}ms"
-            if duration_ns is not None
-            else "—"
-        )
-        identity_parts = [
-            (
-                f"pid={row['pid']}"
-                if row.get("pid") is not None
-                else None
-            ),
-            (
-                f"tid={row['tid']}"
-                if row.get("tid") is not None
-                else None
-            ),
-        ]
-        identity = " · ".join(
-            value for value in identity_parts if value
-        )
-        print(
-            c(f"  {event_time}  ", DIM)
-            + c(f"{row.get('probe', '?')}  ", BOLD)
-            + c(
-                f"{row.get('service', '?')}::{row.get('name', '?')}  ",
-                WHITE,
+        ts = row.get("ts") or row.get("wall_time")
+        context = " · ".join(
+            value
+            for value in (
+                (
+                    f"pid={row['pid']}"
+                    if row.get("pid") is not None
+                    else ""
+                ),
+                (
+                    f"tid={row['tid']}"
+                    if row.get("tid") is not None
+                    else ""
+                ),
+                (
+                    f"trace={row['trace_id']}"
+                    if row.get("trace_id")
+                    else ""
+                ),
+                (
+                    f"span={row['span_id']}"
+                    if row.get("span_id")
+                    else ""
+                ),
+                (
+                    f"parent={row['parent_span_id']}"
+                    if row.get("parent_span_id")
+                    else ""
+                ),
             )
-            + c(duration, CYAN)
-            + (c(f"  {identity}", DIM) if identity else "")
+            if value
         )
-        lineage_parts = [
-            (
-                f"trace={row.get('trace_id')}"
-                if row.get("trace_id")
-                else None
-            ),
-            (
-                f"span={row.get('span_id')}"
-                if row.get("span_id")
-                else None
-            ),
-            (
-                f"parent={row.get('parent_span_id')}"
-                if row.get("parent_span_id")
-                else None
-            ),
-        ]
-        lineage = " · ".join(
-            value for value in lineage_parts if value
+        duration = row.get("duration_ns")
+        table.append(
+            {
+                "time": (
+                    time.strftime("%H:%M:%S", time.localtime(ts))
+                    if ts
+                    else "—"
+                ),
+                "event": f"{row.get('probe', '?')} · {row.get('service', '?')}::{row.get('name', '?')}",
+                "duration": (
+                    f"{duration / 1e6:.3f} ms"
+                    if duration is not None
+                    else "—"
+                ),
+                "context": context or "—",
+                "details": (
+                    _format_value(row.get("metadata"))
+                    if row.get("metadata")
+                    else "—"
+                ),
+            }
         )
-        if lineage:
-            print(c(f"      {lineage}", DIM))
-        _render_observation_metadata(
-            row.get("metadata"), indent="      "
-        )
-    print()
+    _render_table(
+        table,
+        column_colors={
+            "time": DIM,
+            "event": CYAN,
+            "context": YELLOW,
+            "details": DIM,
+        },
+        latency_columns={"duration"},
+        prefer_table=True,
+    )
 
 
-def _render_table(rows: list) -> None:
+def _render_table(
+    rows: list,
+    indent: str = "  ",
+    column_colors: dict | None = None,
+    latency_columns: set[str] | None = None,
+    prefer_table: bool = False,
+) -> None:
+    """Render terminal-width-aware aligned columns with colored measurements."""
     if not rows:
         return
-    keys = list(rows[0].keys())
-    widths = {
-        k: max(len(k), max(len(str(r.get(k, ""))) for r in rows))
-        for k in keys
+    keys = list(
+        dict.fromkeys(key for row in rows for key in row)
+    )
+    cells = {
+        key: [_format_value(row.get(key)) for row in rows]
+        for key in keys
     }
+    if not prefer_table and any(
+        len(value) > 36
+        for values in cells.values()
+        for value in values
+    ):
+        for index, row in enumerate(rows, start=1):
+            if len(rows) > 1:
+                print(c(f"{indent}row {index}", DIM))
+            _render_mapping(
+                row,
+                indent=indent + ("  " if len(rows) > 1 else ""),
+            )
+        return
+    headings = {
+        key: str(key).replace("_", " ").upper() for key in keys
+    }
+    minimums = {
+        "time": 8,
+        "event": 22,
+        "stage": 22,
+        "probe": 18,
+        "operation": 16,
+        "duration": 10,
+        "gap": 10,
+        "recorded": 10,
+        "service": 8,
+        "node": 18,
+        "calls": 5,
+        "avg": 8,
+        "context": 18,
+        "details": 7,
+    }
+    widths = {
+        key: max(
+            len(headings[key]),
+            minimums.get(key, 0),
+            min(
+                36,
+                max(
+                    (len(value) for value in cells[key]),
+                    default=0,
+                ),
+            ),
+        )
+        for key in keys
+    }
+    width_limit = max(
+        sum(len(value) for value in headings.values()),
+        shutil.get_terminal_size(fallback=(120, 24)).columns
+        - len(indent)
+        - 2 * max(len(keys) - 1, 0),
+    )
+    while sum(widths.values()) > width_limit:
+        candidates = [
+            key
+            for key in keys
+            if widths[key]
+            > max(len(headings[key]), minimums.get(key, 0))
+        ]
+        if not candidates:
+            break
+        widest = max(
+            candidates,
+            key=lambda key: widths[key] - len(headings[key]),
+        )
+        widths[widest] -= 1
 
+    def wrap_cell(value: str, width: int) -> list[str]:
+        return textwrap.wrap(
+            value,
+            width=width,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+
+    column_colors = column_colors or {}
+    latency_columns = latency_columns or set()
     print()
-    header_line = "  " + "  ".join(
-        c(k.upper().replace("_", " "), BOLD, DIM).ljust(
-            widths[k] + 11
-        )
-        for k in keys
-    )
-    print(header_line)
     print(
-        c(
-            "  "
-            + "─" * (sum(widths.values()) + len(keys) * 2 + 2),
-            DIM,
+        indent
+        + "  ".join(
+            c(headings[key].ljust(widths[key]), BOLD, DIM)
+            for key in keys
         )
     )
-
-    for row in rows:
-        parts = []
-        for k in keys:
-            val = str(row.get(k, "—"))
-            try:
-                f = float(val)
-                colour = (
-                    RED
-                    if f > 100
-                    else YELLOW if f > 20 else GREEN
+    print(indent + "  ".join("─" * widths[key] for key in keys))
+    for row_index in range(len(rows)):
+        lines = [
+            wrap_cell(cells[key][row_index], widths[key])
+            for key in keys
+        ]
+        for line_index in range(
+            max(len(value) for value in lines)
+        ):
+            rendered = []
+            for key, wrapped in zip(keys, lines):
+                value = (
+                    wrapped[line_index]
+                    if line_index < len(wrapped)
+                    else ""
                 )
-                parts.append(c(val.ljust(widths[k]), colour))
-            except ValueError:
-                parts.append(val.ljust(widths[k]))
-        print("  " + "  ".join(parts))
+                padded = value.ljust(widths[key])
+                if key in latency_columns:
+                    try:
+                        number = float(
+                            cells[key][row_index].split()[0]
+                        )
+                        color = (
+                            RED
+                            if number > 100
+                            else YELLOW if number > 20 else GREEN
+                        )
+                        rendered.append(c(padded, color))
+                    except (TypeError, ValueError):
+                        rendered.append(c(padded, DIM))
+                elif key in column_colors:
+                    rendered.append(
+                        c(padded, column_colors[key])
+                    )
+                else:
+                    try:
+                        number = float(value)
+                        color = (
+                            RED
+                            if number > 100
+                            else YELLOW if number > 20 else GREEN
+                        )
+                        rendered.append(c(padded, color))
+                    except ValueError:
+                        rendered.append(padded)
+            print(indent + "  ".join(rendered))
     print()
 
 
@@ -797,10 +1072,12 @@ def _render_tool_content(rows: list) -> None:
 
 # Meta-command handlers
 def cmd_status(sock_path: str) -> None:
+    """Display live worker identity, uptime, graph size, and activity."""
     render(query(sock_path, "SHOW STATUS"))
 
 
 def cmd_probes(sock_path: str) -> None:
+    """List probe adapters registered with the selected worker."""
     result = query(sock_path, "SHOW PROBES")
     if not result.get("ok"):
         warn(
@@ -813,12 +1090,16 @@ def cmd_probes(sock_path: str) -> None:
     if not data:
         dim("None registered")
         return
-    for name in data if isinstance(data, list) else [data]:
-        ok(str(name))
-    print()
+    entries = data if isinstance(data, list) else [data]
+    _render_table(
+        [{"probe": str(item)} for item in entries],
+        column_colors={"probe": CYAN},
+        prefer_table=True,
+    )
 
 
 def cmd_rules(sock_path: str) -> None:
+    """List causal rules registered with the selected worker."""
     result = query(sock_path, "SHOW RULES")
     if not result.get("ok"):
         warn(
@@ -831,12 +1112,16 @@ def cmd_rules(sock_path: str) -> None:
     if not data:
         dim("None registered")
         return
-    for name in data if isinstance(data, list) else [data]:
-        ok(str(name))
-    print()
+    entries = data if isinstance(data, list) else [data]
+    _render_table(
+        [{"rule": str(item)} for item in entries],
+        column_colors={"rule": CYAN},
+        prefer_table=True,
+    )
 
 
 def cmd_semantic(sock_path: str) -> None:
+    """List semantic aliases and their descriptions."""
     result = query(sock_path, "SHOW SEMANTIC")
     if not result.get("ok"):
         warn(
@@ -849,21 +1134,29 @@ def cmd_semantic(sock_path: str) -> None:
     if not data:
         dim("None registered")
         return
-    for entry in data if isinstance(data, list) else [data]:
-        if isinstance(entry, dict):
-            label = entry.get("label", "")
-            desc = entry.get("description", "")
-            print(f"  {c(label, BOLD, CYAN):<20} {c(desc, DIM)}")
-        else:
-            print(f"  {c(entry, WHITE)}")
-    print()
+    entries = data if isinstance(data, list) else [data]
+    _render_table(
+        [
+            (
+                {
+                    "alias": item.get("label", ""),
+                    "description": item.get("description", ""),
+                }
+                if isinstance(item, dict)
+                else {"alias": str(item), "description": "—"}
+            )
+            for item in entries
+        ],
+        column_colors={"alias": CYAN, "description": DIM},
+        prefer_table=True,
+    )
 
 
 def cmd_emit(sock_path: str, args: str) -> None:
-    """
-    Inject a synthetic event into the live engine.
-    Usage: \\emit <probe> <service> <name>
-    Mirrors the original cmd_emit signature exactly - same three-part syntax.
+    r"""Request a synthetic event injection when supported by the socket server.
+
+    Usage: ``\emit <probe> <service> <name>``. If the server does not support
+    ``INJECT``, the command reports that no event was emitted.
     """
     parts = args.split()
     if len(parts) < 3:
@@ -897,7 +1190,10 @@ def cmd_emit(sock_path: str, args: str) -> None:
 
 
 def cmd_snapshot(sock_path: str, args: str) -> None:
-    """Ask the live engine to capture a temporal diff snapshot."""
+    """Request a temporal graph snapshot if the socket server supports it.
+
+    The current local query server may report SNAPSHOT as unavailable.
+    """
     label = args.strip()
     result = query(
         sock_path, f"SNAPSHOT {label}" if label else "SNAPSHOT"
@@ -912,86 +1208,190 @@ def cmd_snapshot(sock_path: str, args: str) -> None:
 
 
 def cmd_help() -> None:
-    header("DSL Commands")
-    queries = [
+    header("Query DSL")
+    groups = [
         (
-            'SHOW latency WHERE service = "django"',
-            "Latency by node, filtered",
+            "Graph and measurements",
+            [
+                (
+                    'SHOW latency WHERE service = "django"',
+                    "Node call counts and average durations",
+                ),
+                (
+                    'SHOW nodes WHERE service = "nginx" LIMIT 20',
+                    "Node inventory, including probe details",
+                ),
+                (
+                    "SHOW edges",
+                    "Relationships and edge measurements",
+                ),
+                (
+                    'SHOW graph WHERE system = "worker"',
+                    "Nodes and edges in a semantic scope",
+                ),
+                (
+                    "HOTSPOT TOP 10",
+                    "Highest call-count operations",
+                ),
+            ],
         ),
         (
-            'SHOW latency WHERE system = "export"',
-            "Latency scoped to semantic alias",
+            "Events and traces",
+            [
+                (
+                    'SHOW events WHERE probe = "django.db.query" LIMIT 20',
+                    "Recent matching events with timing and trace context",
+                ),
+                (
+                    'SHOW path WHERE trace_id = "<trace-id>"',
+                    "Ordered event path for one trace",
+                ),
+                (
+                    "TRACE <trace-id>",
+                    "Trace event timeline, gap and recorded durations",
+                ),
+                (
+                    'SHOW llm_content WHERE trace_id = "<trace-id>"',
+                    "Captured LLM prompt and response previews",
+                ),
+                (
+                    'SHOW tool_content WHERE trace_id = "<trace-id>"',
+                    "Captured tool arguments, results, and errors",
+                ),
+            ],
         ),
-        ("SHOW graph", "Full runtime graph"),
         (
-            'SHOW graph WHERE system = "worker"',
-            "Subgraph for a system",
+            "Diagnosis and change history",
+            [
+                (
+                    "CAUSAL",
+                    "Evaluate all registered causal rules",
+                ),
+                (
+                    'CAUSAL WHERE tags = "blocking,celery"',
+                    "Evaluate rules matching the supplied tags",
+                ),
+                (
+                    'BLAME WHERE system = "database"',
+                    "Find upstream callers of a system or component",
+                ),
+                (
+                    "DIFF SINCE deployment",
+                    "Show graph changes since a label or timestamp",
+                ),
+                (
+                    "SHOW changes",
+                    "Show the latest graph changes",
+                ),
+            ],
         ),
         (
-            'SHOW events WHERE probe = "db.query.start" LIMIT 20',
-            "Raw event log",
-        ),
-        ("HOTSPOT TOP 10", "Busiest nodes by call count"),
-        ("CAUSAL", "Run all causal rules"),
-        (
-            'CAUSAL WHERE tags = "blocking,celery"',
-            "Filtered causal rules",
-        ),
-        (
-            'BLAME WHERE system = "export"',
-            "Upstream callers of a system",
-        ),
-        (
-            "DIFF SINCE deployment",
-            "Graph changes after named event",
-        ),
-        ("TRACE <trace_id>", "Reconstruct critical path"),
-        (
-            "\\stitch <trace_id>",
-            "Stitch trace across ALL worker processes",
+            "Engine inventory",
+            [
+                (
+                    "SHOW status",
+                    "Worker identity, uptime, graph, probes, and activity",
+                ),
+                (
+                    "SHOW active",
+                    "Requests currently tracked as in flight",
+                ),
+                ("SHOW probes", "Registered probe adapters"),
+                ("SHOW rules", "Registered causal rules"),
+                (
+                    "SHOW semantic",
+                    "Semantic aliases and descriptions",
+                ),
+            ],
         ),
     ]
-    for q, desc in queries:
-        print(f"  {c(q, CYAN)}")
-        print(c(f"    {desc}", DIM))
-    print()
+    for title, queries in groups:
+        print(c(f"\n  {title}", BOLD, CYAN))
+        for query_text, description in queries:
+            print(f"  {c(query_text, CYAN)}")
+            print(c(f"    {description}", DIM))
+
+    print(c("\n  Filters", BOLD, CYAN))
+    print(
+        c(
+            "    SHOW filters: service, system, node, probe, trace_id",
+            DIM,
+        )
+    )
+    print(
+        c(
+            "    Use LIMIT N on row-based SHOW queries; combine filters with AND.",
+            DIM,
+        )
+    )
+
     header("REPL Commands")
-    cmds = [
-        ("\\status", "Engine stats (graph size, uptime, etc.)"),
-        ("\\probes", "List registered probe adapters"),
-        ("\\rules", "List registered causal rules"),
-        ("\\semantic", "List semantic aliases"),
+    commands = [
+        (r"\status", "Show live engine and worker statistics"),
         (
-            "\\emit <probe> <svc> <name>",
-            "Inject a synthetic event into the live engine",
+            r"\active",
+            "Show in-flight requests (same data as SHOW active)",
         ),
         (
-            "\\snapshot [label]",
-            "Capture a temporal diff snapshot",
+            r"\probes / \rules / \semantic",
+            "List registered instrumentation and aliases",
         ),
         (
-            "\\active",
-            "In-flight requests currently being traced",
+            r"\stitch <trace-id>",
+            "Query all local workers for a trace and combine their event rows",
         ),
-        ("\\reconnect", "Pick a different worker socket"),
-        ("\\help", "This message"),
-        ("\\quit  or  Ctrl+C", "Exit"),
+        (r"\reconnect", "Choose a worker socket again"),
+        (r"\help", "Show this command guide"),
+        (r"\quit or Ctrl+C", "Exit the REPL"),
     ]
-    for cmd, desc in cmds:
-        print(f"  {c(cmd, YELLOW):<45} {c(desc, DIM)}")
+    for command, description in commands:
+        print(f"  {c(command, YELLOW)}")
+        print(c(f"    {description}", DIM))
+
+    print(c("\n  Optional socket commands", BOLD, CYAN))
+    print(
+        c(
+            r"    \emit <probe> <service> <name>   Inject an event if the server supports it.",
+            DIM,
+        )
+    )
+    print(
+        c(
+            r"    \snapshot [label]                Capture a snapshot if the server supports it.",
+            DIM,
+        )
+    )
+
+    print(c("\n  Notes", BOLD, CYAN))
+    print(
+        c(
+            "    TRACE gap is elapsed time between events; recorded duration is separate.",
+            DIM,
+        )
+    )
+    print(
+        c(
+            "    STITCH does not calculate one combined wall duration across workers.",
+            DIM,
+        )
+    )
+    print(
+        c(
+            "    LLM/tool content appears only when capture was enabled before worker startup.",
+            DIM,
+        )
+    )
     print()
 
 
 def cmd_stitch(trace_id: str) -> None:
-    """
-    Query every live worker socket for the same trace_id and print
-    a unified timeline across all processes, ordered by timestamp.
+    r"""Query all live local worker sockets for one trace and show their events.
 
-    This is the cross-process flow: one HTTP request, one Celery task,
-    two processes, one trace. The trace_id is the thread connecting them.
+    Rows are ordered by timestamp. Recorded durations and inter-event gaps
+    remain separate measurements; the command does not infer a combined
+    cross-worker wall duration.
 
-    Usage:
-        \\stitch abc123-...
+    Usage: ``\stitch <trace-id>``
     """
     if not trace_id:
         err("Usage: \\stitch <trace_id>")
@@ -1047,62 +1447,71 @@ def cmd_stitch(trace_id: str) -> None:
     )
     print()
 
-    # Group label per pid so the reader sees process boundaries clearly
-    prev_pid = None
-    total = 0
-
+    stitch_rows = []
+    total = 0.0
     for stage in all_stages:
-        pid = stage.get("_pid", "?")
+        gap = stage.get("duration_ms")
+        recorded = stage.get("duration_ns")
         probe = stage.get("probe", "?")
-        service = stage.get("service", "?")
-        name = stage.get("name", "?")
-        dur = stage.get("duration_ms")
-
-        # Print process boundary header when we cross into a new process
-        if pid != prev_pid:
-            print(
-                c(
-                    f"  ── pid={pid} ({'celery worker' if 'celery' in probe else 'gunicorn worker'}) ──",
-                    DIM,
-                )
+        timestamp = stage.get("timestamp")
+        context = " · ".join(
+            value
+            for value in (
+                (
+                    f"span={stage['span_id']}"
+                    if stage.get("span_id")
+                    else ""
+                ),
+                (
+                    f"parent={stage['parent_span_id']}"
+                    if stage.get("parent_span_id")
+                    else ""
+                ),
+                (
+                    _format_value(stage.get("metadata"))
+                    if stage.get("metadata")
+                    else ""
+                ),
             )
-            prev_pid = pid
-
-        dur_str = (
-            f"{dur:8.2f}ms" if dur is not None else "        —"
+            if value
         )
-        bar_len = int(min((dur or 0) / 5, 40))
-        bar = "▓" * bar_len
-        colour = (
-            RED
-            if (dur or 0) > 100
-            else YELLOW if (dur or 0) > 20 else GREEN
+        stitch_rows.append(
+            {
+                "time": (
+                    time.strftime(
+                        "%H:%M:%S", time.localtime(timestamp)
+                    )
+                    if timestamp
+                    else "—"
+                ),
+                "worker": stage.get("_pid", "?"),
+                "gap": (
+                    f"{gap:.2f} ms" if gap is not None else "—"
+                ),
+                "event": f"{probe} · {stage.get('service', '?')}::{stage.get('name', '?')}",
+                "recorded": (
+                    f"{recorded / 1e6:.3f} ms"
+                    if recorded is not None
+                    else "—"
+                ),
+                "context": context or "—",
+            }
         )
-
-        print(
-            c(f"  gap {dur_str}  ", WHITE)
-            + c(f"{bar:<40}", colour)
-            + c(f"  {probe}", BOLD)
-            + c(f"  {service}::{name}", DIM)
-        )
-        recorded_ns = stage.get("duration_ns")
-        if recorded_ns is not None:
-            print(
-                c(
-                    f"      recorded={recorded_ns / 1e6:.3f}ms",
-                    DIM,
-                )
-            )
-        _render_observation_metadata(
-            stage.get("metadata"), indent="      "
-        )
-        total += dur or 0
-
+        total += gap or 0
+    _render_table(
+        stitch_rows,
+        column_colors={
+            "time": DIM,
+            "worker": CYAN,
+            "event": CYAN,
+            "context": YELLOW,
+        },
+        latency_columns={"gap", "recorded"},
+        prefer_table=True,
+    )
     print(
         c(
-            f"\n  Sum of reported inter-event gaps: {total:.2f}ms  ·  "
-            f"{len(all_stages)} stages  ·  "
-            f"{len(found_in)} process(es)\n",
+            f"  Sum of reported inter-event gaps: {total:.2f} ms · {len(all_stages)} events · {len(found_in)} process(es)",
             BOLD,
             CYAN,
         )
@@ -1137,24 +1546,9 @@ def main():
     # Quick health check on connect
     status = query(sock_path, "SHOW STATUS")
     if status.get("ok"):
-        d = status["data"]["data"]
-        print()
-        ok("  Engine Status")
-        dim(
-            f"  pid={d.get('pid', '?')} · socket={d.get('socket', '?')}  ·  uptime={d.get('uptime', '?')}"
+        _render_engine_status(
+            status["data"]["data"], connected=True
         )
-        print()
-        dim(
-            f"  Graph      {d.get('graph_nodes', '?')} nodes  ·  {d.get('graph_edges', '?')} edges  ·  {d.get('semantic_labels', '?')} semantic labels"
-        )
-        dim(
-            f"  Probes     {d.get('probes_active', '?')} active / {d.get('probes_total', '?')} total"
-        )
-        dim(
-            f"  Requests   {d.get('active_requests', '?')} active"
-        )
-        dim(f"  Events     {d.get('event_log_size', '?')} total")
-        print()
 
     while True:
         try:

@@ -1,5 +1,3 @@
-"""Causal rules for outbound HTTP dependency observations."""
-
 from typing import Dict, Optional, Tuple
 
 from origintracer.core.active_requests import (
@@ -64,7 +62,7 @@ EXTERNAL_DEPENDENCY_TIMEOUT = CausalRule(
 def register(
     registry: type[PatternRegistry] = PatternRegistry,
 ) -> None:
-    """Register rules supported by the core external HTTP probe."""
+    """Register the external HTTP dependency rule with a rule registry."""
     registry.register(EXTERNAL_DEPENDENCY_TIMEOUT)
 
 

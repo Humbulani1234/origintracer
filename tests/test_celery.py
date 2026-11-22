@@ -1,11 +1,10 @@
 from types import SimpleNamespace
 
-from probes import celery_probe
-from rules.celery_rules import (
+from applications.celery.probes import celery_probe
+from applications.celery.rules.celery_rules import (
     CELERY_TASK_DURATION_SPIKE,
     SYNC_DB_IN_CELERY,
 )
-
 from origintracer.context.vars import (
     get_trace_id,
     reset_trace,

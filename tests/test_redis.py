@@ -1,8 +1,13 @@
+import importlib
+
 import pytest
-import redis
-from probes import redis_probe
 
 from origintracer.context.vars import reset_trace, set_trace
+
+redis = pytest.importorskip("redis")
+redis_probe = importlib.import_module(
+    "applications.celery.probes.redis_probe"
+)
 
 
 def test_redis_command_probe_records_success_without_connecting(
