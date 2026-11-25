@@ -951,13 +951,23 @@ _default_assessor_without_hypotheses = (
 @lru_cache(maxsize=32)
 @no_type_check
 def _planner_for_tools(tool_names: tuple[str, ...]) -> Any:
-    """Bind plan tool fields to the current compact catalog's names."""
-    allowed_names = Literal.__getitem__(tool_names or ("",))
+    """Bind available tool names into the plan schema where the provider allows.
+
+    Tool-name enums constrain the planner to tools available for this run.
+    Gemini can reject the repeated nested enums as an overly complex schema, so
+    it receives plain strings instead; the graph still filters every planned
+    tool against this run's catalog before execution.
+    """
+    tool_name_type = (
+        str
+        if model_name().partition(":")[0] == "gemini"
+        else Literal.__getitem__(tool_names or ("",))
+    )
     planned_step = create_model(
         "CatalogBoundPlanStep",
         __base__=PlanStep,
         suggested_tools=(
-            list[allowed_names],
+            list[tool_name_type],
             Field(
                 min_length=1,
                 max_length=8,
@@ -971,7 +981,7 @@ def _planner_for_tools(tool_names: tuple[str, ...]) -> Any:
         "CatalogBoundDeliverableDraft",
         __base__=DeliverableDraft,
         suggested_tools=(
-            list[allowed_names],
+            list[tool_name_type],
             Field(min_length=1, max_length=8),
         ),
     )

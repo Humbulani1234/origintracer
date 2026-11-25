@@ -50,13 +50,15 @@ def configured_chat_model(
 
     Unprefixed model names retain the existing Ollama behavior. Groq models
     use ``groq:<model-id>`` with ``GROQ_API_KEY``; Mistral models use
-    ``mistral:<model-id>`` with ``MISTRAL_API_KEY``.
+    ``mistral:<model-id>`` with ``MISTRAL_API_KEY``; Gemini Developer API
+    models use ``gemini:<model-id>`` with ``GEMINI_API_KEY``.
     """
     provider, separator, model = model_spec.partition(":")
     if not separator or provider not in {
         "ollama",
         "groq",
         "mistral",
+        "gemini",
     }:
         provider, model = "ollama", model_spec
     if not model:
@@ -77,11 +79,11 @@ def configured_chat_model(
             **model_options,
         )
 
-    key_name = (
-        "GROQ_API_KEY"
-        if provider == "groq"
-        else "MISTRAL_API_KEY"
-    )
+    key_name = {
+        "groq": "GROQ_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }[provider]
     api_key = os.getenv(key_name, "").strip()
     if not api_key:
         raise ValueError(
@@ -95,9 +97,17 @@ def configured_chat_model(
             api_key=api_key,
             **model_options,
         )
+    if provider == "mistral":
+        return init_chat_model(
+            model,
+            model_provider="mistralai",
+            api_key=api_key,
+            **model_options,
+        )
     return init_chat_model(
         model,
-        model_provider="mistralai",
+        model_provider="google_genai",
         api_key=api_key,
+        vertexai=False,
         **model_options,
     )
