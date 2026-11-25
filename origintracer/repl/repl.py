@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-r"""Interactive terminal client for a running OriginTracer worker.
+r"""
+Interactive terminal client for a running OriginTracer worker.
 
 Start the application with OriginTracer initialized, then run the REPL in a
 second terminal:
@@ -144,12 +145,14 @@ def discover_sockets() -> list[str]:
             except OSError:
                 pass
         except PermissionError:
-            # Process is alive but owned by a privileged user (e.g. gunicorn run with sudo for eBPF access)
-            # The REPL must also be run with elevated privileges to connect to it.
+            # Process is alive but owned by a privileged user
+            # (e.g. gunicorn run with sudo for eBPF access)
+            # The REPL must also be run with elevated privileges to
+            # connect to it.
             print(
                 f"[origintracer] Found socket {path} but cannot access it - "
-                "gunicorn appears to be running with elevated privileges (sudo) "
-                "likely for eBPF access.\n"
+                "gunicorn appears to be running with elevated privileges "
+                "(sudo) likely for eBPF access.\n"
                 "Please restart the REPL with sudo:\n\n"
                 "    sudo python -m origintracer.repl.repl\n"
             )
@@ -264,7 +267,8 @@ def render(result: dict) -> None:
     # TODO: look into this nested nature and simplify
     # Unwrap executor - executor returns {"metric": "...", "data": <payload>}
     # local_server wraps that in {"ok": True, "data": <executor_result>}
-    # So result["data"] is the executor result, and the real payload is inside that.
+    # So result["data"] is the executor result, and the real payload is
+    # inside that.
     if isinstance(data, dict) and "data" in data:
         verb = data.get("verb", "")
         metric = data.get("metric", "")
@@ -406,7 +410,11 @@ def render(result: dict) -> None:
                         if gap is not None
                         else "—"
                     ),
-                    "stage": f"{stage.get('probe', '?')} · {stage.get('service', '?')}::{stage.get('name', '?')}",
+                    "stage": (
+                        f"{stage.get('probe', '?')} · "
+                        f"{stage.get('service', '?')}::"
+                        f"{stage.get('name', '?')}"
+                    ),
                     "recorded": (
                         f"{recorded / 1e6:.3f} ms"
                         if recorded is not None
