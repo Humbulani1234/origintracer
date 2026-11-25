@@ -63,11 +63,6 @@ build/
 .cache/
 # Django application-only probes and rules stay out of the core repository.
 # Core implementations under origintracer/ remain tracked.
-applications/django/probes/
-applications/django/rules/
-agent/
-applications/django/probes/
-applications/django/rules/
 agent/
 applications/django/probes/
 applications/django/rules/

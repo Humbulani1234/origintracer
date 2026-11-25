@@ -63,36 +63,36 @@ jobs:
         run: |
           pytest tests/ -x -q --tb=short
 
-  agent:
-    name: Agent checks (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
+  # agent:
+  #   name: Agent checks (Python ${{ matrix.python-version }})
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       python-version: ["3.11", "3.12"]
 
-    defaults:
-      run:
-        working-directory: agent
+  #   defaults:
+  #     run:
+  #       working-directory: agent
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
 
-      - name: Install agent development dependencies
-        run: pip install -e ".[dev]"
+  #     - name: Install agent development dependencies
+  #       run: pip install -e ".[dev]"
 
-      - name: Black check
-        run: black --check src tests
+  #     - name: Black check
+  #       run: black --check src tests
 
-      - name: Ruff check
-        run: ruff check src tests
+  #     - name: Ruff check
+  #       run: ruff check src tests
 
-      - name: Mypy check
-        run: mypy --config-file pyproject.toml src/origintracer_agent/
+  #     - name: Mypy check
+  #       run: mypy --config-file pyproject.toml src/origintracer_agent/
 
-      - name: Run agent tests
-        run: pytest tests/ -x -q --tb=short
+  #     - name: Run agent tests
+  #       run: pytest tests/ -x -q --tb=short
