@@ -97,7 +97,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8001 --log-level info
 If the host firewall blocks Docker bridge traffic, allow the Agent Server's Docker subnet to reach the backend port, and for the default stack network used by this example:
 
 ```bash
-sudo ufw allow from 172.19.0.0/16 to any port 8001 proto tcp
+sudo ufw allow from <docker network> to any port 8001 proto tcp
 ```
 
 Ollama must likewise accept connections from the container. If it is running on another machine, set `OLLAMA_BASE_URL` to that machine's reachable address.
