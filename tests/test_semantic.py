@@ -440,16 +440,14 @@ class TestLoadFromYaml:
         return f.name
 
     def test_loads_semantic_section(self):
-        path = self._write_yaml(
-            """
+        path = self._write_yaml("""
 semantic:
   - label: payments
     description: Payment processing
     services:
       - stripe
     node_patterns: []
-"""
-        )
+""")
         try:
             layer = load_from_yaml(path)
             assert "payments" in layer
@@ -461,8 +459,7 @@ semantic:
             os.unlink(path)
 
     def test_loads_multiple_labels(self):
-        path = self._write_yaml(
-            """
+        path = self._write_yaml("""
 semantic:
   - label: api
     description: API layer
@@ -472,8 +469,7 @@ semantic:
     description: Database
     services: [postgres]
     node_patterns: []
-"""
-        )
+""")
         try:
             layer = load_from_yaml(path)
             assert "api" in layer
@@ -498,8 +494,7 @@ semantic:
             os.unlink(path)
 
     def test_node_patterns_resolve_correctly(self):
-        path = self._write_yaml(
-            """
+        path = self._write_yaml("""
 semantic:
   - label: export
     description: Export pipeline
@@ -507,8 +502,7 @@ semantic:
     node_patterns:
       - "django::handle_export"
       - "django::flags_client.*"
-"""
-        )
+""")
         try:
             layer = load_from_yaml(path)
             g = _graph(
@@ -539,24 +533,20 @@ class TestMergeYamlConfigs:
         return f.name
 
     def test_merges_semantic_from_two_files(self):
-        path1 = self._write_yaml(
-            """
+        path1 = self._write_yaml("""
 semantic:
   - label: api
     description: API
     services: [django]
     node_patterns: []
-"""
-        )
-        path2 = self._write_yaml(
-            """
+""")
+        path2 = self._write_yaml("""
 semantic:
   - label: payments
     description: Payments
     services: [stripe]
     node_patterns: []
-"""
-        )
+""")
         try:
             merged = merge_yaml_configs(path1, path2)
             labels = {e["label"] for e in merged["semantic"]}
@@ -568,24 +558,20 @@ semantic:
 
     def test_later_file_wins_on_same_label(self):
         """If both files define 'api', the second file's entry wins."""
-        path1 = self._write_yaml(
-            """
+        path1 = self._write_yaml("""
 semantic:
   - label: api
     description: first
     services: []
     node_patterns: []
-"""
-        )
-        path2 = self._write_yaml(
-            """
+""")
+        path2 = self._write_yaml("""
 semantic:
   - label: api
     description: second
     services: []
     node_patterns: []
-"""
-        )
+""")
         try:
             merged = merge_yaml_configs(path1, path2)
             # load_from_dict(merged["semantic"]) — later entry wins

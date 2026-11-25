@@ -82,13 +82,26 @@ def _is_langgraph_tool_node(node: Any) -> bool:
 def _nearest_roots(
     graph: RuntimeGraph, node_id: str, max_depth: int = 20
 ) -> Iterable[GraphNode]:
-    """
-    Yield the nearest owning LangGraph roots found by upstream breadth-first search.
+    """Find the nearest owning LangGraph roots by searching upstream.
 
-    Real callback trees often contain more than two wrapper levels between an LLM
-    and the compiled graph. A bounded BFS follows actual graph edges without
-    assuming a fixed framework nesting depth. Traversal stops beyond the first
-    depth containing roots so a nested graph is attributed to its nearest owner.
+    Real callback trees may contain multiple wrapper levels between a model call and the
+    compiled graph. A bounded breadth-first search follows actual graph edges without
+    assuming a fixed nesting depth. It stops after the first depth containing roots so a
+    nested graph is attributed to its nearest owner.
+
+    Parameters
+    ----------
+    graph : RuntimeGraph
+        Aggregate graph to search.
+    node_id : str
+        Node whose caller chain is traversed.
+    max_depth : int, default=20
+        Maximum number of upstream edges to inspect.
+
+    Yields
+    ------
+    GraphNode
+        LangGraph root nodes found at the nearest upstream depth.
     """
     queue = deque(
         (edge.source, 1) for edge in graph.callers(node_id)
@@ -121,13 +134,26 @@ def _loop_runaway(
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
-    """
-    Detect an LLM node that iterates excessively per owning graph run.
+    """Detect an LLM node that iterates excessively per owning graph run.
 
-    Each unique callback span is counted once by the lineage-aware engine, so the
-    ratio compares logical model invocations with logical outer invocations. The
-    nearest root is discovered from causal edges rather than a fixed parent or
-    grandparent assumption.
+    The lineage-aware engine counts each callback span once, so the ratio compares logical
+    model invocations with logical outer invocations. The owning root is discovered through
+    causal edges rather than an assumed parent or grandparent relationship.
+
+    Parameters
+    ----------
+    graph : RuntimeGraph
+        Aggregate graph containing LangGraph operation nodes.
+    temporal : TemporalStore
+        Temporal history available to causal-rule predicates.
+    tracker : ActiveRequestTracker, optional
+        Active-request state supplied by the rule registry.
+
+    Returns
+    -------
+    Tuple[bool, Dict[str, Any]]
+        Whether the runaway pattern matched and its evidence, including the model
+        node, nearest graph root, call ratio, and average model duration.
     """
     threshold = 8
     hits: List[Dict[str, Any]] = []
@@ -193,13 +219,26 @@ def _agent_latency_hotspot(
     temporal: TemporalStore,
     tracker: Optional[ActiveRequestTracker] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
-    """
-    Detect one LLM or tool node dominating total observed leaf-work time.
+    """Detect one LLM or tool node dominating aggregate leaf-work time.
 
-    Chain durations are normally inclusive of their descendants. Including them
-    with LLM and tool durations would double-count nested time and make the result
-    depend on wrapper depth, so both the denominator and candidates are restricted
-    to leaf work observed by the probe.
+    Chain durations are normally inclusive of their descendants. Including them with LLM and
+    tool durations would double-count nested time, so the denominator and candidate nodes
+    are restricted to leaf work observed by the probe.
+
+    Parameters
+    ----------
+    graph : RuntimeGraph
+        Aggregate graph containing LangGraph operation nodes.
+    temporal : TemporalStore
+        Temporal history available to causal-rule predicates.
+    tracker : ActiveRequestTracker, optional
+        Active-request state supplied by the rule registry.
+
+    Returns
+    -------
+    Tuple[bool, Dict[str, Any]]
+        Whether a hotspot matched and the matching leaf-work nodes with their call
+        counts, average durations, and shares of total leaf-work time.
     """
     threshold_pct = 0.40
     work_nodes = [
@@ -263,7 +302,18 @@ AGENT_LATENCY_HOTSPOT = CausalRule(
 def register(
     registry: type[PatternRegistry] = PatternRegistry,
 ) -> None:
-    """Register this module's rules with a compatible pattern registry."""
+    """Register this module's rules with a compatible pattern registry.
+
+    Parameters
+    ----------
+    registry : type[PatternRegistry], default=PatternRegistry
+        Registry class that receives the LangGraph rules.
+
+    Returns
+    -------
+    None
+        Registers ``LOOP_RUNAWAY`` and ``AGENT_LATENCY_HOTSPOT``.
+    """
     registry.register(LOOP_RUNAWAY)
     registry.register(AGENT_LATENCY_HOTSPOT)
 

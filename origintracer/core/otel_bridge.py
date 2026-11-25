@@ -198,6 +198,10 @@ def span_to_event(
             "otel_span_name": span.name,
             "status_code": status_code,
             "attrs": attrs,
+            # CLIENT spans represent outbound calls. Keep the marker at the
+            # event's top level so dependency rules can consume it without
+            # depending on vendor-specific attribute names.
+            "external": probe == "otel.client",
         },
     )
 

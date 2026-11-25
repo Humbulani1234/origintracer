@@ -6,7 +6,6 @@ URLs hit (all under /tasks/):
     /tasks/cache/<id>/ >> RedisCacheView - redis GET/SET then task
     /tasks/bulk-notify/ >> BulkNotifyView - dispatches many tasks
     /tasks/export/<id>/ >> ExportView - heavy export task
-    /tasks/failing/ >> FailingJobView - intentionally fails (tests error path)
     /tasks/status/ >> StatusView - lightweight poll
 
 Usage:
@@ -16,6 +15,7 @@ Usage:
 """
 
 import argparse
+import json
 import random
 import threading
 import time
@@ -23,7 +23,7 @@ from collections import Counter
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BASE_URL = "http://127.0.0.1:8002"
 DEFAULT_REQUESTS = 100
 DEFAULT_WORKERS = 10
 DEFAULT_DELAY = 0.05
@@ -33,9 +33,8 @@ def build_queue(base: str, total: int) -> list:
     report_ids = list(range(1, 11))
     export_ids = list(range(1, 6))
 
-    # Weight: report and cache most frequent - they exercise the full
-    # django >> redis >> celery path. failing kept rare but present so
-    # the error path appears in the graph.
+    # Weight report and cache most heavily, while ensuring export and
+    # bulk-notify workloads exercise the Celery task patterns.
     pool = []
     for rid in report_ids:
         pool.extend(
@@ -60,7 +59,13 @@ def build_queue(base: str, total: int) -> list:
         )
     pool.extend(
         [
-            (f"{base}/tasks/bulk-notify/", "GET", None),
+            (
+                f"{base}/tasks/bulk-notify/",
+                "POST",
+                json.dumps(
+                    {"user_ids": list(range(1, 11))}
+                ).encode(),
+            ),
         ]
         * 5
     )
@@ -70,13 +75,6 @@ def build_queue(base: str, total: int) -> list:
         ]
         * 5
     )
-    pool.extend(
-        [
-            (f"{base}/tasks/failing/", "GET", None),
-        ]
-        * 2
-    )  # rare - just enough to see error nodes in the graph
-
     queue = []
     while len(queue) < total:
         queue.extend(pool)
@@ -98,7 +96,14 @@ def worker(
             url, method, body = queue.pop(0)
         t0 = time.perf_counter()
         try:
-            req = Request(url, method=method)
+            headers = (
+                {"Content-Type": "application/json"}
+                if body
+                else {}
+            )
+            req = Request(
+                url, data=body, method=method, headers=headers
+            )
             with urlopen(req, timeout=15) as resp:
                 status = resp.status
                 resp.read()

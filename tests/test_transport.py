@@ -292,6 +292,21 @@ class TestUploaderHTTPFlush:
                 FakeTemporal()
             )  # <--- This prevents the AttributeError
 
+            @staticmethod
+            def evaluate():
+                class Match:
+                    @staticmethod
+                    def to_dict():
+                        return {
+                            "rule": "app_local_rule",
+                            "confidence": 0.8,
+                            "explanation": "test match",
+                            "evidence": {"count": 6},
+                            "timestamp": 1.0,
+                        }
+
+                return [Match()]
+
         u.bind_engine(FakeEngine())
         u._last_snapshot_flush_s = 0  # force immediate flush
 
@@ -301,6 +316,30 @@ class TestUploaderHTTPFlush:
             "/api/v1/graph/snapshot" in request["url"]
             for request in requests_made
         )
+        causal_request = next(
+            request
+            for request in requests_made
+            if "/api/v1/causal/report" in request["url"]
+        )
+        assert causal_request["kwargs"]["json"]["matches"] == [
+            {
+                "rule": "app_local_rule",
+                "confidence": 0.8,
+                "explanation": "test match",
+                "evidence": {"count": 6},
+                "timestamp": 1.0,
+            }
+        ]
+        causal_headers = causal_request["kwargs"]["headers"]
+        assert (
+            causal_headers["Authorization"] == "Bearer sk_test"
+        )
+        assert causal_headers[
+            "X-OriginTracer-Worker-PID"
+        ].isdigit()
+        assert causal_headers[
+            "X-OriginTracer-Worker-Instance-ID"
+        ]
         snapshot_request = next(
             request
             for request in requests_made

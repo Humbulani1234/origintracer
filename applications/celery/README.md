@@ -1,7 +1,7 @@
 # OriginTracer - Celery Application
 
-Traces the cross-process path: **django view --> redis (task queue) --> celery worker**. The trace_id travels inside task kwargs (`_trace_id`) across the
-Redis boundary, allowing `\stitch` in the REPL to join both sides into one timeline.
+Traces the cross-process path: **django view --> redis (task queue) --> celery worker**. The Celery probe propagates the active trace ID in task message headers across the
+Redis boundary, allowing `\stitch` in the REPL to join both sides into one timeline. Task arguments stay unchanged.
 
 ---
 
@@ -17,13 +17,13 @@ applications/celery/
 │   └── urls.py
 ├── worker/ << Django app directory (not a celery module)
 │   ├── __init__.py
-│   ├── apps.py << AppConfig.ready() — init() for gunicorn only
+│   ├── apps.py << AppConfig.ready() — init() and mark the Django process
 │   ├── views.py
 │   ├── tasks.py
 │   └── urls.py
 ├── probes/ << user extension probes
 │   ├── __init__.py
-│   ├── celery_probe.py << CeleryProbe - handles fork + task lifecycle
+│   ├── celery_probe.py << CeleryProbe - re-inits and marks forked workers, then observes tasks
 │   └── redis_probe.py << TracedRedis subclass
 ├── origintracer.yaml
 └── gunicorn.conf.py
@@ -130,7 +130,9 @@ class WorkerConfig(AppConfig):
     def ready(self):
         import origintracer
         origintracer.init(debug=True, BASE_DIR / "origintracer.yaml")
-        # Celery worker gets its own init() inside celery_probe._on_worker_fork
+        origintracer.mark_deployment("deployment")
+        # Each Celery prefork worker gets its own init() and deployment marker
+        # inside celery_probe._on_worker_fork.
 ```
 
 ---
@@ -149,14 +151,15 @@ from origintracer.core.event_schema import NormalizedEvent
 
 def _dispatch(task_fn, *args, **kwargs):
     trace_id = get_trace_id()
-    task_fn.delay(*args, _trace_id=trace_id, **kwargs)
     if trace_id:
         emit(NormalizedEvent.now(
             probe="celery.task.dispatch",
             trace_id=trace_id,
-            service="celery",          
+            service="celery",
             name=task_fn.name,
         ))
+    # The Celery probe adds trace context to message headers automatically.
+    task_fn.delay(*args, **kwargs)
 ```
 
 ---

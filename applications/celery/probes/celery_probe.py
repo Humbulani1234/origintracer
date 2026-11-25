@@ -6,7 +6,11 @@ import time
 from typing import Any
 
 import origintracer
-from origintracer.context.vars import reset_trace, set_trace
+from origintracer.context.vars import (
+    get_trace_id,
+    reset_trace,
+    set_trace,
+)
 from origintracer.core.event_schema import (
     NormalizedEvent,
     ProbeTypes,
@@ -27,6 +31,8 @@ ProbeTypes.register_many(
     }
 )
 _task_state: dict[str, dict] = {}
+# Namespaced broker header; task IDs remain separate task-level identifiers.
+_TRACE_HEADER = "origintracer_trace_id"
 
 # Events emitted before fork - drained into each worker's engine after re-init.
 # Same pattern as gunicorn's _pre_fork_events.
@@ -69,6 +75,7 @@ class CeleryProbe(BaseProbe):
     def start(self, **kwargs) -> None:
         try:
             from celery.signals import (
+                before_task_publish,
                 celeryd_after_setup,
                 task_failure,
                 task_postrun,
@@ -83,6 +90,11 @@ class CeleryProbe(BaseProbe):
             )
             return
 
+        # Runs in the producer process while the request/task ContextVar is active.
+        # It carries trace context across the broker without touching task kwargs.
+        before_task_publish.connect(
+            self._on_before_task_publish, weak=False
+        )
         celeryd_after_setup.connect(
             self._on_main_ready, weak=False
         )
@@ -102,6 +114,7 @@ class CeleryProbe(BaseProbe):
     def stop(self, **kwargs) -> None:
         try:
             from celery.signals import (
+                before_task_publish,
                 celeryd_after_setup,
                 task_failure,
                 task_postrun,
@@ -113,6 +126,9 @@ class CeleryProbe(BaseProbe):
         except ImportError:
             return
 
+        before_task_publish.disconnect(
+            self._on_before_task_publish
+        )
         celeryd_after_setup.disconnect(self._on_main_ready)
         task_prerun.disconnect(self._on_task_start)
         task_postrun.disconnect(self._on_task_end)
@@ -122,6 +138,30 @@ class CeleryProbe(BaseProbe):
         worker_process_shutdown.disconnect(self._on_worker_exit)
 
         logger.info("celery probe: signals disconnected")
+
+    def _on_before_task_publish(
+        self, headers: Any = None, **_
+    ) -> None:
+        """Copy the active trace context into the Celery message headers.
+
+        Headers cross the broker boundary without becoming task arguments, so
+        task signatures and business kwargs remain unchanged. Existing explicit
+        trace headers take precedence over ambient context.
+        """
+        trace_id = get_trace_id()
+        if not trace_id or not isinstance(headers, dict):
+            return
+        headers.setdefault(_TRACE_HEADER, trace_id)
+
+    @staticmethod
+    def _request_trace_id(request: Any) -> str | None:
+        headers = getattr(request, "headers", None) or {}
+        trace_id = (
+            headers.get(_TRACE_HEADER)
+            if hasattr(headers, "get")
+            else None
+        )
+        return str(trace_id) if trace_id else None
 
     def _on_main_ready(self, sender, instance, **_) -> None:
         """
@@ -165,6 +205,11 @@ class CeleryProbe(BaseProbe):
             )
             return
 
+        # Each prefork worker gets a fresh OriginTracer process instance and
+        # temporal store. Mark the deployment after that instance is ready so
+        # deployment-relative diffs and rules have a baseline in this worker.
+        origintracer.mark_deployment("deployment")
+
         # Drain MainProcess event into this worker's fresh engine
         _drain_pre_fork_events()
 
@@ -198,8 +243,14 @@ class CeleryProbe(BaseProbe):
         kwargs: dict,
         **_,
     ) -> None:
-        trace_id = kwargs.get("_trace_id") or task_id
+        # The broker header links this task to its producer trace. Fall back to
+        # the Celery task ID for tasks dispatched outside a traced context.
+        trace_id = (
+            self._request_trace_id(task.request) or task_id
+        )
         token = set_trace(trace_id)
+        # Keep the trace active while the task runs so nested task publishes
+        # inherit it; task_postrun restores the previous context.
 
         _task_state[task_id] = {
             "trace_id": trace_id,
@@ -238,7 +289,7 @@ class CeleryProbe(BaseProbe):
         state_data = _task_state.pop(task_id, {})
         trace_id = (
             state_data.get("trace_id")
-            or kwargs.get("_trace_id")
+            or self._request_trace_id(task.request)
             or task_id
         )
         t0 = state_data.get("t0")
@@ -270,10 +321,13 @@ class CeleryProbe(BaseProbe):
     def _on_task_retry(
         self, request: Any, reason: Any, einfo: Any, **_
     ) -> None:
+        # Retry signals carry the original request headers; use the propagated
+        # trace ID rather than request.id, which identifies only this task.
         emit(
             NormalizedEvent.now(
                 probe="celery.task.retry",
-                trace_id=request.id,
+                trace_id=self._request_trace_id(request)
+                or request.id,
                 service="celery",
                 name=request.task,
                 task_id=request.id,
@@ -298,11 +352,7 @@ class CeleryProbe(BaseProbe):
         _on_task_end always fires after this and owns cleanup.
         """
         state_data = _task_state.get(task_id, {})
-        trace_id = (
-            state_data.get("trace_id")
-            or kwargs.get("_trace_id")
-            or task_id
-        )
+        trace_id = state_data.get("trace_id") or task_id
         task_name = state_data.get("name", task_id)
 
         emit(

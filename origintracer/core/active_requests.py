@@ -14,6 +14,8 @@ _DEFAULT_TTL_S = 30.0
 _DEFAULT_MAX = 10_000
 _EVICT_PERIOD_S = 5.0
 _COMPLETION_WINDOW = 200  # keep last N completions per pattern for rule evaluation
+_LIFECYCLE_HISTORY = 500
+_LIFECYCLE_UPLOAD_LIMIT = 100
 
 
 @dataclass
@@ -29,6 +31,9 @@ class RequestSpan:
     last_event: float = field(default_factory=time.monotonic)
     complete_time: Optional[float] = None
     probe_sequence: List[str] = field(default_factory=list)
+    started_at: float = field(default_factory=time.time)
+    last_event_at: float = field(default_factory=time.time)
+    event_count: int = 0
 
     @property
     def duration_ms(self) -> Optional[float]:
@@ -110,6 +115,10 @@ class ActiveRequestTracker:
         self._ttl = ttl_s
         self._max = max_size
         self._active: Dict[str, RequestSpan] = {}
+        self._recent_lifecycle: Deque[Dict[str, object]] = (
+            collections.deque(maxlen=_LIFECYCLE_HISTORY)
+        )
+        self._lifecycle_history_evicted = 0
         self._lock = threading.Lock()
         self._alive = True
 
@@ -134,6 +143,55 @@ class ActiveRequestTracker:
     def stop(self) -> None:
         self._alive = False
 
+    def _record_lifecycle_locked(
+        self,
+        span: RequestSpan,
+        state: str,
+        reason: Optional[str] = None,
+        exception_type: Optional[str] = None,
+    ) -> None:
+        """Append one bounded, serializable lifecycle observation.
+
+        Parameters
+        ----------
+        span : RequestSpan
+            Tracked request whose lifecycle changed.
+        state : str
+            Observed lifecycle state.
+        reason : str, optional
+            Reason the tracker recorded the state.
+        exception_type : str, optional
+            Exception class reported by the integration.
+
+        Notes
+        -----
+        The caller must hold ``self._lock``.
+        """
+        if (
+            len(self._recent_lifecycle)
+            == self._recent_lifecycle.maxlen
+        ):
+            self._lifecycle_history_evicted += 1
+        self._recent_lifecycle.append(
+            {
+                "trace_id": span.trace_id,
+                "service": span.service,
+                "pattern": span.pattern,
+                "state": state,
+                "reason": reason,
+                "exception_type": exception_type,
+                "started_at": span.started_at,
+                "ended_at": (
+                    time.time()
+                    if span.complete_time is not None
+                    else None
+                ),
+                "last_event_at": span.last_event_at,
+                "event_count": span.event_count,
+                "duration_ms": span.duration_ms,
+            }
+        )
+
     def start(
         self,
         trace_id: str,
@@ -153,10 +211,18 @@ class ActiveRequestTracker:
             start_time=time.monotonic(),
         )
         with self._lock:
+            previous = self._active.pop(trace_id, None)
+            if previous is not None:
+                self._record_lifecycle_locked(
+                    previous, "evicted", "trace_id_restarted"
+                )
             if len(self._active) >= self._max:
-                # Evict oldest entry - FIFO
+                # Evict oldest entry - FIFO. Record why it stopped being tracked.
                 oldest_key = next(iter(self._active))
-                del self._active[oldest_key]
+                evicted = self._active.pop(oldest_key)
+                self._record_lifecycle_locked(
+                    evicted, "evicted", "tracker_capacity"
+                )
                 logger.debug(
                     "active_requests: cap eviction of %s",
                     oldest_key,
@@ -174,6 +240,8 @@ class ActiveRequestTracker:
             if span is None:
                 return
             span.last_event = time.monotonic()
+            span.last_event_at = time.time()
+            span.event_count += 1
             # Keep probe sequence bounded - first 20 probes only
             if len(span.probe_sequence) < 20:
                 span.probe_sequence.append(probe)
@@ -186,19 +254,94 @@ class ActiveRequestTracker:
         """
         with self._lock:
             span = self._active.pop(trace_id, None)
-        if span is None:
-            return None
-
-        span.complete_time = time.monotonic()
-
-        # Store duration in the per-pattern completions ring buffer
-        if span.duration_ms is not None:
-            with self._lock:
+            if span is None:
+                return None
+            span.complete_time = time.monotonic()
+            span.last_event_at = time.time()
+            self._record_lifecycle_locked(span, "completed")
+            if span.duration_ms is not None:
                 self._completions[span.pattern].append(
                     span.duration_ms
                 )
-
         return span
+
+    def fail(
+        self, trace_id: str, exception_type: Optional[str] = None
+    ) -> Optional[RequestSpan]:
+        """Record that a tracked operation ended with an observed failure.
+
+        Parameters
+        ----------
+        trace_id : str
+            Trace identifier for the tracked operation.
+        exception_type : str, optional
+            Exception class recorded by the integration, if available.
+
+        Returns
+        -------
+        RequestSpan or None
+            The failed span, or ``None`` when it was not tracked.
+        """
+        with self._lock:
+            span = self._active.pop(trace_id, None)
+            if span is None:
+                return None
+            span.complete_time = time.monotonic()
+            span.last_event_at = time.time()
+            self._record_lifecycle_locked(
+                span,
+                "failed",
+                "integration_reported_exception",
+                exception_type,
+            )
+            return span
+
+    def diagnostics(
+        self, limit: int = _LIFECYCLE_UPLOAD_LIMIT
+    ) -> Dict[str, object]:
+        """Return bounded lifecycle evidence for the next runtime heartbeat.
+
+        Parameters
+        ----------
+        limit : int, optional
+            Maximum number of active and recent lifecycle rows to include.
+
+        Returns
+        -------
+        dict[str, object]
+            Active rows, recent terminal states, and flags showing whether
+            either list or the retained history was truncated.
+        """
+        limit = max(1, min(int(limit), _LIFECYCLE_UPLOAD_LIMIT))
+        sampled_at = time.time()
+        with self._lock:
+            active = list(self._active.values())
+            recent = list(self._recent_lifecycle)
+            history_evicted = self._lifecycle_history_evicted
+        active_rows = [
+            {
+                "trace_id": span.trace_id,
+                "service": span.service,
+                "pattern": span.pattern,
+                "state": "active",
+                "started_at": span.started_at,
+                "last_event_at": span.last_event_at,
+                "event_count": span.event_count,
+                "in_flight_ms": round(span.in_flight_ms, 3),
+                "sampled_at": sampled_at,
+            }
+            for span in active[-limit:]
+        ]
+        return {
+            "active": active_rows,
+            "active_truncated": len(active) > limit,
+            "recent": recent[-limit:],
+            "recent_truncated": (
+                len(recent) > limit or history_evicted > 0
+            ),
+            "history_evicted_count": history_evicted,
+            "sampled_at": sampled_at,
+        }
 
     def active_count(self, service: Optional[str] = None) -> int:
         """
@@ -298,6 +441,9 @@ class ActiveRequestTracker:
             ]
             for tid in stale:
                 span = self._active.pop(tid)
+                self._record_lifecycle_locked(
+                    span, "stale", "inactive_ttl"
+                )
                 logger.debug(
                     "active_requests: TTL eviction trace_id=%s service=%s "
                     "in_flight_ms=%.1f",

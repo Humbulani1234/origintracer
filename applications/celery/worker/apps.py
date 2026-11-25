@@ -20,7 +20,20 @@ class DjangoTracerConfig(AppConfig):
         if not _is_runserver_reloader:
             return
 
-        BASE_DIR = Path(__file__).resolve().parent.parent
-        origintracer.init(
-            config=str(BASE_DIR / "origintracer.yaml")
+        config_path = os.environ.get(
+            "ORIGINTRACER_CONFIG",
+            str(
+                Path(__file__).resolve().parent.parent
+                / "origintracer.yaml"
+            ),
         )
+        origintracer.init(
+            api_key=os.environ.get(
+                "ORIGINTRACER_API_KEY", "test-key-123"
+            ),
+            endpoint=os.environ.get(
+                "ORIGINTRACER_API_URL", "http://localhost:8001"
+            ),
+            config=config_path,
+        )
+        origintracer.mark_deployment("deployment")

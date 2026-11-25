@@ -389,6 +389,84 @@ def _show_latency(
     }
 
 
+_OBSERVATION_METADATA_FIELDS = (
+    "probe",
+    "customer_id",
+    "external",
+    "dependency_host",
+    "http_method",
+    "method",
+    "http_version",
+    "status_code",
+    "error_type",
+    "duration_scope",
+    "retry_count",
+    "max_retry_count",
+    "reason",
+    "upstream_attempt_count",
+    "upstream_duration_ns",
+    "source",
+    "task_id",
+    "task_name",
+    "state",
+    "retries",
+    "max_retries",
+    "exception_type",
+    "worker_pid",
+    "worker_instance_id",
+    "master_pid",
+    "worker_class",
+    "exitcode",
+    "response_bytes",
+    "success",
+    "result_type",
+    "command_count",
+    "num_workers",
+    "bind",
+    "investigation_id",
+    "langgraph_kind",
+    "is_langgraph_root",
+    "langgraph_node",
+    "langgraph_step",
+    "langgraph_triggers",
+    "langgraph_path",
+    "langgraph_checkpoint_ns",
+)
+_SAFE_LIFECYCLE_REASONS = {
+    "normal_exit",
+    "SIGINT",
+    "SIGABRT_timeout",
+}
+
+
+def _safe_observation_metadata(metadata: Any) -> Dict[str, Any]:
+    """Keep operational probe fields while excluding captured payloads/secrets."""
+    if not isinstance(metadata, dict):
+        return {}
+    safe: Dict[str, Any] = {}
+    for key in _OBSERVATION_METADATA_FIELDS:
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if key == "reason":
+            if value in _SAFE_LIFECYCLE_REASONS:
+                safe[key] = value
+        elif isinstance(value, (bool, int, float)):
+            safe[key] = value
+        elif isinstance(value, str):
+            safe[key] = value[:240]
+        elif key in {
+            "langgraph_triggers",
+            "langgraph_path",
+        } and isinstance(value, (list, tuple)):
+            safe[key] = [
+                item[:120] if isinstance(item, str) else item
+                for item in value[:12]
+                if isinstance(item, (str, int, float, bool))
+            ]
+    return safe
+
+
 def _show_events(
     engine: Engine, filters: Dict, limit: int
 ) -> Dict:
@@ -416,6 +494,16 @@ def _show_events(
                 "service": e.service,
                 "name": e.name,
                 "trace_id": e.trace_id,
+                "span_id": getattr(e, "span_id", None),
+                "parent_span_id": getattr(
+                    e, "parent_span_id", None
+                ),
+                "duration_ns": getattr(e, "duration_ns", None),
+                "pid": getattr(e, "pid", None),
+                "tid": getattr(e, "tid", None),
+                "metadata": _safe_observation_metadata(
+                    e.metadata
+                ),
                 "ts": getattr(e, "timestamp", None),
             }
             for e in events
@@ -455,6 +543,10 @@ def _show_llm_content(
                 "name": event.name,
                 "trace_id": event.trace_id,
                 "span_id": event.span_id,
+                "parent_span_id": event.parent_span_id,
+                "investigation_id": metadata.get(
+                    "investigation_id"
+                ),
                 "content": content,
                 "truncated": bool(
                     metadata.get(f"{field}_truncated")
@@ -504,6 +596,10 @@ def _show_tool_content(
                 "name": event.name,
                 "trace_id": event.trace_id,
                 "span_id": event.span_id,
+                "parent_span_id": event.parent_span_id,
+                "investigation_id": metadata.get(
+                    "investigation_id"
+                ),
                 "kind": kind,
                 "content": content,
                 "truncated": bool(
@@ -741,6 +837,10 @@ def _exec_trace(query: ParsedQuery, engine: Engine) -> Dict:
     if not trace_id:
         return {"error": "TRACE requires a trace_id"}
     path = engine.critical_path(trace_id)
+    for stage in path:
+        stage["metadata"] = _safe_observation_metadata(
+            stage.get("metadata")
+        )
     return {
         "verb": "TRACE",
         "trace_id": trace_id,
@@ -906,6 +1006,7 @@ def _node_dict(n) -> Dict:
         ),
         "first_seen": n.first_seen,
         "last_seen": n.last_seen,
+        "metadata": _safe_observation_metadata(n.metadata),
     }
 
 

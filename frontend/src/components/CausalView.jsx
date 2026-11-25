@@ -1,7 +1,28 @@
+function formatLabel(key) {
+  return key.replaceAll("_", " ").replace(/\b\w/g, char => char.toUpperCase());
+}
+
 function EvidenceValue({ value }) {
   if (Array.isArray(value)) {
+    const objectRows = value.length > 0 && value.every(
+      item => item && typeof item === "object" && !Array.isArray(item),
+    );
+
+    if (objectRows) {
+      return (
+        <details className="causal-evidence-list" open={value.length <= 3}>
+          <summary>{value.length} records · expand to inspect</summary>
+          <div className="causal-evidence-records">
+            {value.map((item, index) => (
+              <EvidenceValue key={index} value={item} />
+            ))}
+          </div>
+        </details>
+      );
+    }
+
     return (
-      <div style={{ display: "grid", gap: 8 }}>
+      <div className="causal-evidence-values">
         {value.map((item, index) => (
           <EvidenceValue key={index} value={item} />
         ))}
@@ -12,24 +33,22 @@ function EvidenceValue({ value }) {
   if (value && typeof value === "object") {
     if (typeof value.node === "string" && value.call_count != null) {
       return (
-        <div style={{ padding: "8px 10px", background: "var(--bg2)",
-            border: "1px solid var(--border)", borderRadius: 4 }}>
-          <div style={{ color: "var(--text)", overflowWrap: "anywhere",
-              lineHeight: 1.6 }}>{value.node}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px",
-              marginTop: 4, color: "var(--muted)" }}>
-            <span>Calls: <b style={{ color: "var(--text)" }}>{value.call_count}</b></span>
-            {value.pct != null && <span>Share: <b style={{ color: "var(--text)" }}>{value.pct}%</b></span>}
-            {value.avg_ms != null && <span>Average: <b style={{ color: "var(--text)" }}>{value.avg_ms} ms</b></span>}
+        <div className="causal-evidence-node">
+          <div className="causal-evidence-primary">{value.node}</div>
+          <div className="causal-evidence-metrics">
+            <span>Calls <b>{value.call_count}</b></span>
+            {value.pct != null && <span>Share <b>{value.pct}%</b></span>}
+            {value.avg_ms != null && <span>Average <b>{value.avg_ms} ms</b></span>}
           </div>
         </div>
       );
     }
+
     return (
-      <div style={{ display: "grid", gap: 6 }}>
+      <div className="causal-evidence-object">
         {Object.entries(value).map(([key, item]) => (
-          <div key={key}>
-            <span style={{ color: "var(--muted)" }}>{key.replaceAll("_", " ")}: </span>
+          <div className="causal-evidence-field" key={key}>
+            <span className="causal-evidence-label">{formatLabel(key)}</span>
             <EvidenceValue value={item} />
           </div>
         ))}
@@ -37,7 +56,7 @@ function EvidenceValue({ value }) {
     );
   }
 
-  return <span style={{ overflowWrap: "anywhere" }}>{String(value ?? "—")}</span>;
+  return <span className="causal-evidence-value">{String(value ?? "—")}</span>;
 }
 
 function ConfidenceBar({ pct }) {
@@ -72,7 +91,7 @@ export default function CausalView({ causal }) {
   }
 
   return (
-    <div style={{ padding: 14 }}>
+    <div className="causal-view">
       {causal.map((m, i) => {
         const pct = Math.round((m.confidence ?? 0) * 100);
         const color = pct >= 80 ? "var(--red, #e05252)" : "var(--amber, #e8a020)";
@@ -80,33 +99,19 @@ export default function CausalView({ causal }) {
           ? m.evidence : null;
 
         return (
-          <div key={i} style={{
-            marginBottom: 16, padding: "10px 14px",
-            borderLeft: `2px solid ${color}`,
-            borderBottom: "0.5px solid rgba(42,42,42,0.4)",
-            borderRadius: "0 4px 4px 0",
-          }}>
-            <div style={{ display: "flex", alignItems: "center",
-                gap: 12, marginBottom: 6 }}>
+          <section key={i} className="causal-card" style={{ "--causal-color": color }}>
+            <div className="causal-card-heading">
               <ConfidenceBar pct={pct} />
-              <span style={{ fontFamily: "monospace", fontSize: 11,
-                  fontWeight: 600, color }}>
-                {m.rule}
-              </span>
+              <span className="causal-rule-name">{m.rule}</span>
             </div>
-            <div style={{ fontFamily: "monospace", fontSize: 10,
-                color: "var(--muted)", lineHeight: 1.6,
-                marginBottom: evidence ? 6 : 0 }}>
-              {m.explanation}
-            </div>
+            <p className="causal-explanation">{m.explanation}</p>
             {evidence && (
-              <div style={{ fontFamily: "monospace", fontSize: 11,
-                  color: "var(--text)", lineHeight: 1.6, marginTop: 8 }}>
-                <div style={{ color: "var(--accent)", marginBottom: 5 }}>Evidence</div>
+              <div className="causal-evidence">
+                <div className="causal-evidence-heading">Evidence</div>
                 <EvidenceValue value={evidence} />
               </div>
             )}
-          </div>
+          </section>
         );
       })}
     </div>

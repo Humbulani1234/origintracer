@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-logger = logging.getLogger("stacktracer.normalizer")
+logger = logging.getLogger("origintracer.normalizer")
 
 
 # These cover the most common high-cardinality patterns encountered

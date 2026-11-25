@@ -78,6 +78,57 @@ def run_marker_contract(repo: BaseRepository):
     # No query API for markers — just verify it doesn't raise
 
 
+def test_pg_causal_history_includes_worker_pid():
+    from origintracer.storage.base import PGEventRepository
+
+    class Cursor:
+        query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, query, _params):
+            self.query = query
+
+        def fetchall(self):
+            return [
+                (
+                    INSTANCE,
+                    TEST_WORKER_PID,
+                    123.0,
+                    [{"rule": "db_query_hotspot"}],
+                )
+            ]
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+
+        def cursor(self):
+            return self.cursor_instance
+
+    connection = Connection()
+    repository = PGEventRepository.__new__(PGEventRepository)
+    repository._conn = connection
+
+    history = repository.get_causal_history(
+        TEST_CUSTOMER, INSTANCE
+    )
+
+    assert history == [
+        {
+            "worker_instance_id": INSTANCE,
+            "worker_pid": TEST_WORKER_PID,
+            "timestamp": 123.0,
+            "matches": [{"rule": "db_query_hotspot"}],
+        }
+    ]
+    assert "worker_pid" in connection.cursor_instance.query
+
+
 class TestInMemoryRepository:
 
     def setup_method(self):
@@ -233,6 +284,50 @@ class TestInMemoryRepository:
             == b"other-data"
         )
 
+    def test_worker_runtime_status_is_scoped_and_updated(self):
+        self.repo.upsert_worker_runtime(
+            "acme",
+            INSTANCE,
+            "123",
+            {"uptime_s": 12, "probes_active": ["django"]},
+            100.0,
+        )
+        self.repo.upsert_worker_runtime(
+            "acme",
+            INSTANCE,
+            "123",
+            {
+                "uptime_s": 20,
+                "probes_active": ["django", "asyncio"],
+            },
+            108.0,
+        )
+
+        current = self.repo.get_worker_runtime("acme", INSTANCE)
+        assert current == {
+            "worker_pid": "123",
+            "observed_at": 108.0,
+            "status": {
+                "uptime_s": 20,
+                "probes_active": ["django", "asyncio"],
+            },
+        }
+        assert (
+            self.repo.get_worker_runtime("other", INSTANCE)
+            is None
+        )
+        assert self.repo.list_worker_runtime("acme") == [
+            {
+                "worker_instance_id": INSTANCE,
+                "worker_pid": "123",
+                "observed_at": 108.0,
+                "status": {
+                    "uptime_s": 20,
+                    "probes_active": ["django", "asyncio"],
+                },
+            }
+        ]
+
     def test_marker_contract(self):
         run_marker_contract(self.repo)
 
@@ -277,8 +372,8 @@ class TestBaseRepositoryInterface:
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    not os.getenv("STACKTRACER_TEST_DB_DSN"),
-    reason="Set STACKTRACER_TEST_DB_DSN to run PostgreSQL tests",
+    not os.getenv("ORIGINTRACER_TEST_DB_DSN"),
+    reason="Set ORIGINTRACER_TEST_DB_DSN to run PostgreSQL tests",
 )
 class TestEventRepositoryPostgres:
 
@@ -289,19 +384,19 @@ class TestEventRepositoryPostgres:
         from origintracer.storage.base import PGEventRepository
 
         conn = psycopg2.connect(
-            os.environ["STACKTRACER_TEST_DB_DSN"]
+            os.environ["ORIGINTRACER_TEST_DB_DSN"]
         )
         repo = PGEventRepository(conn)
         yield repo
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM st_events    WHERE customer_id = 'test'"
+                "DELETE FROM ot_events    WHERE customer_id = 'test'"
             )
             cur.execute(
-                "DELETE FROM st_snapshots WHERE customer_id = 'test'"
+                "DELETE FROM ot_snapshots WHERE customer_id = 'test'"
             )
             cur.execute(
-                "DELETE FROM st_markers   WHERE customer_id = 'test'"
+                "DELETE FROM ot_markers   WHERE customer_id = 'test'"
             )
         conn.commit()
         conn.close()

@@ -8,7 +8,7 @@ export default function QueryBar({ onRun, loading }) {
   };
 
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 14px",
+    <div className="query-bar" style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 14px",
       borderBottom:"1px solid var(--border)", background:"var(--bg)" }}>
       <span style={{ fontFamily:"monospace", fontSize:11,
         color:"var(--accent)", flexShrink:0 }}>›</span>
@@ -16,7 +16,7 @@ export default function QueryBar({ onRun, loading }) {
         value={val}
         onChange={e => setVal(e.target.value)}
         onKeyDown={e => e.key === "Enter" && run()}
-        placeholder="SHOW nodes · SHOW llm_content · SHOW tool_content · TRACE <id>"
+        placeholder="Stored data: SHOW nodes · edges · graph · events · status · TRACE <id> · STITCH <id>"
         style={{ flex:1, background:"none", border:"none", outline:"none",
           fontFamily:"monospace", fontSize:11, color:"var(--text)",
           caretColor:"var(--accent)" }}
