@@ -215,13 +215,13 @@ TRACEPOINT_PROBE(syscalls, sys_exit_epoll_pwait) {
 """
 
 # Uncomment ONLY when deploying without the nginx probe:
-register_bpf(
-    "asyncio",
-    BPFProgramPart(
-        maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
-        probes=[_ASYNCIO_EPOLL_BPF],
-    ),
-)
+# register_bpf(
+#     "asyncio",
+#     BPFProgramPart(
+#         maps=["BPF_HASH(asyncio_epoll_ts, u64, u64);"],
+#         probes=[_ASYNCIO_EPOLL_BPF],
+#     ),
+# )
 
 
 class _EpollKprobe:

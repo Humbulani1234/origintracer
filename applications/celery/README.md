@@ -1,7 +1,7 @@
 # OriginTracer - Celery Application
 
-Traces the cross-process path: **django view --> redis (task queue) --> celery worker**. The trace_id travels inside task kwargs (`_trace_id`) across the
-Redis boundary, allowing `\stitch` in the REPL to join both sides into one timeline.
+Traces the cross-process path: **django view --> redis (task queue) --> celery worker**. The Celery probe propagates the active trace ID in task message headers across the
+Redis boundary, allowing `\stitch` in the REPL to join both sides into one timeline. Task arguments stay unchanged.
 
 ---
 
@@ -151,14 +151,15 @@ from origintracer.core.event_schema import NormalizedEvent
 
 def _dispatch(task_fn, *args, **kwargs):
     trace_id = get_trace_id()
-    task_fn.delay(*args, _trace_id=trace_id, **kwargs)
     if trace_id:
         emit(NormalizedEvent.now(
             probe="celery.task.dispatch",
             trace_id=trace_id,
-            service="celery",          
+            service="celery",
             name=task_fn.name,
         ))
+    # The Celery probe adds trace context to message headers automatically.
+    task_fn.delay(*args, **kwargs)
 ```
 
 ---

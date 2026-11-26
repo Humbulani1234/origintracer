@@ -37,7 +37,14 @@ from typing import Any, Callable, Optional
 import origintracer
 from origintracer.core.kprobe_bridge import get_bridge
 
-from ..context.vars import get_trace_id, reset_trace, set_trace
+from ..context.vars import (
+    get_span_id,
+    get_trace_id,
+    reset_span_id,
+    reset_trace,
+    set_span_id,
+    set_trace,
+)
 from ..core.event_schema import NormalizedEvent
 from ..sdk.base_probe import BaseProbe
 from ..sdk.emitter import emit
@@ -49,6 +56,10 @@ class TracerMiddleware:
     """
     ASGI/WSGI middleware. Must be first in MIDDLEWARE.
     Generates or inherits trace_id and wraps every request.
+
+    Request entry and exit events share a span ID. Each class-based view gets
+    a child span whose context remains active through asynchronous dispatch;
+    database query events use the active span as their parent when available.
     """
 
     def __init__(self, get_response: Callable) -> None:
@@ -75,6 +86,7 @@ class TracerMiddleware:
             raise
         finally:
             reset_trace(token)
+            reset_span_id(request._ot_span_token)
 
     async def __acall__(self, request: Any) -> Any:
         trace_id, token = self._begin(request)
@@ -87,6 +99,7 @@ class TracerMiddleware:
             raise
         finally:
             reset_trace(token)
+            reset_span_id(request._ot_span_token)
 
     def _begin(self, request: Any):
         trace_id = (
@@ -95,7 +108,10 @@ class TracerMiddleware:
             or str(uuid.uuid4())
         )
         token = set_trace(trace_id)
-        request._st_t0 = time.perf_counter()
+        request._ot_parent_span_id = get_span_id()
+        request._ot_t0 = time.perf_counter()
+        request._ot_span_id = uuid.uuid4().hex
+        request._ot_span_token = set_span_id(request._ot_span_id)
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
         # start the ActiveRequest tracker
@@ -105,7 +121,9 @@ class TracerMiddleware:
                 service="django",
                 pattern=pattern,
             )
-        # add trace_id into BPF map so epoll kprobe can attribute events
+        # Bridge kernel events to this request: BPF looks up Linux native TID,
+        # not Python's threading.get_ident() value. This libc syscall number is
+        # Linux x86_64-specific; other architectures need their own gettid path.
         _libc = ctypes.CDLL("libc.so.6", use_errno=True)
         _SYS_gettid = 186  # x86_64 Linux
 
@@ -115,6 +133,10 @@ class TracerMiddleware:
         bridge = get_bridge()
         if bridge.available:
             handler_tid = _get_os_tid()
+            # On Linux, the process ID is also the main thread's TID. Register
+            # it for event-loop syscalls and the native TID of this middleware
+            # thread. The bridge key is TID; PID is stored separately. Work later
+            # offloaded to another thread is not covered by these two mappings.
             loop_tid = os.getpid()
             bridge.register_trace(
                 tid=loop_tid,
@@ -131,17 +153,20 @@ class TracerMiddleware:
                 start_ns=int(time.time_ns()),
                 pid=os.getpid(),
             )
-            request._st_bridge_tid = [loop_tid, handler_tid]
-        emit(
-            NormalizedEvent.now(
-                probe="request.entry",
-                trace_id=trace_id,
-                service="django",
-                name=request.path,
-                method=request.method,
-                http_host=request.META.get("HTTP_HOST", ""),
-            )
+            # Keep the exact keys so _end can remove both mappings; stale map
+            # entries could otherwise attribute later syscalls to this trace.
+            request._ot_bridge_tids = [loop_tid, handler_tid]
+        entry_event = NormalizedEvent.now(
+            probe="request.entry",
+            trace_id=trace_id,
+            service="django",
+            name=request.path,
+            parent_span_id=request._ot_parent_span_id,
+            method=request.method,
+            http_host=request.META.get("HTTP_HOST", ""),
         )
+        entry_event.span_id = request._ot_span_id
+        emit(entry_event)
         return trace_id, token
 
     def _end(
@@ -149,19 +174,20 @@ class TracerMiddleware:
     ) -> None:
 
         duration_ns = int(
-            (time.perf_counter() - request._st_t0) * 1e9
+            (time.perf_counter() - request._ot_t0) * 1e9
         )
-        emit(
-            NormalizedEvent.now(
-                probe="request.exit",
-                trace_id=trace_id,
-                service="django",
-                name=request.path,
-                method=request.method,
-                status_code=response.status_code,
-                duration_ns=duration_ns,
-            )
+        exit_event = NormalizedEvent.now(
+            probe="request.exit",
+            trace_id=trace_id,
+            service="django",
+            name=request.path,
+            parent_span_id=request._ot_parent_span_id,
+            method=request.method,
+            status_code=response.status_code,
+            duration_ns=duration_ns,
         )
+        exit_event.span_id = request._ot_span_id
+        emit(exit_event)
         engine = origintracer.get_engine()
         pattern = engine.tracker._normalize_path(request.path)
         if engine:
@@ -173,30 +199,36 @@ class TracerMiddleware:
                     pattern,
                     span.duration_ms,
                 )
-        # remove the or deregister the bridge context
+        # Remove the per-request BPF mappings registered in _begin. This bounds
+        # the context to the request lifetime and prevents stale attribution.
         bridge = get_bridge()
         if bridge.available:
-            for tid in getattr(request, "_st_bridge_tids", []):
+            for tid in getattr(request, "_ot_bridge_tids", []):
                 bridge.unregister_trace(tid)
 
     def _error(
         self, request: Any, exc: Exception, trace_id: str
     ) -> None:
         duration_ns = int(
-            (time.perf_counter() - request._st_t0) * 1e9
+            (time.perf_counter() - request._ot_t0) * 1e9
         )  # how long before exception
-        emit(
-            NormalizedEvent.now(
-                probe="django.exception",
-                trace_id=trace_id,
-                service="django",
-                name=request.path,
-                duration_ns=duration_ns,
-                exception_type=type(exc).__name__,
-                exception_msg=str(exc)[:200],
-                source="middleware",
-            )
+        error_event = NormalizedEvent.now(
+            probe="django.exception",
+            trace_id=trace_id,
+            service="django",
+            name=request.path,
+            duration_ns=duration_ns,
+            exception_type=type(exc).__name__,
+            exception_msg=str(exc)[:200],
+            source="middleware",
         )
+        error_event.span_id = request._ot_span_id
+        emit(error_event)
+        engine = origintracer.get_engine()
+        if engine:
+            engine.tracker.fail(
+                trace_id, exception_type=type(exc).__name__
+            )
 
 
 # ------------- View.dispatch: CBV observation ----------
@@ -232,35 +264,59 @@ def _instrument_view_dispatch() -> None:
 
     def _traced_dispatch(self_view, request, *args, **kwargs):
         trace_id = get_trace_id()
-        view_name = type(self_view).__name__
-        t0 = time.perf_counter()
-
-        if trace_id:
-            emit(
-                NormalizedEvent.now(
-                    probe="django.view.enter",
-                    trace_id=trace_id,
-                    service="django",
-                    name=view_name,
-                )
-            )
-
-        try:
+        if not trace_id:
             return original_dispatch(
                 self_view, request, *args, **kwargs
             )
-        finally:
-            duration_ns = int((time.perf_counter() - t0) * 1e9)
-            if trace_id:
-                emit(
-                    NormalizedEvent.now(
-                        probe="django.view.exit",
-                        trace_id=trace_id,
-                        service="django",
-                        name=view_name,
-                        duration_ns=duration_ns,
-                    )
-                )
+        view_name = type(self_view).__name__
+        parent_span_id = get_span_id()
+        span_id = uuid.uuid4().hex
+        span_token = set_span_id(span_id)
+        started = time.perf_counter()
+        enter = NormalizedEvent.now(
+            probe="django.view.enter",
+            trace_id=trace_id,
+            service="django",
+            name=view_name,
+            parent_span_id=parent_span_id,
+        )
+        enter.span_id = span_id
+        emit(enter)
+
+        def finish() -> None:
+            duration_ns = int(
+                (time.perf_counter() - started) * 1e9
+            )
+            leave = NormalizedEvent.now(
+                probe="django.view.exit",
+                trace_id=trace_id,
+                service="django",
+                name=view_name,
+                parent_span_id=parent_span_id,
+                duration_ns=duration_ns,
+            )
+            leave.span_id = span_id
+            emit(leave)
+            reset_span_id(span_token)
+
+        try:
+            result = original_dispatch(
+                self_view, request, *args, **kwargs
+            )
+        except BaseException:
+            finish()
+            raise
+        if inspect.isawaitable(result):
+
+            async def await_dispatch():
+                try:
+                    return await result
+                finally:
+                    finish()
+
+            return await_dispatch()
+        finish()
+        return result
 
     View.dispatch = _traced_dispatch
     logger.info(
@@ -299,6 +355,7 @@ def _make_db_wrapper():
                         trace_id=trace_id,
                         service="django",
                         name=sql[:200],
+                        parent_span_id=get_span_id(),
                         duration_ns=duration_ns,
                         db_alias=context["connection"].alias,
                         success=False,
@@ -315,6 +372,7 @@ def _make_db_wrapper():
                         trace_id=trace_id,
                         service="django",
                         name=sql[:200],
+                        parent_span_id=get_span_id(),
                         duration_ns=duration_ns,
                         db_alias=context["connection"].alias,
                         success=True,

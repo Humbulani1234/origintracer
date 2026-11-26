@@ -13,6 +13,8 @@ import CausalHistory from "./components/CausalHistory";
 import ContentView from "./components/ContentView";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { api } from "./api/client";
+import ApiKeys from "./components/ApiKeys";
+import { AuthControls } from "./components/AuthGate";
 
 const VIEWS = [
   "nodes",
@@ -27,6 +29,7 @@ const VIEWS = [
   "history",
   "llm_content",
   "tool_content",
+  "api_keys",
 ];
 
 const WORKERS_PER_PAGE = 4;
@@ -60,6 +63,7 @@ function formatSnapshotTime(value) {
 
 export default function App() {
   const [view, setView] = useState("nodes");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [trace, setTrace] = useState(null);
@@ -263,6 +267,9 @@ export default function App() {
         setTrace({
           id: traceCommand[1],
           stages: response?.data ?? [],
+          timing: response?.timing ?? null,
+          traceCompleteness: response?.trace_completeness ?? null,
+          warnings: response?.warnings ?? [],
           source: "history",
         });
         setView("trace");
@@ -368,7 +375,18 @@ export default function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {mobileMenuOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+      <aside
+        id="dashboard-sidebar"
+        className={`sidebar ${mobileMenuOpen ? "is-open" : ""}`}
+      >
         <div className="logo">ORIGIN<span>TRACER</span></div>
         <nav className="nav">
           {VIEWS.map((item) => (
@@ -376,6 +394,7 @@ export default function App() {
               key={item}
               className={`nav-item ${view === item ? "active" : ""}`}
               onClick={() => {
+                setMobileMenuOpen(false);
                 if (
                   (item === "stitch" && trace?.source !== "stitched")
                   || (item === "trace" && trace?.source === "stitched")
@@ -446,6 +465,16 @@ export default function App() {
 
       <div className="main">
         <div className="toolbar">
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="dashboard-sidebar"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            <span aria-hidden="true">☰</span>
+          </button>
           <span className="toolbar-title">{view.replace("_", " ")}</span>
           {selectedWorker && (
             <span className={`worker-badge ${selectedWorker.online ? "is-reporting" : "is-stale"}`}>
@@ -453,6 +482,7 @@ export default function App() {
             </span>
           )}
           <span className="badge">{badge[view]}</span>
+          <AuthControls />
           {backendError && (
             <span className="backend-error">{backendError}</span>
           )}
@@ -460,7 +490,9 @@ export default function App() {
         <QueryBar onRun={runQuery} loading={loading} />
         <div className="content">
           <ErrorBoundary key={view}>
-            {noReportingWorkers ? (
+            {view === "api_keys" ? (
+              <ApiKeys />
+            ) : noReportingWorkers ? (
               <div className="no-worker-state">
                 <div className="no-worker-title">
                   No currently reporting workers
@@ -473,8 +505,16 @@ export default function App() {
               </div>
             ) : (
               <>
-                {view === "nodes" && <NodeTable nodes={nodes} />}
-                {view === "edges" && <EdgeTable edges={edges} />}
+                {view === "nodes" && (
+                  <div className="table-scroll">
+                    <NodeTable nodes={nodes} />
+                  </div>
+                )}
+                {view === "edges" && (
+                  <div className="table-scroll">
+                    <EdgeTable edges={edges} />
+                  </div>
+                )}
                 {view === "trace" && <TraceTimeline trace={trace} />}
                 {view === "stitch" && (
                   <TraceTimeline trace={trace} mode="stitch" />

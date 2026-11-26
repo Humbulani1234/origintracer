@@ -243,6 +243,61 @@ class TestGraphSnapshot:
         assert row is not None
         assert row["data"] == data
 
+    async def test_snapshot_ingestion_records_worker_request_counters(
+        self, client
+    ):
+        import backend.main as m
+
+        pytest.importorskip("msgpack")
+        graphs = []
+        for request_count in (4, 7):
+            graph = RuntimeGraph()
+            graph.upsert_node(
+                "gunicorn::master",
+                "gunicorn",
+                "gunicorn",
+                metadata={
+                    "probe": "gunicorn.master.start",
+                    "master_pid": 900,
+                },
+            )
+            worker_id = "gunicorn::UvicornWorker-12345"
+            graph.upsert_node(
+                worker_id,
+                "gunicorn",
+                "gunicorn",
+                metadata={
+                    "probe": "gunicorn.worker.fork",
+                    "worker_pid": 12345,
+                    "master_pid": 900,
+                },
+            )
+            for index in range(request_count):
+                request_id = f"uvicorn::/request-{index}"
+                graph.upsert_node(
+                    request_id, "uvicorn", "uvicorn"
+                )
+                graph.upsert_edge(
+                    worker_id, request_id, "handled"
+                )
+            graphs.append(MsgpackSerializer().serialize(graph))
+
+        for snapshot in graphs:
+            response = await client.post(
+                "/api/v1/graph/snapshot",
+                content=snapshot,
+                headers={
+                    **AUTH,
+                    "content-type": "application/msgpack",
+                },
+            )
+            assert response.status_code == 200
+
+        samples = m._worker_request_samples[
+            ("test_customer", TEST_INSTANCE)
+        ]
+        assert [count for _, count in samples] == [4, 7]
+
     async def test_empty_snapshot_returns_400(self, client):
         r = await client.post(
             "/api/v1/graph/snapshot",
@@ -623,6 +678,164 @@ class TestTraces:
             "metadata": {},
         }
 
+    async def test_trace_derives_inclusive_self_and_parallel_timing(
+        self,
+    ):
+        import backend.main as api
+
+        events = [
+            {
+                "span_id": "root",
+                "parent_span_id": None,
+                "probe": "langgraph.chain.enter",
+                "service": "langgraph",
+                "name": "request",
+                "wall_time": 100.000,
+            },
+            {
+                "span_id": "child-a",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.enter",
+                "service": "langgraph",
+                "name": "tool-a",
+                "wall_time": 100.001,
+            },
+            {
+                "span_id": "child-b",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.enter",
+                "service": "langgraph",
+                "name": "tool-b",
+                "wall_time": 100.004,
+            },
+            {
+                "span_id": "child-a",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.exit",
+                "service": "langgraph",
+                "name": "tool-a",
+                "wall_time": 100.007,
+            },
+            {
+                "span_id": "child-b",
+                "parent_span_id": "root",
+                "probe": "langgraph.tool.exit",
+                "service": "langgraph",
+                "name": "tool-b",
+                "wall_time": 100.009,
+            },
+            {
+                "span_id": "root",
+                "parent_span_id": None,
+                "probe": "langgraph.chain.exit",
+                "service": "langgraph",
+                "name": "request",
+                "wall_time": 100.010,
+            },
+        ]
+
+        timing = api._derive_trace_spans(events)
+        spans = {
+            span["span_id"]: span for span in timing["spans"]
+        }
+
+        assert spans["root"]["inclusive_duration_ms"] == 10.0
+        assert spans["root"]["self_time_ms"] == 2.0
+        assert spans["root"]["self_time_child_count"] == 2
+        assert spans["child-a"]["inclusive_duration_ms"] == 6.0
+        assert spans["child-b"]["inclusive_duration_ms"] == 5.0
+        assert timing["trace_wall_duration_ms"] == 10.0
+        assert timing["cumulative_inclusive_duration_ms"] == 21.0
+        assert timing["parallel_overlaps"] == [
+            {
+                "parent_span_id": "root",
+                "relationship": "shared_parent",
+                "span_ids": ["child-a", "child-b"],
+                "overlap_ms": 3.0,
+            }
+        ]
+
+    async def test_trace_with_event_cap_does_not_claim_complete_wall_time(
+        self,
+    ):
+        import backend.main as api
+
+        events = [
+            {"probe": "request.entry", "wall_time": 300.0},
+            *(
+                {
+                    "probe": "runtime.event",
+                    "wall_time": 300.0 + index / 1000,
+                }
+                for index in range(998)
+            ),
+            {"probe": "request.exit", "wall_time": 301.0},
+        ]
+
+        timing = api._derive_trace_spans(events)
+
+        assert timing["events_may_be_truncated"] is True
+        assert timing["request_wall_duration_ms"] is None
+        assert timing["trace_wall_duration_ms"] is None
+
+    async def test_trace_reports_asyncio_tick_overlap_without_parent_ids(
+        self,
+    ):
+        import backend.main as api
+
+        timing = api._derive_trace_spans(
+            [
+                {
+                    "span_id": "tick-a",
+                    "probe": "asyncio.loop.tick",
+                    "service": "asyncio",
+                    "name": "task-a",
+                    "wall_time": 10.0,
+                    "duration_ns": 5_000_000,
+                },
+                {
+                    "span_id": "tick-b",
+                    "probe": "asyncio.loop.tick",
+                    "service": "asyncio",
+                    "name": "task-b",
+                    "wall_time": 10.004,
+                    "duration_ns": 5_000_000,
+                },
+            ]
+        )
+
+        assert timing["parallel_overlaps"] == [
+            {
+                "parent_span_id": None,
+                "relationship": "trace_cooccurrence",
+                "span_ids": ["tick-a", "tick-b"],
+                "overlap_ms": 1.0,
+            }
+        ]
+
+    async def test_trace_uses_request_boundaries_for_wall_duration(
+        self,
+    ):
+        import backend.main as api
+
+        timing = api._derive_trace_spans(
+            [
+                {"probe": "request.entry", "wall_time": 200.0},
+                {
+                    "probe": "django.view.enter",
+                    "wall_time": 200.010,
+                },
+                {"probe": "request.exit", "wall_time": 200.125},
+            ]
+        )
+
+        assert timing["request_wall_duration_ms"] == 125.0
+        assert timing["trace_wall_duration_ms"] == 125.0
+        assert (
+            timing["trace_wall_duration_source"]
+            == "request_entry_exit_boundaries"
+        )
+
     async def test_trace_returns_critical_path(self, client):
         trace_id = "trace-abc-123"
         customer_id = TEST_CUSTOMER
@@ -652,6 +865,54 @@ class TestTraces:
             body["data"][0]["metadata"]["customer_id"]
             == "test_customer"
         )
+
+    async def test_trace_includes_unregistered_probe_names_with_warning(
+        self,
+    ):
+        import backend.main as api
+        from origintracer.core.event_schema import (
+            NormalizedEvent,
+            ProbeTypes,
+        )
+
+        trace_id = "trace-custom-probe-001"
+        probe_name = "custom.application.operation"
+        assert probe_name not in ProbeTypes
+
+        repository = api.get_repository()
+        repository.insert_event(
+            NormalizedEvent.now(
+                probe=probe_name,
+                service="django",
+                name="/custom",
+                trace_id=trace_id,
+                duration_ns=5_000_000,
+                pid=int(TEST_WORKER_PID),
+                customer_id="test_customer",
+                worker_pid=TEST_WORKER_PID,
+                worker_instance_id=TEST_INSTANCE,
+            )
+        )
+        body = await api.get_trace(
+            trace_id,
+            worker_instance_id=TEST_INSTANCE,
+            authorization=AUTH["Authorization"],
+            repository=repository,
+        )
+
+        assert [stage["probe"] for stage in body["data"]] == [
+            probe_name
+        ]
+        assert body["warnings"] == [
+            {
+                "code": "unregistered_probe_types",
+                "message": (
+                    "Events with unregistered probe types are included "
+                    "using their recorded names."
+                ),
+                "probe_types": [probe_name],
+            }
+        ]
 
     async def test_trace_path_is_sorted_by_wall_time(
         self, client
@@ -760,6 +1021,7 @@ def reset_backend_state():
 
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._worker_request_samples.clear()
     m._reported_causal_matches.clear()
     m._reported_causal_signatures.clear()
     with m._active_pid_lock:
@@ -769,6 +1031,7 @@ def reset_backend_state():
     yield
     m._graphs.clear()
     m._snapshot_metadata.clear()
+    m._worker_request_samples.clear()
     m._reported_causal_matches.clear()
     m._reported_causal_signatures.clear()
     with m._active_pid_lock:

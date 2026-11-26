@@ -127,7 +127,7 @@ def _content_limit() -> int:
         )
     except ValueError:
         value = _DEFAULT_CONTENT_LIMIT
-    return max(128, min(value, 20_000))
+    return max(128, min(value, 50_000))
 
 
 def _tool_content_capture_enabled() -> bool:
@@ -154,7 +154,7 @@ def _tool_content_limit() -> int:
         )
     except ValueError:
         value = _DEFAULT_CONTENT_LIMIT
-    return max(128, min(value, 20_000))
+    return max(128, min(value, 50_000))
 
 
 def _content_text(value: Any, depth: int = 0) -> str:

@@ -5,10 +5,9 @@ Tasks, each designed to exercise a specific causal rule:
     send_notification >> dispatched N times per request (fan-out graph)
     export_data >> emits a measured slow SQLite operation
 
-Each task accepts _trace_id as a kwarg. The celery probe reads it so
-the trace is continuous from the Django view through to the task execution.
-The graph edge  django::view >> celery::task is built from this
-shared trace_id.
+The Celery probe propagates trace context in message headers, keeping task
+signatures and business kwargs free of tracing-specific arguments. The graph
+edge django::view >> celery::task uses the shared trace ID.
 """
 
 import os
@@ -18,6 +17,7 @@ import time
 
 from celery import shared_task
 
+from origintracer.context.vars import get_trace_id
 from origintracer.core.event_schema import NormalizedEvent
 from origintracer.sdk.emitter import emit
 
@@ -57,7 +57,9 @@ def export_data(self, export_id: int, **kwargs):
     db_path = os.path.join(
         os.path.dirname(__file__), "..", "demo.db"
     )
-    trace_id = kwargs.get("_trace_id") or self.request.id
+    # The probe restores the message-header trace into this worker context.
+    # Standalone tasks use their Celery task ID as the fallback.
+    trace_id = get_trace_id() or self.request.id
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(

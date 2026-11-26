@@ -1,4 +1,5 @@
 import { svcColor, short } from "./NodeTable";
+import ObservationDetails from "./ObservationDetails";
 
 function fmtTime(wall_time) {
   if (!wall_time) return "—";
@@ -21,6 +22,7 @@ const COL = {
   name: { }, // flex
   duration: { width: 72, textAlign: "right" },
   trace: { width: 110 },
+  details: { width: 92 },
 };
 
 const TH = {
@@ -49,7 +51,7 @@ export default function EventLog({ events }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse",
-          tableLayout: "fixed", minWidth: 600 }}>
+          tableLayout: "fixed", minWidth: 700 }}>
         <thead>
           <tr style={{ borderBottom: "0.5px solid var(--color-border-secondary)" }}>
             <th style={{ ...TH, width: COL.time.width }}>time</th>
@@ -58,6 +60,7 @@ export default function EventLog({ events }) {
             <th style={{ ...TH }}>name</th>
             <th style={{ ...TH, width: COL.duration.width, textAlign: "right" }}>duration</th>
             <th style={{ ...TH, width: COL.trace.width }}>trace id</th>
+            <th style={{ ...TH, width: COL.details.width }}>details</th>
           </tr>
         </thead>
         <tbody>
@@ -83,7 +86,7 @@ export default function EventLog({ events }) {
                 <td style={{ ...TD, color: "var(--color-text-primary)" }}>
                   {short(e.probe || "", 28)}
                 </td>
-                <td style={{ ...TD, color: "var(--color-text-secondary)" }}
+                <td style={{ ...TD, color: "var(--color-text-primary)" }}
                   title={e.name}>
                   {short(e.name || "", 40)}
                 </td>
@@ -95,6 +98,15 @@ export default function EventLog({ events }) {
                     userSelect: "all", cursor: "text", whiteSpace: "nowrap" }}
                     title="click to select">
                   {e.trace_id ?? "—"}
+                </td>
+                <td style={{ ...TD, overflow: "visible" }}>
+                  <ObservationDetails
+                    metadata={e.metadata}
+                    spanId={e.span_id}
+                    parentSpanId={e.parent_span_id}
+                    pid={e.pid}
+                    tid={e.tid}
+                  />
                 </td>
               </tr>
             );

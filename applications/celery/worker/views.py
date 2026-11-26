@@ -5,8 +5,8 @@ causal rule. and for each view:
     1. Reads the current trace_id from ContextVar (set by TracerMiddleware)
     2. Emits a celery.task.dispatch event - creates the
        django::ViewName >> celery::task_name edge in the graph
-    3. Passes _trace_id in task kwargs so celery_probe picks it up and
-       continues the trace in the worker process
+    3. The Celery probe copies the active trace ID into message headers,
+       which the worker reads without changing task kwargs
 
 This gives full structural topology in the REPL graph:
     gunicorn::UvicornWorker
@@ -50,8 +50,8 @@ def _dispatch(task_func, trace_id: str, **task_kwargs):
 
         django::/tasks/report/1/ >> celery::myapp.tasks.process_report
 
-    Passing _trace_id in kwargs lets the celery probe continue the same
-    trace in the worker process - same trace_id, two engines, one story.
+    The Celery probe propagates the active trace in broker headers, keeping
+    application task arguments unchanged across the process boundary.
     """
     task_name = task_func.name
 
@@ -65,7 +65,9 @@ def _dispatch(task_func, trace_id: str, **task_kwargs):
         )
     )
 
-    task_func.delay(**task_kwargs, _trace_id=trace_id)
+    # before_task_publish adds the active trace ID to broker headers here.
+    # The task receives only application-defined arguments.
+    task_func.delay(**task_kwargs)
 
 
 class ReportView(View):

@@ -542,6 +542,15 @@ class Engine:
                     "name": e.name,
                     "timestamp": e.timestamp,
                     "wall_time": e.wall_time,
+                    "span_id": getattr(e, "span_id", None),
+                    "parent_span_id": getattr(
+                        e, "parent_span_id", None
+                    ),
+                    "duration_ns": getattr(
+                        e, "duration_ns", None
+                    ),
+                    "pid": getattr(e, "pid", None),
+                    "tid": getattr(e, "tid", None),
                     "duration_ms": (
                         round(duration_ms, 3)
                         if duration_ms

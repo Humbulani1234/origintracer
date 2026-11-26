@@ -4,7 +4,7 @@ import logging
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
@@ -27,9 +27,33 @@ class _UploaderEventBuffer:
     def __init__(self, maxlen: int = 20_000) -> None:
         self._q: deque = deque(maxlen=maxlen)
         self._lock = Lock()
+        self._dropped_total = 0
+        self._dropped_by_trace: OrderedDict[str, int] = (
+            OrderedDict()
+        )
+        self._trace_counts_truncated = False
+
+    def _record_drop_locked(self, trace_id: str) -> None:
+        if trace_id in self._dropped_by_trace:
+            self._dropped_by_trace[trace_id] += 1
+            self._dropped_by_trace.move_to_end(trace_id)
+            return
+        if len(self._dropped_by_trace) >= 256:
+            self._dropped_by_trace.popitem(last=False)
+            self._trace_counts_truncated = True
+        self._dropped_by_trace[trace_id] = 1
 
     def push(self, event_dict: Dict) -> None:
         with self._lock:
+            if (
+                self._q.maxlen is not None
+                and len(self._q) >= self._q.maxlen
+            ):
+                dropped = self._q.popleft()
+                self._dropped_total += 1
+                self._record_drop_locked(
+                    str(dropped.get("trace_id") or "")
+                )
             self._q.append(event_dict)
 
     def drain(self, max_batch: int) -> List[Dict]:
@@ -40,7 +64,25 @@ class _UploaderEventBuffer:
             return batch
 
     def __len__(self) -> int:
-        return len(self._q)
+        with self._lock:
+            return len(self._q)
+
+    def diagnostics(self) -> Dict[str, Any]:
+        """Return bounded queue-overflow counters.
+
+        Returns
+        -------
+        dict[str, Any]
+            Aggregate and per-trace event loss counts.
+        """
+        with self._lock:
+            return {
+                "buffer_dropped_total": self._dropped_total,
+                "buffer_dropped_by_trace": dict(
+                    self._dropped_by_trace
+                ),
+                "trace_counts_truncated": self._trace_counts_truncated,
+            }
 
 
 def _serialize_events(payload: Dict) -> tuple:
@@ -104,9 +146,6 @@ class Uploader:
         shorter independent interval.
     max_batch_size : int, optional
         Maximum number of events sent in one batch.
-    customer_id : str, optional
-        Customer namespace sent with deployment markers. Backends that derive
-        the customer from the API key ignore it.
 
     Examples
     --------
@@ -117,9 +156,6 @@ class Uploader:
 
     Notes
     -----
-    All requests share one ``httpx.Client`` so TCP and TLS connections are
-    reused between uploads instead of being opened for every request.
-
     Call ``stop()`` during shutdown to flush pending events and a final graph
     snapshot, then join the background threads.
     """
@@ -131,7 +167,6 @@ class Uploader:
         flush_interval: int = 10,  # seconds between event batch flushes
         snapshot_interval: float = 60,  # seconds between graph snapshot flushes
         max_batch_size: int = 500,
-        customer_id: str = "local_dev",
     ) -> None:
         """Configure backend uploads and background flush intervals.
 
@@ -148,26 +183,18 @@ class Uploader:
             derive the runtime heartbeat cadence.
         max_batch_size : int, optional
             Maximum number of events included in one upload batch.
-        customer_id : str, optional
-            Customer namespace sent with deployment markers.
         """
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._flush_interval = flush_interval
         self._snapshot_interval = snapshot_interval
         self._max_batch = max_batch_size
-        self._customer_id = customer_id
 
         self._event_buffer = _UploaderEventBuffer()
 
         self._engine: Optional[Any] = (
             None  # set by bind_engine()
         )
-
-        # Created lazily by _http() rather than here, so a client is never
-        # built in a parent process and then inherited across a fork.
-        self._client: Optional[httpx.Client] = None
-        self._client_lock = Lock()
 
         self._thread: Optional[threading.Thread] = None
         self._runtime_status_thread: Optional[
@@ -181,8 +208,7 @@ class Uploader:
             1.0, min(15.0, float(snapshot_interval))
         )
 
-        # Timing. Both start at 0.0, so the first flush happens on the first
-        # loop iteration (about a second after start()).
+        # Timing
         self._last_event_flush_s: float = 0.0
         self._last_snapshot_flush_s: float = 0.0
 
@@ -191,39 +217,22 @@ class Uploader:
         self._snapshots_sent: int = 0
         self._diffs_sent: int = 0
         self._failed_event_sends: int = 0
+        self._failed_event_events_total = 0
+        self._failed_event_by_trace: OrderedDict[str, int] = (
+            OrderedDict()
+        )
+        self._backend_rejected_events_total = 0
+        self._backend_rejected_by_trace: OrderedDict[
+            str, int
+        ] = OrderedDict()
+        self._event_serialization_failures = 0
+        self._event_serialization_failed_by_trace: OrderedDict[
+            str, int
+        ] = OrderedDict()
+        self._capture_lock = Lock()
+        self._capture_trace_counts_truncated = False
         self._failed_snap_sends: int = 0
         self._failed_diffs_sends: int = 0
-
-    def _http(self) -> httpx.Client:
-        """Return the shared HTTP client, creating it on first use.
-
-        Returns
-        -------
-        httpx.Client
-            Client carrying the bearer token as a default header. It is
-            thread-safe, so the event/snapshot thread, the heartbeat thread
-            and the caller of ``stop()`` can all use it. A client closed by a
-            previous ``stop()`` is replaced, which lets ``start()`` be called
-            again.
-        """
-        with self._client_lock:
-            if self._client is None or self._client.is_closed:
-                self._client = httpx.Client(
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}"
-                    }
-                )
-            return self._client
-
-    def _close_client(self) -> None:
-        """Close the shared HTTP client, ignoring errors."""
-        with self._client_lock:
-            client, self._client = self._client, None
-        if client is not None:
-            try:
-                client.close()
-            except Exception:
-                pass
 
     def insert_event(self, event: Any) -> None:
         """Queue a probe event for batch upload.
@@ -247,8 +256,15 @@ class Uploader:
         """
         try:
             self._event_buffer.push(event.to_dict())
-        except Exception:
-            pass
+        except Exception as exc:
+            with self._capture_lock:
+                self._event_serialization_failures += 1
+                self._increment_trace_counter(
+                    self._event_serialization_failed_by_trace,
+                    str(getattr(event, "trace_id", "") or ""),
+                    1,
+                )
+            logger.debug("Event serialization failed: %s", exc)
 
     def bind_engine(self, engine: Any) -> None:
         """Attach the engine whose graph and runtime state will be uploaded.
@@ -266,9 +282,6 @@ class Uploader:
 
     @staticmethod
     def _identity_headers() -> Dict[str, str]:
-        # Resolved on every request, not cached: the identity is what keeps
-        # a reused OS PID (or a forked worker) from being merged with an
-        # earlier process lifetime on the backend.
         worker_instance_id, worker_pid = (
             current_worker_identity()
         )
@@ -300,8 +313,6 @@ class Uploader:
         if self._running:
             return
         self._running = True
-        # Daemon threads so a forgotten stop() never blocks interpreter exit;
-        # the cost is that unflushed data is lost, which stop() exists to avoid.
         self._thread = threading.Thread(
             target=self._run,
             daemon=True,
@@ -331,21 +342,16 @@ class Uploader:
         Notes
         -----
         This method joins the upload and heartbeat threads, waiting up to five
-        seconds for each, then flushes every buffered event (not just one
-        batch) and a final graph snapshot, and closes the HTTP client. It is
-        called by ``origintracer.shutdown()``.
+        seconds for each. It is called by ``origintracer.shutdown()``.
         """
         self._running = False
-        # Join before the final flush so the background thread is not
-        # draining the buffer at the same time as this one.
+        # Final flushes on the calling thread
+        self._flush_events()
+        self._flush_snapshot()
         if self._thread:
             self._thread.join(timeout=5)
         if self._runtime_status_thread:
             self._runtime_status_thread.join(timeout=5)
-        # Final flushes on the calling thread
-        self._flush_all_events()
-        self._flush_snapshot()
-        self._close_client()
         logger.info(
             "Uploader stopped  events_sent=%d  snapshots_sent=%d",
             self._events_sent_total,
@@ -386,8 +392,6 @@ class Uploader:
         """
         last_status = 0.0
         while self._running:
-            # monotonic: the interval must not jump if the wall clock is
-            # adjusted. (The payload's observed_at below uses wall time.)
             now = time.monotonic()
             if (
                 self._engine is not None
@@ -399,20 +403,82 @@ class Uploader:
                 last_status = now
             time.sleep(1)
 
-    def _flush_events(self) -> bool:
-        """
-        Drain one batch from the event buffer and POST to /api/v1/events.
-        Silently discards on any error - probe events are best-effort.
+    def _increment_trace_counter(
+        self,
+        counters: OrderedDict[str, int],
+        trace_id: str,
+        count: int,
+    ) -> None:
+        if trace_id in counters:
+            counters[trace_id] += count
+            counters.move_to_end(trace_id)
+            return
+        if len(counters) >= 256:
+            counters.popitem(last=False)
+            self._capture_trace_counts_truncated = True
+        counters[trace_id] = count
 
-        Returns
-        -------
-        bool
-            ``True`` if there was nothing to send or the batch was accepted,
-            ``False`` if the upload failed (the batch is discarded).
+    def _record_failed_event_batch(
+        self, batch: List[Dict]
+    ) -> None:
+        with self._capture_lock:
+            self._failed_event_sends += 1
+            self._failed_event_events_total += len(batch)
+            for event in batch:
+                self._increment_trace_counter(
+                    self._failed_event_by_trace,
+                    str(event.get("trace_id") or ""),
+                    1,
+                )
+
+    def _record_backend_rejections(
+        self, rejected_by_trace: Dict[str, Any]
+    ) -> None:
+        with self._capture_lock:
+            for trace_id, count in rejected_by_trace.items():
+                try:
+                    rejected = max(0, int(count))
+                except (TypeError, ValueError):
+                    continue
+                if not rejected:
+                    continue
+                self._backend_rejected_events_total += rejected
+                self._increment_trace_counter(
+                    self._backend_rejected_by_trace,
+                    str(trace_id),
+                    rejected,
+                )
+
+    def _capture_diagnostics(self) -> Dict[str, Any]:
+        with self._capture_lock:
+            return {
+                "upload_failed_events_total": self._failed_event_events_total,
+                "upload_failed_events_by_trace": dict(
+                    self._failed_event_by_trace
+                ),
+                "backend_rejected_events_total": (
+                    self._backend_rejected_events_total
+                ),
+                "event_serialization_failed_total": (
+                    self._event_serialization_failures
+                ),
+                "event_serialization_failed_by_trace": dict(
+                    self._event_serialization_failed_by_trace
+                ),
+                "backend_rejected_events_by_trace": dict(
+                    self._backend_rejected_by_trace
+                ),
+                "trace_counts_truncated": self._capture_trace_counts_truncated,
+            }
+
+    def _flush_events(self) -> None:
+        """
+        Drain the event buffer and POST to /api/v1/events.
+        Silently discards on any error - probe events are best-effort.
         """
         batch = self._event_buffer.drain(self._max_batch)
         if not batch:
-            return True
+            return
         payload = {
             "events": batch,
             "count": len(batch),
@@ -421,10 +487,11 @@ class Uploader:
 
         try:
             body, content_type = _serialize_events(payload)
-            response = self._http().post(
+            response = httpx.post(
                 f"{self._endpoint}/api/v1/events",
                 content=body,
                 headers={
+                    "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": content_type,
                     **self._identity_headers(),
                 },
@@ -432,14 +499,23 @@ class Uploader:
             )
             if response.status_code == 200:
                 self._events_sent_total += len(batch)
+                try:
+                    rejected_by_trace = response.json().get(
+                        "errors_by_trace", {}
+                    )
+                except Exception:
+                    rejected_by_trace = {}
+                if isinstance(rejected_by_trace, dict):
+                    self._record_backend_rejections(
+                        rejected_by_trace
+                    )
                 logger.debug(
                     "Events uploaded: %d  total=%d",
                     len(batch),
                     self._events_sent_total,
                 )
-                return True
             else:
-                self._failed_event_sends += 1
+                self._record_failed_event_batch(batch)
                 logger.warning(
                     "Event upload failed: HTTP %d — %s",
                     response.status_code,
@@ -447,34 +523,22 @@ class Uploader:
                 )
 
         except ImportError:
+            self._record_failed_event_batch(batch)
             logger.debug(
                 "httpx not installed - uploader inactive  "
                 "(pip install httpx)"
             )
         except httpx.TimeoutException as e:
+            self._record_failed_event_batch(batch)
             logger.debug(
                 "Timeout — backend not responding: %s", e
             )
         except httpx.ConnectError as e:
+            self._record_failed_event_batch(batch)
             logger.debug("Connection error: %s", e)
         except Exception as exc:
-            self._failed_event_sends += 1
+            self._record_failed_event_batch(batch)
             logger.debug("Event upload error: %s", exc)
-        return False
-
-    def _flush_all_events(self) -> None:
-        """Send every buffered event, one batch at a time.
-
-        Used on shutdown, where a single batch would silently drop whatever
-        was queued beyond ``max_batch_size`` (the buffer holds up to 20,000
-        events). Stops at the first failed batch: failed batches are
-        discarded rather than retried, so continuing against an unreachable
-        backend would only throw away the rest of the buffer one timeout at a
-        time.
-        """
-        while len(self._event_buffer):
-            if not self._flush_events():
-                break
 
     def _flush_snapshot(self) -> None:
         """
@@ -512,10 +576,11 @@ class Uploader:
 
         # Send snapshot
         try:
-            snapshot_resp = self._http().post(
+            snapshot_resp = httpx.post(
                 f"{self._endpoint}/api/v1/graph/snapshot",
                 content=data,
                 headers={
+                    "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": content_type,
                     **self._identity_headers(),
                 },
@@ -539,9 +604,7 @@ class Uploader:
                     snapshot_resp.status_code,
                     snapshot_resp.text[:200],
                 )
-                # A diff describes changes relative to a snapshot the backend
-                # holds, so it is meaningless if the snapshot did not land.
-                return
+                return  # don’t send diff if snapshot failed
 
         except httpx.TimeoutException as exc:
             self._failed_snap_sends += 1
@@ -562,10 +625,13 @@ class Uploader:
             return
 
         try:
-            diff_resp = self._http().post(
+            diff_resp = httpx.post(
                 f"{self._endpoint}/api/v1/graph/diff",
                 json=latest_diff,
-                headers=self._identity_headers(),
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
+                },
                 timeout=5.0,
             )
 
@@ -610,14 +676,17 @@ class Uploader:
                 match.to_dict()
                 for match in self._engine.evaluate()
             ]
-            response = self._http().post(
+            response = httpx.post(
                 f"{self._endpoint}/api/v1/causal/report",
                 json={
                     "worker_instance_id": worker_instance_id,
                     "worker_pid": str(worker_pid),
                     "matches": matches,
                 },
-                headers=self._identity_headers(),
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
+                },
                 timeout=10.0,
             )
             if response.status_code != 200:
@@ -651,8 +720,14 @@ class Uploader:
         graph = engine.graph
         tracker = getattr(engine, "tracker", None)
         probes = getattr(engine, "probes", None) or []
-        # Counts are read under the graph's own lock so the two numbers come
-        # from the same moment, not from either side of a concurrent update.
+        try:
+            from origintracer.sdk.emitter import (
+                stats as emitter_stats,
+            )
+
+            emitter_capture = emitter_stats()
+        except Exception:
+            emitter_capture = {"available": False}
         with graph._lock:
             graph_nodes = len(graph._nodes)
             graph_edges = len(graph._edge_index)
@@ -672,6 +747,14 @@ class Uploader:
             "active_requests": (
                 tracker.active_count() if tracker else 0
             ),
+            "trace_lifecycle": (
+                tracker.diagnostics() if tracker else None
+            ),
+            "event_capture": {
+                "emitter": emitter_capture,
+                "uploader_queue": self._event_buffer.diagnostics(),
+                "uploader": self._capture_diagnostics(),
+            },
             "probes_active": [
                 str(getattr(probe, "name", probe))
                 for probe in probes
@@ -691,13 +774,16 @@ class Uploader:
             ),
         }
         try:
-            response = self._http().post(
+            response = httpx.post(
                 f"{self._endpoint}/api/v1/worker/runtime",
                 json={
                     "status": status,
                     "observed_at": time.time(),
                 },
-                headers=self._identity_headers(),
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
+                },
                 timeout=5.0,
             )
             if response.status_code != 200:
@@ -747,19 +833,21 @@ class Uploader:
 
         Notes
         -----
-        The request uses the current worker identity and the ``customer_id``
-        given to the constructor, and logs upload failures without raising
-        them to the application.
+        The request uses the current worker identity and logs upload failures
+        without raising them to the application.
         """
         try:
-            response = self._http().post(
+            response = httpx.post(
                 f"{self._endpoint}/api/v1/deployment",
                 json={
                     "label": label,
-                    "customer_id": self._customer_id,
+                    "customer_id": "local_dev",
                     "worker_pid": str(os.getpid()),
                 },
-                headers=self._identity_headers(),
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    **self._identity_headers(),
+                },
                 timeout=5.0,
             )
             if response.status_code != 200:
@@ -790,16 +878,16 @@ class Uploader:
         Returns
         -------
         Dict[str, Any]
-            Mapping containing event, snapshot and diff totals, failed upload
+            Mapping containing event and snapshot totals, failed upload
             counts, queue size, engine binding state, and running state.
         """
         return {
             "events_sent_total": self._events_sent_total,
             "snapshots_sent": self._snapshots_sent,
-            "diffs_sent": self._diffs_sent,
             "failed_event_sends": self._failed_event_sends,
+            "failed_event_events_total": self._failed_event_events_total,
+            "event_serialization_failures": self._event_serialization_failures,
             "failed_snap_sends": self._failed_snap_sends,
-            "failed_diffs_sends": self._failed_diffs_sends,
             "event_buffer_size": len(self._event_buffer),
             "engine_bound": self._engine is not None,
             "running": self._running,

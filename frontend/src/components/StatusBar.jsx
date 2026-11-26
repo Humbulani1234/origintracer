@@ -10,7 +10,7 @@ export default function StatusBar({
     : snapshotInventoryLoaded ? "no snapshot" : "loading snapshots";
 
   return (
-    <div style={{ display:"flex", gap:20, alignItems:"center", padding:"5px 14px",
+    <div className="status-bar" style={{ display:"flex", gap:20, alignItems:"center", padding:"5px 14px",
       borderTop:"1px solid var(--border)", background:"var(--bg2)",
       fontFamily:"monospace", fontSize:10, color:"var(--muted)" }}>
       <span>

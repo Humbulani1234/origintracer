@@ -8,11 +8,14 @@ GET /db/  - async view that queries the database
 """
 
 import asyncio
+import os
 import time
 
 import requests
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
+from django.utils.decorators import method_decorator
 from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 
 
 class IndexView(View):
@@ -196,4 +199,80 @@ class NPlusOneView(View):
 
         return JsonResponse(
             {"authors": results, "query_count": len(authors) + 1}
+        )
+
+
+class _RollbackScenarioWrites(Exception):
+    """Abort the demo write transaction after its SQL has been observed."""
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class DuplicateWriteScenarioView(View):
+    """Exercise duplicate-write detection without leaving database changes.
+
+    This demo-only endpoint performs two UPDATE statements inside one
+    transaction, then rolls them back. It gives the write_call_amplification
+    rule a real Django ORM write path to observe while keeping the demo data
+    unchanged. Call it with POST from rule_scenarios_benchmarked.py.
+    """
+
+    def post(self, request):
+        if (
+            os.environ.get("ORIGINTRACER_ENABLE_DEMO_SCENARIOS")
+            != "1"
+        ):
+            raise Http404
+
+        from django.db import transaction
+
+        from django_tracer.models import Author
+
+        try:
+            with transaction.atomic():
+                author = Author.objects.order_by("pk").first()
+                if author is None:
+                    author = Author.objects.create(
+                        name="OriginTracer rollback scenario"
+                    )
+                author.name = (
+                    "OriginTracer rollback scenario one"
+                )
+                author.save(update_fields=["name"])
+                author.name = (
+                    "OriginTracer rollback scenario two"
+                )
+                author.save(update_fields=["name"])
+                raise _RollbackScenarioWrites
+        except _RollbackScenarioWrites:
+            pass
+
+        return JsonResponse(
+            {
+                "writes_observed": 2,
+                "transaction_rolled_back": True,
+            }
+        )
+
+
+class ExternalDependencyScenarioView(View):
+    """Call the runner's local delayed HTTP service for dependency evidence.
+
+    It uses one fixed loopback port instead of accepting a caller-supplied URL
+    or port. The demo-only route cannot be used as a general request proxy.
+    """
+
+    def get(self, request):
+        if (
+            os.environ.get("ORIGINTRACER_ENABLE_DEMO_SCENARIOS")
+            != "1"
+        ):
+            raise Http404
+        response = requests.get(
+            "http://127.0.0.1:18765/slow", timeout=5
+        )
+        return JsonResponse(
+            {
+                "dependency_status": response.status_code,
+                "external_call_observed": True,
+            }
         )

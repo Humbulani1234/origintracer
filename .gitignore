@@ -1,3 +1,4 @@
+origintracer.code-workspace
 origintracer.sublime-workspace
 origintracer.sublime-project
 /env
@@ -28,9 +29,7 @@ build/
 *.egg
 .eggs/
 applications/langgraph/.langgraph_api
-agent/.langgraph_api/
-agent/DOCKER_SET_UP.md
-agent/entrypoint.sh
+agent/PRODUCTION.md
 
 # Testing
 .pytest_cache/
@@ -62,3 +61,11 @@ build/
 # vite cache
 .vite/
 .cache/
+# Django application-only probes and rules stay out of the core repository.
+# Core implementations under origintracer/ remain tracked.
+agent/
+applications/django/probes/
+applications/django/rules/
+test_nginx.py
+test_gunicorn.py
+test_uvicorn.py

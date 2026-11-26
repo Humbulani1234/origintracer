@@ -3,12 +3,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import threading
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, List, Optional
 
 from origintracer.core.event_schema import NormalizedEvent
 from origintracer.core.temporal import GraphDiff
@@ -323,58 +321,6 @@ class BaseRepository(ABC):
         ...
 
     @abstractmethod
-    def get_diffs(
-        self, customer_id: str, worker_instance_id: str
-    ) -> List[Dict[str, Any]]:
-        """Return stored graph diffs for a worker instance.
-
-        Parameters
-        ----------
-        customer_id : str
-            Customer namespace that owns the diffs.
-        worker_instance_id : str
-            Process-instance identity to query.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            Diff records containing ``added_nodes``, ``removed_nodes``,
-            ``added_edges``, ``removed_edges``, ``timestamp`` and ``label``.
-            An empty list means no diff is stored.
-
-        Notes
-        -----
-        Ordering is implementation-defined: :class:`PGEventRepository`
-        returns newest first, :class:`InMemoryRepository` oldest first.
-        """
-        ...
-
-    @abstractmethod
-    def get_label_diff(
-        self,
-        customer_id: str,
-        worker_instance_id: str,
-        label: Optional[str],
-    ) -> Optional[Dict[str, Any]]:
-        """Return the newest stored graph diff carrying a given label.
-
-        Parameters
-        ----------
-        customer_id : str
-            Customer namespace that owns the diff.
-        worker_instance_id : str
-            Process-instance identity to query.
-        label : str or None
-            Label to match. ``None`` matches diffs stored without a label.
-
-        Returns
-        -------
-        Dict[str, Any] or None
-            The newest matching diff, or ``None`` when none matches.
-        """
-        ...
-
-    @abstractmethod
     def save_causal_matches(
         self,
         customer_id: str,
@@ -429,45 +375,6 @@ class BaseRepository(ABC):
         """
         ...
 
-    def insert_events(
-        self, events: List[NormalizedEvent]
-    ) -> None:
-        """Store a batch of normalized probe events.
-
-        Parameters
-        ----------
-        events : List[NormalizedEvent]
-            Events emitted by runtime probes.
-
-        Returns
-        -------
-        None
-
-        Notes
-        -----
-        The default implementation calls :meth:`insert_event` once per
-        event. Implementations with a bulk write path should override it so a
-        whole upload batch costs one round trip and one commit.
-        """
-        for event in events:
-            self.insert_event(event)
-
-    def prune_events(self, older_than: float) -> int:
-        """Delete events older than a Unix timestamp.
-
-        Parameters
-        ----------
-        older_than : float
-            Events whose ``wall_time`` is earlier than this value are removed.
-
-        Returns
-        -------
-        int
-            Number of events removed. Repositories that already bound their
-            own size return ``0``.
-        """
-        return 0
-
 
 _PG_CREATE_EVENTS = """
 CREATE TABLE IF NOT EXISTS ot_events (
@@ -486,39 +393,20 @@ CREATE TABLE IF NOT EXISTS ot_events (
     tid INT,
     metadata JSONB
 );
-
-CREATE INDEX IF NOT EXISTS idx_ot_events_trace
-    ON ot_events (trace_id);
-
-CREATE INDEX IF NOT EXISTS idx_ot_events_customer
-    ON ot_events (customer_id, wall_time DESC);
-
-CREATE INDEX IF NOT EXISTS idx_ot_events_worker
-    ON ot_events (customer_id, pid, wall_time DESC);
-
-CREATE INDEX IF NOT EXISTS idx_ot_events_wall_time
-    ON ot_events (wall_time);
-
-CREATE INDEX IF NOT EXISTS idx_ot_events_service
-    ON ot_events (service);
-
-CREATE INDEX IF NOT EXISTS idx_ot_events_probe
-    ON ot_events (probe);
-
+CREATE INDEX IF NOT EXISTS idx_ot_events_trace ON ot_events (trace_id);
+CREATE INDEX IF NOT EXISTS idx_ot_events_customer ON ot_events (customer_id, wall_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ot_events_worker ON ot_events (customer_id, pid, wall_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ot_events_service ON ot_events (service);
+CREATE INDEX IF NOT EXISTS idx_ot_events_probe ON ot_events (probe);
 CREATE INDEX IF NOT EXISTS idx_ot_events_instance_probe
-    ON ot_events (
-        customer_id,
-        (metadata->>'worker_instance_id'),
-        probe,
-        wall_time DESC
-    );
+    ON ot_events (customer_id, (metadata->>'worker_instance_id'), probe, wall_time DESC);
 """
 
 _PG_CREATE_SNAPSHOTS = """
 CREATE TABLE IF NOT EXISTS ot_snapshots (
     id BIGSERIAL PRIMARY KEY,
     customer_id TEXT NOT NULL,
-    worker_instance_id TEXT NOT NULL,
+    worker_instance_id TEXT,
     worker_pid TEXT,
     received_at DOUBLE PRECISION NOT NULL,
     content_type TEXT NOT NULL DEFAULT 'application/msgpack',
@@ -526,17 +414,18 @@ CREATE TABLE IF NOT EXISTS ot_snapshots (
     edge_count INT,
     data BYTEA NOT NULL
 );
-
+ALTER TABLE ot_snapshots ADD COLUMN IF NOT EXISTS worker_instance_id TEXT;
+ALTER TABLE ot_snapshots ADD COLUMN IF NOT EXISTS worker_pid TEXT;
+ALTER TABLE ot_snapshots ALTER COLUMN worker_pid TYPE TEXT USING worker_pid::text;
+UPDATE ot_snapshots SET worker_instance_id = 'legacy-' || id::text
+    WHERE worker_instance_id IS NULL;
+ALTER TABLE ot_snapshots ALTER COLUMN worker_instance_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ot_snapshots_customer
-    ON ot_snapshots (
-        customer_id,
-        worker_instance_id,
-        received_at DESC
-    );
+    ON ot_snapshots (customer_id, worker_instance_id, received_at DESC);
 """
 
 _PG_CREATE_WORKER_RUNTIME = """
-CREATE TABLE IF NOT EXISTS ot_worker_runtime_status (
+CREATE TABLE IF NOT EXISTS worker_runtime_status (
     customer_id TEXT NOT NULL,
     worker_instance_id TEXT NOT NULL,
     worker_pid TEXT NOT NULL,
@@ -544,9 +433,8 @@ CREATE TABLE IF NOT EXISTS ot_worker_runtime_status (
     status JSONB NOT NULL,
     PRIMARY KEY (customer_id, worker_instance_id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_ot_worker_runtime_seen
-    ON ot_worker_runtime_status (customer_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_worker_runtime_seen
+    ON worker_runtime_status (customer_id, observed_at DESC);
 """
 
 _PG_CREATE_MARKERS = """
@@ -560,8 +448,9 @@ CREATE TABLE IF NOT EXISTS ot_markers (
 );
 """
 
+
 _PG_CREATE_GRAPH_DIFFS = """
-CREATE TABLE IF NOT EXISTS ot_graph_diffs (
+CREATE TABLE IF NOT EXISTS graph_diffs (
     id SERIAL PRIMARY KEY,
     customer_id VARCHAR(100) NOT NULL,
     worker_instance_id TEXT,
@@ -571,12 +460,12 @@ CREATE TABLE IF NOT EXISTS ot_graph_diffs (
     removed_nodes JSONB,
     added_edges JSONB,
     removed_edges JSONB,
-    label VARCHAR(200)
+    label VARCHAR(200) -- populated when a deployment marker exists
 );
 """
 
 _PG_CREATE_CAUSAL_RULES = """
-CREATE TABLE IF NOT EXISTS ot_causal_matches (
+CREATE TABLE IF NOT EXISTS causal_matches (
     id SERIAL PRIMARY KEY,
     customer_id VARCHAR(255) NOT NULL,
     worker_instance_id TEXT,
@@ -588,206 +477,98 @@ CREATE TABLE IF NOT EXISTS ot_causal_matches (
 """
 
 
-_PG_INSERT_EVENT = """
-INSERT INTO ot_events
-    (customer_id, worker_pid, trace_id, span_id, parent_span_id,
-     probe, service, name, wall_time,
-     duration_ns, pid, tid, metadata)
-VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-"""
-
-# Tables that keep only the newest N rows per worker instance, mapped to the
-# column that defines "newest".
-_PRUNABLE_TABLES = {
-    "ot_snapshots": "received_at",
-    "ot_graph_diffs": "snapshot_time",
-    "ot_causal_matches": "timestamp",
-}
-
-
 class PGEventRepository(BaseRepository):
-    """PostgreSQL-backed store.
-
-    Parameters
-    ----------
-    conn : Any, optional
-        A single DB-API connection (for example ``psycopg2``). Operations are
-        serialised with a lock, because one connection cannot safely run
-        interleaved transactions from several threads.
-    pool : Any, optional
-        A connection pool exposing ``getconn()`` and ``putconn()`` (for
-        example ``psycopg2.pool.ThreadedConnectionPool``). Each operation
-        borrows its own connection, so concurrent requests never share a
-        transaction. Exactly one of ``conn`` and ``pool`` must be given.
-    snapshots_kept : int, optional
-        Number of newest snapshots retained per worker instance.
-    diffs_kept : int, optional
-        Number of newest graph diffs retained per worker instance.
-    causal_kept : int, optional
-        Number of newest causal evaluations retained per worker instance.
-
-    Notes
-    -----
-    Every operation runs in its own transaction. On failure the transaction
-    is rolled back so the connection stays usable: writes log a warning and
-    are dropped, reads return an empty result (``[]`` or ``None``).
-
-    Snapshots, diffs and causal matches are pruned in the same transaction
-    that inserts them, which mirrors the bounded buffers of
-    :class:`InMemoryRepository`. Events are not pruned automatically; call
-    :meth:`prune_events` from a periodic job.
+    """
+    PostgreSQL-backed store.
     """
 
-    def __init__(
-        self,
-        conn: Any = None,
-        *,
-        pool: Any = None,
-        snapshots_kept: int = 5,
-        diffs_kept: int = 500,
-        causal_kept: int = 200,
-    ) -> None:
-        if (conn is None) == (pool is None):
-            raise ValueError(
-                "Provide exactly one of 'conn' or 'pool'"
-            )
+    def __init__(self, conn: Any) -> None:
         self._conn = conn
-        self._pool = pool
-        # Only used in single-connection mode; a pool hands out one
-        # connection per operation so no lock is needed there.
-        self._lock = threading.Lock()
-        self._snapshots_kept = max(1, int(snapshots_kept))
-        self._diffs_kept = max(1, int(diffs_kept))
-        self._causal_kept = max(1, int(causal_kept))
         self._ensure_schema()
 
-    @contextmanager
-    def _session(self) -> Iterator[Any]:
-        """Yield a connection that the caller has exclusive use of."""
-        if self._pool is not None:
-            conn = self._pool.getconn()
-            try:
-                yield conn
-            finally:
-                self._pool.putconn(conn)
-        else:
-            with self._lock:
-                yield self._conn
-
-    @contextmanager
-    def _transaction(self) -> Iterator[Any]:
-        """Yield a cursor; commit on success, roll back and re-raise on error.
-
-        Reads go through here too. psycopg2 opens a transaction on the first
-        statement, so a SELECT without a commit or rollback leaves the
-        connection "idle in transaction" (and, with a pool, hands that state
-        to the next borrower). Committing after reads avoids that, and a
-        failed statement is always rolled back so it cannot poison later ones.
-        """
-        with self._session() as conn:
-            try:
-                with conn.cursor() as cur:
-                    yield cur
-                conn.commit()
-            except Exception:
-                self._safe_rollback(conn)
-                raise
-
     def _ensure_schema(self) -> None:
-        # Unlike the data methods, a schema failure is raised: running
-        # without tables is not recoverable.
-        with self._transaction() as cur:
+        with self._conn.cursor() as cur:
             cur.execute(_PG_CREATE_EVENTS)
+            cur.execute(
+                "ALTER TABLE ot_events ADD COLUMN IF NOT EXISTS pid INT"
+            )
+            cur.execute(
+                "ALTER TABLE ot_events ADD COLUMN IF NOT EXISTS worker_pid TEXT"
+            )
+            cur.execute(
+                "UPDATE ot_events SET pid = NULLIF(worker_pid, '')::integer "
+                "WHERE pid IS NULL AND worker_pid ~ '^[0-9]+$'"
+            )
             cur.execute(_PG_CREATE_SNAPSHOTS)
             cur.execute(_PG_CREATE_WORKER_RUNTIME)
             cur.execute(_PG_CREATE_MARKERS)
             cur.execute(_PG_CREATE_GRAPH_DIFFS)
+            cur.execute(
+                "ALTER TABLE ot_markers ADD COLUMN IF NOT EXISTS worker_pid TEXT"
+            )
+            cur.execute(
+                "ALTER TABLE ot_markers ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
+            )
+            cur.execute(
+                "UPDATE ot_markers SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
+            )
+            cur.execute(
+                "UPDATE ot_markers SET worker_pid = 'unknown' WHERE worker_pid IS NULL"
+            )
+            cur.execute(
+                "ALTER TABLE ot_markers ALTER COLUMN worker_instance_id SET NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ot_markers_worker ON ot_markers (customer_id, worker_instance_id, created_at DESC)"
+            )
+            cur.execute(
+                "ALTER TABLE graph_diffs ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
+            )
+            cur.execute(
+                "ALTER TABLE graph_diffs ADD COLUMN IF NOT EXISTS worker_pid TEXT"
+            )
+            cur.execute(
+                "UPDATE graph_diffs SET worker_pid = 'unknown' WHERE worker_pid IS NULL"
+            )
+            cur.execute(
+                "UPDATE graph_diffs SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
+            )
+            cur.execute(
+                "ALTER TABLE graph_diffs ALTER COLUMN worker_instance_id SET NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_graph_diffs_worker ON graph_diffs (customer_id, worker_instance_id, snapshot_time DESC)"
+            )
             cur.execute(_PG_CREATE_CAUSAL_RULES)
-            # Additional indexes for worker-specific lookups
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ot_markers_worker
-                ON ot_markers (
-                    customer_id,
-                    worker_instance_id,
-                    created_at DESC
-                )
-            """)
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ot_graph_diffs_worker
-                ON ot_graph_diffs (
-                    customer_id,
-                    worker_instance_id,
-                    snapshot_time DESC
-                )
-            """)
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ot_causal_worker
-                ON ot_causal_matches (
-                    customer_id,
-                    worker_instance_id,
-                    timestamp DESC
-                )
-            """)
-
-    @staticmethod
-    def _prune_latest(
-        cur: Any,
-        table: str,
-        customer_id: str,
-        worker_instance_id: str,
-        keep: int,
-    ) -> None:
-        """Delete all but the newest ``keep`` rows of one worker instance.
-
-        Runs on the caller's cursor so the prune commits atomically with the
-        insert that triggered it. ``id`` breaks ties between rows that share
-        a timestamp, so the newest insert is never pruned by mistake. The
-        table name is looked up in ``_PRUNABLE_TABLES`` rather than taken
-        from the caller, because it is interpolated into the SQL text.
-        """
-        order_column = _PRUNABLE_TABLES[table]
-        cur.execute(
-            f"""
-            DELETE FROM {table}
-            WHERE customer_id = %s
-              AND worker_instance_id = %s
-              AND id NOT IN (
-                  SELECT id FROM {table}
-                  WHERE customer_id = %s
-                    AND worker_instance_id = %s
-                  ORDER BY {order_column} DESC, id DESC
-                  LIMIT %s
-              )
-            """,
-            (
-                customer_id,
-                worker_instance_id,
-                customer_id,
-                worker_instance_id,
-                keep,
-            ),
-        )
+            cur.execute(
+                "ALTER TABLE causal_matches ADD COLUMN IF NOT EXISTS worker_instance_id TEXT"
+            )
+            cur.execute(
+                "ALTER TABLE causal_matches ADD COLUMN IF NOT EXISTS worker_pid TEXT"
+            )
+            cur.execute(
+                "UPDATE causal_matches SET worker_pid = 'unknown' WHERE worker_pid IS NULL"
+            )
+            cur.execute(
+                "UPDATE causal_matches SET worker_instance_id = 'legacy' WHERE worker_instance_id IS NULL"
+            )
+            cur.execute(
+                "ALTER TABLE causal_matches ALTER COLUMN worker_instance_id SET NOT NULL"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_causal_worker ON causal_matches (customer_id, worker_instance_id, timestamp DESC)"
+            )
+        self._conn.commit()
 
     def get_diffs(
         self, customer_id: str, worker_instance_id: str
     ) -> List[Dict[str, Any]]:
-        try:
-            with self._transaction() as cur:
-                cur.execute(
-                    """
-                    SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label
-                    FROM ot_graph_diffs
-                    WHERE customer_id = %s
-                      AND worker_instance_id = %s
-                    ORDER BY snapshot_time DESC
-                    LIMIT 500
-                    """,
-                    (customer_id, worker_instance_id),
-                )
-                rows = cur.fetchall()
-        except Exception as exc:
-            logger.warning("PG get_diffs failed: %s", exc)
-            return []
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label FROM graph_diffs WHERE customer_id=%s AND worker_instance_id=%s ORDER BY snapshot_time DESC LIMIT 500",
+                (customer_id, worker_instance_id),
+            )
+            rows = cur.fetchall()
         return [
             {
                 "added_nodes": r[0] or [],
@@ -808,24 +589,12 @@ class PGEventRepository(BaseRepository):
         worker_instance_id: str,
         label: Optional[str],
     ) -> Optional[Dict[str, Any]]:
-        try:
-            with self._transaction() as cur:
-                cur.execute(
-                    """
-                    SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label
-                    FROM ot_graph_diffs
-                    WHERE customer_id = %s
-                      AND worker_instance_id = %s
-                      AND label IS NOT DISTINCT FROM %s
-                    ORDER BY snapshot_time DESC
-                    LIMIT 1
-                    """,
-                    (customer_id, worker_instance_id, label),
-                )
-                row = cur.fetchone()
-        except Exception as exc:
-            logger.warning("PG get_label_diff failed: %s", exc)
-            return None
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT added_nodes, removed_nodes, added_edges, removed_edges, snapshot_time, label FROM graph_diffs WHERE customer_id=%s AND worker_instance_id=%s AND label IS NOT DISTINCT FROM %s ORDER BY snapshot_time DESC LIMIT 1",
+                (customer_id, worker_instance_id, label),
+            )
+            row = cur.fetchone()
         if row is None:
             return None
         return {
@@ -837,75 +606,43 @@ class PGEventRepository(BaseRepository):
             "label": row[5],
         }
 
-    @staticmethod
-    def _event_row(event: NormalizedEvent) -> tuple:
-        """Map one event to the parameter tuple of ``_PG_INSERT_EVENT``."""
-        return (
-            event.metadata.get("customer_id", "default"),
-            str(event.metadata.get("worker_pid", event.pid)),
-            event.trace_id,
-            event.span_id,
-            event.parent_span_id,
-            event.probe,
-            event.service,
-            event.name,
-            event.wall_time,
-            event.duration_ns,
-            event.pid,
-            event.tid,
-            json.dumps(event.metadata),
-        )
-
     def insert_event(self, event: NormalizedEvent) -> None:
         try:
-            row = self._event_row(event)
-            with self._transaction() as cur:
-                cur.execute(_PG_INSERT_EVENT, row)
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ot_events
+                        (customer_id, worker_pid, trace_id, span_id, parent_span_id,
+                         probe, service, name, wall_time,
+                         duration_ns, pid, tid, metadata)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        event.metadata.get(
+                            "customer_id", "default"
+                        ),
+                        str(
+                            event.metadata.get(
+                                "worker_pid", event.pid
+                            )
+                        ),
+                        event.trace_id,
+                        event.span_id,
+                        event.parent_span_id,
+                        event.probe,
+                        event.service,
+                        event.name,
+                        event.wall_time,
+                        event.duration_ns,
+                        event.pid,
+                        event.tid,
+                        json.dumps(event.metadata),
+                    ),
+                )
+            self._conn.commit()
         except Exception as exc:
             logger.warning("PG insert_event failed: %s", exc)
-
-    def insert_events(
-        self, events: List[NormalizedEvent]
-    ) -> None:
-        """Store a batch of events with one round trip and one commit.
-
-        Parameters
-        ----------
-        events : List[NormalizedEvent]
-            Events emitted by runtime probes.
-
-        Returns
-        -------
-        None
-
-        Notes
-        -----
-        Events that cannot be mapped to a row (for example missing metadata)
-        are skipped individually, so one malformed event does not discard the
-        rest of the batch. A database error drops the whole batch.
-        """
-        rows = []
-        for event in events:
-            try:
-                rows.append(self._event_row(event))
-            except Exception as exc:
-                logger.warning(
-                    "PG insert_events skipped a malformed event: %s",
-                    exc,
-                )
-        if not rows:
-            return
-        try:
-            with self._transaction() as cur:
-                # executemany keeps this driver-agnostic; with psycopg2,
-                # execute_values is faster still if profiling ever asks for it.
-                cur.executemany(_PG_INSERT_EVENT, rows)
-        except Exception as exc:
-            logger.warning(
-                "PG insert_events failed (%d rows): %s",
-                len(rows),
-                exc,
-            )
+            self._safe_rollback()
 
     def query_events(
         self,
@@ -965,54 +702,26 @@ class PGEventRepository(BaseRepository):
             LIMIT  %s
         """
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
+            cols = [
+                "trace_id",
+                "span_id",
+                "parent_span_id",
+                "probe",
+                "service",
+                "name",
+                "wall_time",
+                "duration_ns",
+                "pid",
+                "tid",
+                "metadata",
+            ]
+            return [dict(zip(cols, r)) for r in rows]
         except Exception as exc:
             logger.error("PG query_events failed: %s", exc)
             return []
-        cols = [
-            "trace_id",
-            "span_id",
-            "parent_span_id",
-            "probe",
-            "service",
-            "name",
-            "wall_time",
-            "duration_ns",
-            "pid",
-            "tid",
-            "metadata",
-        ]
-        return [dict(zip(cols, r)) for r in rows]
-
-    def prune_events(self, older_than: float) -> int:
-        """Delete events older than a Unix timestamp.
-
-        Parameters
-        ----------
-        older_than : float
-            Events whose ``wall_time`` is earlier than this value are removed.
-
-        Returns
-        -------
-        int
-            Number of events removed, or ``0`` if the delete failed.
-
-        Examples
-        --------
-        >>> repo.prune_events(time.time() - 7 * 24 * 3600)  # keep a week
-        """
-        try:
-            with self._transaction() as cur:
-                cur.execute(
-                    "DELETE FROM ot_events WHERE wall_time < %s",
-                    (older_than,),
-                )
-                return int(cur.rowcount or 0)
-        except Exception as exc:
-            logger.warning("PG prune_events failed: %s", exc)
-            return 0
 
     def insert_snapshot(
         self,
@@ -1025,7 +734,7 @@ class PGEventRepository(BaseRepository):
         edge_count: int = 0,
     ) -> None:
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO ot_snapshots
@@ -1044,17 +753,10 @@ class PGEventRepository(BaseRepository):
                         data,
                     ),
                 )
-                # Snapshots are full graph copies uploaded every interval, so
-                # without pruning this table grows without bound.
-                self._prune_latest(
-                    cur,
-                    "ot_snapshots",
-                    customer_id,
-                    worker_instance_id,
-                    self._snapshots_kept,
-                )
+            self._conn.commit()
         except Exception as exc:
             logger.warning("PG insert_snapshot failed: %s", exc)
+            self._safe_rollback()
 
     def get_latest_snapshot(
         self,
@@ -1062,13 +764,13 @@ class PGEventRepository(BaseRepository):
         worker_instance_id: str,
     ) -> Optional[Dict[str, Any]]:
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT data, content_type, received_at, worker_pid, worker_instance_id, node_count, edge_count
                     FROM   ot_snapshots
                     WHERE  customer_id = %s AND worker_instance_id = %s
-                    ORDER  BY received_at DESC, id DESC
+                    ORDER  BY received_at DESC
                     LIMIT  1
                     """,
                     (customer_id, worker_instance_id),
@@ -1096,23 +798,17 @@ class PGEventRepository(BaseRepository):
     def list_latest_snapshots(
         self, customer_id: str
     ) -> List[Dict[str, Any]]:
-        try:
-            with self._transaction() as cur:
-                cur.execute(
-                    """
-                    SELECT DISTINCT ON (worker_instance_id) worker_instance_id, worker_pid,
-                           data, content_type, received_at, node_count, edge_count
-                    FROM ot_snapshots WHERE customer_id = %s
-                    ORDER BY worker_instance_id, received_at DESC, id DESC
-                    """,
-                    (customer_id,),
-                )
-                rows = cur.fetchall()
-        except Exception as exc:
-            logger.warning(
-                "PG list_latest_snapshots failed: %s", exc
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (worker_instance_id) worker_instance_id, worker_pid,
+                       data, content_type, received_at, node_count, edge_count
+                FROM ot_snapshots WHERE customer_id = %s
+                ORDER BY worker_instance_id, received_at DESC
+            """,
+                (customer_id,),
             )
-            return []
+            rows = cur.fetchall()
         return [
             {
                 "worker_instance_id": r[0],
@@ -1135,10 +831,10 @@ class PGEventRepository(BaseRepository):
         observed_at: float,
     ) -> None:
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO ot_worker_runtime_status
+                    INSERT INTO worker_runtime_status
                         (customer_id, worker_instance_id, worker_pid, observed_at, status)
                     VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (customer_id, worker_instance_id)
@@ -1154,20 +850,22 @@ class PGEventRepository(BaseRepository):
                         json.dumps(status),
                     ),
                 )
+            self._conn.commit()
         except Exception as exc:
             logger.warning(
                 "PG upsert_worker_runtime failed: %s", exc
             )
+            self._safe_rollback()
 
     def get_worker_runtime(
         self, customer_id: str, worker_instance_id: str
     ) -> Optional[Dict[str, Any]]:
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT worker_pid, observed_at, status
-                    FROM ot_worker_runtime_status
+                    FROM worker_runtime_status
                     WHERE customer_id = %s AND worker_instance_id = %s
                     """,
                     (customer_id, worker_instance_id),
@@ -1193,11 +891,11 @@ class PGEventRepository(BaseRepository):
         self, customer_id: str
     ) -> List[Dict[str, Any]]:
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT worker_instance_id, worker_pid, observed_at, status
-                    FROM ot_worker_runtime_status
+                    FROM worker_runtime_status
                     WHERE customer_id = %s
                     ORDER BY observed_at DESC
                     """,
@@ -1230,45 +928,32 @@ class PGEventRepository(BaseRepository):
         diff: Dict,
         worker_pid: Optional[str] = None,
     ) -> None:
-        try:
-            with self._transaction() as cur:
-                cur.execute(
-                    """INSERT INTO ot_graph_diffs
-                    (customer_id, worker_instance_id, worker_pid, snapshot_time, added_nodes, removed_nodes, added_edges, removed_edges, label)
-                    VALUES (%s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s)""",
-                    (
-                        customer_id,
-                        worker_instance_id,
-                        worker_pid or "unknown",
-                        diff.get("timestamp") or time.time(),
-                        json.dumps(
-                            list(diff.get("added_nodes", []))
-                        ),
-                        json.dumps(
-                            list(diff.get("removed_nodes", []))
-                        ),
-                        json.dumps(
-                            list(diff.get("added_edges", []))
-                        ),
-                        json.dumps(
-                            list(diff.get("removed_edges", []))
-                        ),
-                        diff.get("label"),
-                    ),
-                )
-                # get_diffs only ever reads the newest 500 rows, so older
-                # ones are dead weight.
-                self._prune_latest(
-                    cur,
-                    "ot_graph_diffs",
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO graph_diffs
+                (customer_id, worker_instance_id, worker_pid, snapshot_time, added_nodes, removed_nodes, added_edges, removed_edges, label)
+                VALUES (%s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s)""",
+                (
                     customer_id,
                     worker_instance_id,
-                    self._diffs_kept,
-                )
-        except Exception as exc:
-            logger.warning(
-                "PG insert_graph_diff failed: %s", exc
+                    worker_pid or "unknown",
+                    diff.get("timestamp") or time.time(),
+                    json.dumps(
+                        list(diff.get("added_nodes", []))
+                    ),
+                    json.dumps(
+                        list(diff.get("removed_nodes", []))
+                    ),
+                    json.dumps(
+                        list(diff.get("added_edges", []))
+                    ),
+                    json.dumps(
+                        list(diff.get("removed_edges", []))
+                    ),
+                    diff.get("label"),
+                ),
             )
+        self._conn.commit()
 
     def insert_deployment_marker(
         self,
@@ -1278,7 +963,7 @@ class PGEventRepository(BaseRepository):
         worker_pid: Optional[str] = None,
     ) -> None:
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO ot_markers (customer_id, worker_instance_id, worker_pid, label, created_at)
@@ -1292,8 +977,10 @@ class PGEventRepository(BaseRepository):
                         time.time(),
                     ),
                 )
+            self._conn.commit()
         except Exception as exc:
             logger.warning("PG insert_marker failed: %s", exc)
+            self._safe_rollback()
 
     def get_deployment_marker_time(
         self,
@@ -1302,7 +989,7 @@ class PGEventRepository(BaseRepository):
         label: str,
     ) -> Optional[float]:
         try:
-            with self._transaction() as cur:
+            with self._conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT created_at
@@ -1331,68 +1018,47 @@ class PGEventRepository(BaseRepository):
         timestamp,
         worker_pid=None,
     ):
-        try:
-            with self._transaction() as cur:
-                cur.execute(
-                    "INSERT INTO ot_causal_matches (customer_id, worker_instance_id, worker_pid, timestamp, matches) VALUES (%s, %s, %s, %s, %s)",
-                    (
-                        customer_id,
-                        worker_instance_id,
-                        worker_pid or "unknown",
-                        timestamp,
-                        json.dumps(matches),
-                    ),
-                )
-                # Same cap as the in-memory store's rolling history.
-                self._prune_latest(
-                    cur,
-                    "ot_causal_matches",
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO causal_matches (customer_id, worker_instance_id, worker_pid, timestamp, matches) VALUES (%s, %s, %s, %s, %s)",
+                (
                     customer_id,
                     worker_instance_id,
-                    self._causal_kept,
-                )
-        except Exception as exc:
-            logger.warning(
-                "PG save_causal_matches failed: %s", exc
+                    worker_pid or "unknown",
+                    timestamp,
+                    json.dumps(matches),
+                ),
             )
+        self._conn.commit()
 
     def get_causal_history(
         self, customer_id, worker_instance_id, limit=50
     ):
-        try:
-            with self._transaction() as cur:
-                cur.execute(
-                    "SELECT worker_instance_id, timestamp, matches FROM ot_causal_matches WHERE customer_id = %s AND worker_instance_id = %s ORDER BY timestamp DESC LIMIT %s",
-                    (customer_id, worker_instance_id, limit),
-                )
-                rows = cur.fetchall()
-        except Exception as exc:
-            logger.warning(
-                "PG get_causal_history failed: %s", exc
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT worker_instance_id, worker_pid, timestamp, matches FROM causal_matches WHERE customer_id = %s AND worker_instance_id = %s ORDER BY timestamp DESC LIMIT %s",
+                (customer_id, worker_instance_id, limit),
             )
-            return []
+            rows = cur.fetchall()
         return [
             {
                 "worker_instance_id": row[0],
-                "timestamp": row[1],
-                "matches": row[2],
+                "worker_pid": row[1],
+                "timestamp": row[2],
+                "matches": row[3],
             }
             for row in rows
         ]
 
     def close(self) -> None:
         try:
-            if self._pool is not None:
-                self._pool.closeall()
-            else:
-                self._conn.close()
+            self._conn.close()
         except Exception:
             pass
 
-    @staticmethod
-    def _safe_rollback(conn: Any) -> None:
+    def _safe_rollback(self) -> None:
         try:
-            conn.rollback()
+            self._conn.rollback()
         except Exception:
             pass
 

@@ -680,6 +680,9 @@ class TestConfigMergePipeline:
     def test_defaults_applied_when_no_user_config(self):
         cfg = self._merge({})
         assert "django" in cfg.probes
+        assert (
+            ".probes.external_http_probe" in cfg.builtin_probes
+        )
 
     def test_user_yaml_overrides_defaults(self):
         self._merge({"sample_rate": 0.10})

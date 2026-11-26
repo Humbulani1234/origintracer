@@ -46,7 +46,7 @@ import re
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import (
     Depends,
@@ -58,8 +58,14 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from backend.auth.service import (
+    ApiKeyStore,
+    OIDCVerifier,
+    Principal,
+    authenticate,
+)
 from origintracer.storage.base import InMemoryRepository
 
 logging.basicConfig(
@@ -125,12 +131,20 @@ def _register_causal_rules():
 async def lifespan(app: FastAPI):
     _load_api_keys()
     _init_repository()
+    _init_authentication()
     _load_snapshots_on_startup()
     _register_causal_rules()
     logger.info("OriginTracer backend ready")
     try:
         yield
     finally:
+        if _auth_connection is not None:
+            try:
+                _auth_connection.close()
+            except Exception:
+                logger.exception(
+                    "Could not close API-key storage connection"
+                )
         if _repository and hasattr(_repository, "close"):
             try:
                 _repository.close()
@@ -160,6 +174,12 @@ _graphs: Dict[tuple[str, str], Any] = {}
 # Receipt metadata is retained alongside each in-memory graph and enriched
 # with the latest runtime heartbeat when one arrives.
 _snapshot_metadata: Dict[tuple[str, str], Dict[str, Any]] = {}
+# Recent cumulative Uvicorn request counters per process snapshot. Keeping a
+# short backend-side window lets the API compare sibling Gunicorn workers even
+# though each instrumented process uploads an independent RuntimeGraph.
+_worker_request_samples: Dict[
+    tuple[str, str], list[tuple[float, int]]
+] = {}
 # Latest app-local matches are reported by the process that loaded those rules.
 _reported_causal_matches: Dict[
     tuple[str, str], list[dict[str, Any]]
@@ -177,22 +197,89 @@ _repository: Optional[Any] = None
 
 # API key:customer_id mapping - for development
 _valid_api_keys: Dict[str, str] = {}
+_api_key_store: Optional[ApiKeyStore] = None
+_oidc_verifier: Optional[OIDCVerifier] = None
+_auth_connection: Optional[Any] = None
 
 
 def _load_api_keys() -> None:
-    # Implement proper loading of APIs for real workflow
     global _valid_api_keys
+    _valid_api_keys = {}
     raw = os.getenv("ORIGINTRACER_API_KEYS", "")
     for pair in raw.split(","):
         pair = pair.strip()
         if ":" in pair:
             key, customer = pair.split(":", 1)
             _valid_api_keys[key.strip()] = customer.strip()
-    if not _valid_api_keys:
+    if (
+        not _valid_api_keys
+        and os.getenv("ORIGINTRACER_ENV", "development").lower()
+        != "production"
+    ):
         _valid_api_keys["test-key-123"] = "local_dev"
         logger.warning(
             "ORIGINTRACER_API_KEYS not set - "
-            "test-key-123 accepted for development"
+            "test-key-123 accepted in development mode"
+        )
+    if (
+        not _valid_api_keys
+        and os.getenv("ORIGINTRACER_ENV", "development").lower()
+        == "production"
+    ):
+        logger.info(
+            "No environment API keys configured; OIDC and issued keys remain available"
+        )
+
+
+def _init_authentication() -> None:
+    """Initialize persistent API keys and optional OIDC verification."""
+    global _api_key_store, _oidc_verifier, _auth_connection
+    db_dsn = os.getenv("ORIGINTRACER_DB_DSN")
+    production = (
+        os.getenv("ORIGINTRACER_ENV", "development").lower()
+        == "production"
+    )
+    if production and not db_dsn:
+        raise RuntimeError(
+            "ORIGINTRACER_DB_DSN is required in production for persistent API-key storage"
+        )
+    auth_connection = None
+    if db_dsn:
+        try:
+            import psycopg2
+
+            auth_connection = psycopg2.connect(db_dsn)
+        except Exception as exc:
+            logger.error(
+                "Could not connect to PostgreSQL for API-key storage: %s",
+                exc,
+            )
+            raise RuntimeError(
+                "Persistent API-key storage is unavailable"
+            ) from exc
+    _auth_connection = auth_connection
+    _api_key_store = ApiKeyStore(auth_connection)
+
+    issuer = os.getenv("ORIGINTRACER_OIDC_ISSUER", "").strip()
+    audience = os.getenv(
+        "ORIGINTRACER_OIDC_AUDIENCE", ""
+    ).strip()
+    jwks_url = (
+        os.getenv("ORIGINTRACER_OIDC_JWKS_URL", "").strip()
+        or None
+    )
+    if bool(issuer) != bool(audience):
+        raise RuntimeError(
+            "Configure both ORIGINTRACER_OIDC_ISSUER and ORIGINTRACER_OIDC_AUDIENCE"
+        )
+    _oidc_verifier = (
+        OIDCVerifier(issuer, audience, jwks_url)
+        if issuer
+        else None
+    )
+    if _oidc_verifier:
+        logger.info(
+            "OIDC authentication enabled for issuer %s", issuer
         )
 
 
@@ -241,6 +328,8 @@ def _load_snapshots_on_startup() -> None:
         return
 
     customer_ids = set(_valid_api_keys.values())
+    if _api_key_store is not None:
+        customer_ids.update(_api_key_store.customers())
     for customer_id in customer_ids:
         try:
             rows = _repository.list_latest_snapshots(customer_id)
@@ -283,10 +372,10 @@ def _load_snapshots_on_startup() -> None:
             )
 
 
-def _authenticate(authorization: Optional[str]) -> str:
-    """
-    Validate Bearer token, return customer_id.
-    """
+def _authenticate_principal(
+    authorization: Optional[str],
+) -> Principal:
+    """Validate a bearer credential and return its account identity."""
     if not authorization or not authorization.startswith(
         "Bearer "
     ):
@@ -294,13 +383,146 @@ def _authenticate(authorization: Optional[str]) -> str:
             status_code=401,
             detail="Missing Authorization header",
         )
-    api_key = authorization[7:]
-    customer_id = _valid_api_keys.get(api_key)
-    if not customer_id:
+    token = authorization[7:].strip()
+    if not token:
         raise HTTPException(
-            status_code=401, detail="Invalid API key"
+            status_code=401, detail="Invalid credentials"
         )
-    return customer_id
+    configured_customer = _valid_api_keys.get(token)
+    if configured_customer:
+        return Principal(
+            customer_id=configured_customer,
+            method="configured_api_key",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=401, detail="Invalid credentials"
+        )
+    try:
+        principal = authenticate(
+            token,
+            _valid_api_keys,
+            _api_key_store,
+            _oidc_verifier,
+        )
+    except Exception as exc:
+        logger.info(
+            "Bearer token validation failed: %s",
+            type(exc).__name__,
+        )
+        principal = None
+    if principal is None:
+        raise HTTPException(
+            status_code=401, detail="Invalid credentials"
+        )
+    return principal
+
+
+def _authenticate(authorization: Optional[str]) -> str:
+    """Validate a bearer credential and return its customer namespace."""
+    return _authenticate_principal(authorization).customer_id
+
+
+class ApiKeyCreateRequest(BaseModel):
+    """Request to create a named API key."""
+
+    name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        """Trim whitespace and reject a blank API-key label."""
+        value = value.strip()
+        if not value:
+            raise ValueError(
+                "name must contain a non-whitespace character"
+            )
+        return value
+
+
+@app.get("/api/v1/auth/me")
+def get_authenticated_identity(
+    authorization: Optional[str] = Header(None),
+) -> dict[str, str]:
+    """Return the account identity represented by the bearer credential."""
+    principal = _authenticate_principal(authorization)
+    return {
+        "customer_id": principal.customer_id,
+        "auth_method": principal.method,
+        **(
+            {"subject": principal.subject}
+            if principal.subject
+            else {}
+        ),
+    }
+
+
+@app.get("/api/v1/api-keys")
+def list_api_keys(
+    authorization: Optional[str] = Header(None),
+) -> dict[str, Any]:
+    """List safe API-key metadata for the signed-in OIDC account."""
+    principal = _authenticate_principal(authorization)
+    if principal.method != "oidc":
+        raise HTTPException(
+            status_code=403,
+            detail="OIDC sign-in is required to manage API keys",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API-key storage is unavailable",
+        )
+    return {
+        "data": _api_key_store.list_for_customer(
+            principal.customer_id
+        )
+    }
+
+
+@app.post("/api/v1/api-keys", status_code=201)
+def create_api_key(
+    body: ApiKeyCreateRequest,
+    authorization: Optional[str] = Header(None),
+) -> dict[str, Any]:
+    """Create a customer-scoped key and return its secret only once."""
+    principal = _authenticate_principal(authorization)
+    if principal.method != "oidc":
+        raise HTTPException(
+            status_code=403,
+            detail="OIDC sign-in is required to manage API keys",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API-key storage is unavailable",
+        )
+    secret, metadata = _api_key_store.create(
+        principal.customer_id, body.name.strip()
+    )
+    return {"api_key": secret, "data": metadata}
+
+
+@app.delete("/api/v1/api-keys/{key_id}", status_code=204)
+def revoke_api_key(
+    key_id: str, authorization: Optional[str] = Header(None)
+) -> None:
+    """Revoke one key owned by the signed-in OIDC account."""
+    principal = _authenticate_principal(authorization)
+    if principal.method != "oidc":
+        raise HTTPException(
+            status_code=403,
+            detail="OIDC sign-in is required to manage API keys",
+        )
+    if _api_key_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API-key storage is unavailable",
+        )
+    if not _api_key_store.revoke(principal.customer_id, key_id):
+        raise HTTPException(
+            status_code=404, detail="API key not found"
+        )
 
 
 def get_graph(
@@ -449,17 +671,45 @@ async def receive_snapshot(
         )
         graph = serializer.deserialize(body)
 
-        # Store in memory - immediate query serving
+        # Store in memory - immediate query serving. Keep a short counter
+        # history so worker_imbalance can compare sibling processes without
+        # merging their full RuntimeGraphs.
+        received_at = time.time()
+        request_count = _uvicorn_request_counter(graph)
         with _graphs_lock:
             _graphs[(customer_id, worker_instance_id)] = graph
             _snapshot_metadata[
                 (customer_id, worker_instance_id)
             ] = {
                 "worker_pid": worker_pid_header,
-                "received_at": time.time(),
+                "received_at": received_at,
                 "node_count": len(graph._nodes),
                 "edge_count": len(graph._edge_index),
             }
+            sample_key = (customer_id, worker_instance_id)
+            samples = _worker_request_samples.setdefault(
+                sample_key, []
+            )
+            # Compaction or a graph reset can reduce cumulative call_count.
+            # Reset the baseline instead of treating topology churn as traffic.
+            if samples and request_count < samples[-1][1]:
+                samples.clear()
+            samples.append((received_at, request_count))
+            _worker_request_samples[sample_key] = [
+                sample
+                for sample in samples
+                if received_at - sample[0] <= 120
+            ]
+            for old_key, old_samples in list(
+                _worker_request_samples.items()
+            ):
+                if (
+                    old_key[0] == customer_id
+                    and old_key != sample_key
+                    and old_samples
+                    and received_at - old_samples[-1][0] > 120
+                ):
+                    _worker_request_samples.pop(old_key, None)
         with _active_pid_lock:
             _active_pid.setdefault(
                 customer_id, str(worker_pid_header)
@@ -712,6 +962,7 @@ async def ingest_events(
 
     stored = 0
     errors = 0
+    errors_by_trace: Dict[str, int] = {}
     worker_pid = payload.get("worker_pid")
     if worker_pid is not None:
         with _active_pid_lock:
@@ -746,11 +997,24 @@ async def ingest_events(
             stored += 1
         except Exception as exc:
             errors += 1
+            trace_id = (
+                str(raw.get("trace_id") or "")
+                if isinstance(raw, dict)
+                else ""
+            )
+            errors_by_trace[trace_id] = (
+                errors_by_trace.get(trace_id, 0) + 1
+            )
             logger.debug(
                 "Event store error: %s | raw=%s", exc, raw
             )
 
-    return {"status": "ok", "stored": stored, "errors": errors}
+    return {
+        "status": "ok",
+        "stored": stored,
+        "errors": errors,
+        "errors_by_trace": errors_by_trace,
+    }
 
 
 @app.get("/api/v1/events")
@@ -789,23 +1053,29 @@ def get_recent_events(
         service=service,
         limit=limit,
     )
-    return {
-        "metric": "events",
-        "data": [
+    data = []
+    for event in events:
+        data.append(
             {
-                "probe": e.get("probe"),
-                "service": e.get("service"),
-                "name": e.get("name"),
-                "trace_id": e.get("trace_id"),
-                "wall_time": e.get("wall_time"),
-                "duration_ns": e.get("duration_ns"),
-                "ts": e.get("timestamp")
-                or e.get("timestamp_ns")
-                or e.get("wall_time"),
+                "probe": event.get("probe"),
+                "service": event.get("service"),
+                "name": event.get("name"),
+                "trace_id": event.get("trace_id"),
+                "span_id": event.get("span_id"),
+                "parent_span_id": event.get("parent_span_id"),
+                "pid": event.get("pid"),
+                "tid": event.get("tid"),
+                "wall_time": event.get("wall_time"),
+                "duration_ns": event.get("duration_ns"),
+                "metadata": _ui_observation_metadata(
+                    event.get("metadata") or {}
+                ),
+                "ts": event.get("timestamp")
+                or event.get("timestamp_ns")
+                or event.get("wall_time"),
             }
-            for e in events
-        ],
-    }
+        )
+    return {"metric": "events", "data": data}
 
 
 @app.get("/api/v1/events/content")
@@ -1173,10 +1443,208 @@ def _evaluate_causal_rules(
         key=lambda item: item.get("confidence", 0),
         reverse=True,
     )
+    fleet_match = _fleet_worker_imbalance(
+        customer_id, worker_instance_id, tag_list
+    )
+    if fleet_match:
+        data = [
+            item
+            for item in data
+            if item.get("rule") != "worker_imbalance"
+        ]
+        data.append(fleet_match)
+        data.sort(
+            key=lambda item: item.get("confidence", 0),
+            reverse=True,
+        )
     return {
         "match_count": len(data),
         "data": data,
     }
+
+
+def _fleet_worker_imbalance(
+    customer_id: str,
+    target_instance_id: str,
+    tag_list: Optional[list[str]],
+) -> Optional[Dict[str, Any]]:
+    """Compare recent request rates for fresh workers of one Gunicorn master.
+
+    Each process owns a separate graph, so the core graph rule cannot see its
+    siblings. This API-level aggregation uses the same per-process snapshots
+    and recent request-counter deltas already received by the backend. It
+    deliberately requires fresh heartbeats and at least two measured workers.
+    """
+    if tag_list is not None:
+        worker_tags = {"gunicorn", "concurrency", "blocking"}
+        if not worker_tags.intersection(tag_list):
+            return None
+
+    now = time.time()
+    with _graphs_lock:
+        snapshots = []
+        for (owner, instance_id), graph in _graphs.items():
+            if owner != customer_id:
+                continue
+            metadata = dict(
+                _snapshot_metadata.get((owner, instance_id), {})
+            )
+            samples = list(
+                _worker_request_samples.get(
+                    (owner, instance_id), []
+                )
+            )
+            snapshots.append(
+                (instance_id, graph, metadata, samples)
+            )
+
+    records: list[dict[str, Any]] = []
+    for instance_id, graph, metadata, samples in snapshots:
+        runtime = metadata.get("runtime_status") or {}
+        heartbeat = _worker_runtime_view(
+            {
+                "status": runtime,
+                "observed_at": metadata.get(
+                    "runtime_observed_at"
+                ),
+            }
+        )
+        if not heartbeat["online"]:
+            continue
+
+        master_pid = None
+        for node in graph.all_nodes():
+            if (
+                node.metadata.get("probe")
+                == "gunicorn.master.start"
+            ):
+                master_pid = node.metadata.get("master_pid")
+                if master_pid is not None:
+                    break
+        if master_pid is None:
+            continue
+
+        try:
+            recent_samples = [
+                sample
+                for sample in samples
+                if now - sample[0] <= 60
+            ]
+            if len(recent_samples) < 2:
+                continue
+            start_at, start_count = recent_samples[0]
+            end_at, end_count = recent_samples[-1]
+            window_s = end_at - start_at
+            request_delta = end_count - start_count
+        except (TypeError, ValueError, IndexError):
+            continue
+        if window_s < 10 or request_delta < 0:
+            continue
+
+        worker_pid = metadata.get("worker_pid")
+        records.append(
+            {
+                "worker_instance_id": instance_id,
+                "worker_pid": worker_pid,
+                "gunicorn_master_pid": master_pid,
+                "request_count": request_delta,
+                "window_s": round(window_s, 1),
+                "requests_per_second": round(
+                    request_delta / window_s, 3
+                ),
+            }
+        )
+
+    target = next(
+        (
+            record
+            for record in records
+            if record["worker_instance_id"] == target_instance_id
+        ),
+        None,
+    )
+    if target is None:
+        return None
+    siblings = [
+        record
+        for record in records
+        if str(record["gunicorn_master_pid"])
+        == str(target["gunicorn_master_pid"])
+    ]
+    if len(siblings) < 2:
+        return None
+
+    rates = [
+        record["requests_per_second"] for record in siblings
+    ]
+    total_requests = sum(
+        record["request_count"] for record in siblings
+    )
+    zero_load = [
+        record
+        for record in siblings
+        if record["request_count"] == 0
+    ]
+    if total_requests < 20:
+        return None
+    if zero_load:
+        # A worker receiving no requests is a stronger signal, but require a
+        # longer window and more traffic to avoid short-window scheduling noise.
+        if min(record["window_s"] for record in siblings) < 30:
+            return None
+        ratio = None
+        imbalance_kind = "zero_requests_on_online_worker"
+    else:
+        ratio = max(rates) / min(rates)
+        if ratio < 2.0:
+            return None
+        imbalance_kind = "request_rate_ratio"
+
+    busiest = max(
+        siblings,
+        key=lambda record: record["requests_per_second"],
+    )
+    return {
+        "rule": "worker_imbalance",
+        "confidence": 0.80,
+        "explanation": (
+            "Recent request traffic is uneven across fresh workers under the "
+            "same Gunicorn master. This is an imbalance signal, not proof "
+            "that a worker is blocked."
+        ),
+        "evidence": {
+            "gunicorn_master_pid": target["gunicorn_master_pid"],
+            "workers": siblings,
+            "busiest_worker_pid": busiest["worker_pid"],
+            "imbalance_kind": imbalance_kind,
+            "rate_ratio": (
+                round(ratio, 2) if ratio is not None else None
+            ),
+            "zero_request_worker_pids": [
+                record["worker_pid"] for record in zero_load
+            ],
+            "comparison_basis": (
+                "request-counter delta over recent snapshot window"
+            ),
+        },
+        "timestamp": now,
+    }
+
+
+def _uvicorn_request_counter(graph: Any) -> int:
+    """Count Uvicorn request-entry edges from Gunicorn workers once each."""
+    worker_ids = {
+        node.id
+        for node in graph.all_nodes()
+        if node.service == "gunicorn"
+        and node.metadata.get("probe") == "gunicorn.worker.fork"
+    }
+    return sum(
+        edge.call_count
+        for edge in graph.all_edges()
+        if edge.edge_type == "handled"
+        and edge.source in worker_ids
+    )
 
 
 @app.get("/api/v1/hotspots")
@@ -1374,6 +1842,482 @@ async def diff(
 
 
 # tra
+def _derive_trace_spans(
+    events: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Derive span intervals and timing metrics from explicit event lineage.
+
+    Parameters
+    ----------
+    events : list[dict[str, Any]]
+        Chronologically ordered event rows for one trace.
+
+    Returns
+    -------
+    dict[str, Any]
+        Observed span intervals, request or trace wall duration when complete
+        boundaries exist, estimated self-time after subtracting returned child
+        intervals, and overlap pairs. Self-time can include unobserved child
+        work. Parentless overlaps establish temporal co-occurrence in the trace
+        only. Trace wall duration is withheld when the event sample may be
+        truncated.
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for event in events:
+        span_id = event.get("span_id")
+        if span_id:
+            grouped.setdefault(str(span_id), []).append(event)
+
+    spans: List[Dict[str, Any]] = []
+    for span_id, rows in grouped.items():
+        starts = [
+            row
+            for row in rows
+            if str(row.get("probe") or "").endswith(
+                (".enter", ".entry", ".start")
+            )
+        ]
+        ends = [
+            row
+            for row in rows
+            if str(row.get("probe") or "").endswith(
+                (".exit", ".end", ".error", ".exception")
+            )
+        ]
+        start_row = starts[0] if starts else None
+        end_row = ends[-1] if ends else None
+        terminal = end_row or (
+            rows[-1] if len(rows) == 1 else None
+        )
+        if start_row is not None and end_row is not None:
+            start = start_row.get("wall_time") or start_row.get(
+                "timestamp"
+            )
+            end = end_row.get("wall_time") or end_row.get(
+                "timestamp"
+            )
+        elif (
+            terminal is not None
+            and terminal.get("duration_ns") is not None
+        ):
+            end = terminal.get("wall_time") or terminal.get(
+                "timestamp"
+            )
+            start = (
+                end - terminal["duration_ns"] / 1e9
+                if end is not None
+                else None
+            )
+        else:
+            continue
+        if (
+            not isinstance(start, (int, float))
+            or not isinstance(end, (int, float))
+            or end < start
+        ):
+            continue
+        spans.append(
+            {
+                "span_id": span_id,
+                "parent_span_id": (
+                    end_row or start_row or terminal
+                ).get("parent_span_id"),
+                "service": (
+                    end_row or start_row or terminal
+                ).get("service"),
+                "name": (end_row or start_row or terminal).get(
+                    "name"
+                ),
+                "probe_start": (
+                    start_row.get("probe") if start_row else None
+                ),
+                "probe_end": (
+                    end_row.get("probe") if end_row else None
+                ),
+                "start_timestamp": start,
+                "end_timestamp": end,
+                "inclusive_duration_ms": round(
+                    (end - start) * 1000, 3
+                ),
+                "timing_source": (
+                    "paired_event_timestamps"
+                    if start_row and end_row
+                    else "recorded_duration_ns_and_end_timestamp"
+                ),
+            }
+        )
+
+    for span in spans:
+        children = [
+            child
+            for child in spans
+            if child.get("parent_span_id") == span["span_id"]
+        ]
+        intervals = sorted(
+            (
+                max(
+                    span["start_timestamp"],
+                    child["start_timestamp"],
+                ),
+                min(
+                    span["end_timestamp"], child["end_timestamp"]
+                ),
+            )
+            for child in children
+            if child["start_timestamp"] < span["end_timestamp"]
+            and child["end_timestamp"] > span["start_timestamp"]
+        )
+        covered = 0.0
+        if intervals:
+            left, right = intervals[0]
+            for next_left, next_right in intervals[1:]:
+                if next_left <= right:
+                    right = max(right, next_right)
+                else:
+                    covered += right - left
+                    left, right = next_left, next_right
+            covered += right - left
+        span["self_time_ms"] = round(
+            max(
+                0.0,
+                (
+                    span["end_timestamp"]
+                    - span["start_timestamp"]
+                    - covered
+                )
+                * 1000,
+            ),
+            3,
+        )
+        span["self_time_scope"] = (
+            "observed exclusive interval after subtracting returned direct-child intervals; unobserved child work may remain"
+        )
+        span["self_time_child_count"] = sum(
+            child["start_timestamp"] < span["end_timestamp"]
+            and child["end_timestamp"] > span["start_timestamp"]
+            for child in children
+        )
+
+    siblings: Dict[Optional[str], List[Dict[str, Any]]] = {}
+    for span in spans:
+        parent_id = span.get("parent_span_id")
+        siblings.setdefault(parent_id, []).append(span)
+    overlaps = []
+    for parent_id, rows in siblings.items():
+        rows.sort(key=lambda item: item["start_timestamp"])
+        for index, left in enumerate(rows):
+            for right in rows[index + 1 :]:
+                overlap = min(
+                    left["end_timestamp"], right["end_timestamp"]
+                ) - max(
+                    left["start_timestamp"],
+                    right["start_timestamp"],
+                )
+                if overlap > 0:
+                    overlaps.append(
+                        {
+                            "parent_span_id": parent_id,
+                            "relationship": (
+                                "shared_parent"
+                                if parent_id is not None
+                                else "trace_cooccurrence"
+                            ),
+                            "span_ids": [
+                                left["span_id"],
+                                right["span_id"],
+                            ],
+                            "overlap_ms": round(
+                                overlap * 1000, 3
+                            ),
+                        }
+                    )
+    request_starts = [
+        row
+        for row in events
+        if row.get("probe") == "request.entry"
+    ]
+    request_ends = [
+        row
+        for row in events
+        if row.get("probe")
+        in {
+            "request.exit",
+            "request.error",
+            "request.exception",
+            "django.exception",
+        }
+    ]
+    events_may_be_truncated = len(events) >= 1000
+    request_duration = None
+    if (
+        not events_may_be_truncated
+        and len(request_starts) == 1
+        and len(request_ends) == 1
+    ):
+        start = request_starts[0].get(
+            "wall_time"
+        ) or request_starts[0].get("timestamp")
+        end = request_ends[-1].get("wall_time") or request_ends[
+            -1
+        ].get("timestamp")
+        if (
+            isinstance(start, (int, float))
+            and isinstance(end, (int, float))
+            and end >= start
+        ):
+            request_duration = round((end - start) * 1000, 3)
+    complete_roots = [
+        span
+        for span in spans
+        if span.get("parent_span_id") is None
+        and span.get("probe_start")
+        and span.get("probe_end")
+    ]
+    trace_wall_duration = request_duration
+    trace_wall_source = (
+        "request_entry_exit_boundaries"
+        if request_duration is not None
+        else None
+    )
+    if (
+        trace_wall_duration is None
+        and not events_may_be_truncated
+        and len(complete_roots) == 1
+    ):
+        root = complete_roots[0]
+        trace_wall_duration = root["inclusive_duration_ms"]
+        trace_wall_source = "single_complete_root_span"
+    return {
+        "spans": spans,
+        "request_wall_duration_ms": request_duration,
+        "trace_wall_duration_ms": trace_wall_duration,
+        "trace_wall_duration_source": trace_wall_source,
+        "parallel_overlaps": overlaps,
+        "parallel_overlap_scope": "interval overlaps among returned spans in this trace; parentless pairs establish trace co-occurrence only, and sibling intervals may be omitted if events were truncated",
+        "events_may_be_truncated": events_may_be_truncated,
+        "cumulative_inclusive_duration_ms": round(
+            sum(span["inclusive_duration_ms"] for span in spans),
+            3,
+        ),
+        "cumulative_scope": (
+            "sum of observed span inclusive intervals; includes nested work and may include overlapping spans"
+        ),
+        "interval_basis": "event wall timestamps and recorded duration_ns; only spans with explicit paired identity or duration are included",
+    }
+
+
+def _trace_completeness(
+    trace_id: str,
+    events: List[Dict[str, Any]],
+    timing: Dict[str, Any],
+    runtime: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Summarize observed lifecycle and capture evidence for one trace.
+
+    Missing boundaries are reported as missing observations. This function
+    does not infer request failure, process death, or event loss from absence.
+
+    Parameters
+    ----------
+    trace_id : str
+        Trace identifier requested by the caller.
+    events : list of dict[str, Any]
+        Stored event rows returned for the trace.
+    timing : dict[str, Any]
+        Derived timing metadata for the returned event sample.
+    runtime : dict[str, Any] or None
+        Latest heartbeat for the selected worker instance, if available.
+
+    Returns
+    -------
+    dict[str, Any]
+        Bounded lifecycle, boundary, heartbeat, and capture-loss evidence.
+    """
+    probes = [str(event.get("probe") or "") for event in events]
+    request_entry = any(
+        probe == "request.entry" for probe in probes
+    )
+    request_exit = any(
+        probe == "request.exit" for probe in probes
+    )
+    request_error_probes = sorted(
+        {
+            probe
+            for probe in probes
+            if probe
+            in {
+                "request.error",
+                "request.exception",
+                "django.exception",
+            }
+        }
+    )
+    activity_terminal_probes = sorted(
+        {
+            probe
+            for probe in probes
+            if probe.endswith(
+                (".exit", ".end", ".error", ".exception")
+            )
+        }
+    )
+
+    runtime_status = (runtime or {}).get("status") or {}
+    lifecycle_snapshot = (
+        runtime_status.get("trace_lifecycle") or {}
+    )
+    lifecycle_record = None
+    for collection in ("active", "recent"):
+        rows = lifecycle_snapshot.get(collection, [])
+        if not isinstance(rows, list):
+            continue
+        lifecycle_record = next(
+            (
+                row
+                for row in reversed(rows)
+                if isinstance(row, dict)
+                and str(row.get("trace_id")) == trace_id
+            ),
+            None,
+        )
+        if lifecycle_record:
+            break
+
+    event_capture = runtime_status.get("event_capture") or {}
+    loss_sources: Dict[str, int] = {}
+    worker_wide_loss: Dict[str, int] = {}
+    trace_counts_truncated = False
+    for group_name, group in event_capture.items():
+        if not isinstance(group, dict):
+            continue
+        trace_counts_truncated = trace_counts_truncated or bool(
+            group.get("trace_counts_truncated")
+        )
+        for field, value in group.items():
+            if field.endswith("_by_trace") and isinstance(
+                value, dict
+            ):
+                try:
+                    count = int(value.get(trace_id, 0))
+                except (TypeError, ValueError):
+                    count = 0
+                if count > 0:
+                    loss_sources[f"{group_name}.{field}"] = count
+            elif field.endswith("_total"):
+                try:
+                    count = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if count > 0:
+                    worker_wide_loss[f"{group_name}.{field}"] = (
+                        count
+                    )
+
+    dropped_events = sum(loss_sources.values())
+    heartbeat = _worker_runtime_view(runtime)
+    heartbeat_fresh = heartbeat.get("online") is True
+    if request_exit:
+        status = "request_completed"
+        status_basis = "request.exit event observed"
+    elif request_error_probes:
+        status = "request_error_observed"
+        status_basis = "request error event observed"
+    elif lifecycle_record:
+        state = lifecycle_record.get("state")
+        if state == "active":
+            status = (
+                "active_at_last_heartbeat"
+                if heartbeat_fresh
+                else "was_active_at_last_heartbeat"
+            )
+            status_basis = (
+                "trace-scoped active-request tracker record"
+            )
+        elif state == "completed":
+            status = "tracker_recorded_completion"
+            status_basis = (
+                "trace-scoped tracker lifecycle record"
+            )
+        elif state == "failed":
+            status = "tracker_recorded_failure"
+            status_basis = (
+                "trace-scoped tracker lifecycle record"
+            )
+        elif state == "stale":
+            status = "tracker_evicted_after_inactivity"
+            status_basis = (
+                "tracker TTL eviction; request outcome unknown"
+            )
+        elif state == "evicted":
+            status = "tracker_evicted"
+            status_basis = str(
+                lifecycle_record.get("reason")
+                or "tracker eviction"
+            )
+        else:
+            status = "lifecycle_recorded"
+            status_basis = (
+                "trace-scoped tracker lifecycle record"
+            )
+    elif not events and dropped_events > 0:
+        status = "capture_loss_observed_no_stored_events"
+        status_basis = (
+            "trace-correlated capture loss was recorded and no event rows "
+            "were returned; this does not establish that every event was lost"
+        )
+    elif (
+        timing.get("trace_wall_duration_source")
+        == "single_complete_root_span"
+    ):
+        status = "complete_root_span_observed"
+        status_basis = "one complete root span observed"
+    elif activity_terminal_probes:
+        status = "terminal_activity_observed"
+        status_basis = "terminal span event(s) observed; request outcome not inferred"
+    elif not events:
+        status = "no_events_returned"
+        status_basis = (
+            "no stored event rows were returned; capture loss and request "
+            "outcome are unknown without matching lifecycle evidence"
+        )
+    else:
+        status = "completion_unknown"
+        status_basis = (
+            "no request completion boundary or matching lifecycle record "
+            "observed"
+        )
+
+    return {
+        "status": status,
+        "status_basis": status_basis,
+        "request_entry_observed": request_entry,
+        "request_exit_observed": request_exit,
+        "request_error_observed": bool(request_error_probes),
+        "request_terminal_observed": (
+            request_exit or bool(request_error_probes)
+        ),
+        "request_error_probes": request_error_probes,
+        "terminal_activity_probes": activity_terminal_probes,
+        "events_returned": len(events),
+        "events_may_be_truncated": bool(
+            timing.get("events_may_be_truncated")
+        ),
+        "lifecycle_record": lifecycle_record,
+        "lifecycle_heartbeat": {
+            "observed_at": (runtime or {}).get("observed_at"),
+            "fresh": heartbeat_fresh,
+            "heartbeat_age_s": heartbeat.get("heartbeat_age_s"),
+        },
+        "capture_loss": {
+            "dropped_events": dropped_events,
+            "sources": loss_sources,
+            "worker_wide_loss_totals": worker_wide_loss,
+            "trace_counts_truncated": trace_counts_truncated,
+            "per_trace_loss_observed": dropped_events > 0,
+        },
+    }
+
+
 @app.get("/api/v1/traces/{trace_id}")
 async def get_trace(
     trace_id: str,
@@ -1414,51 +2358,138 @@ async def get_trace(
     events.sort(
         key=lambda e: e.get("timestamp") or e.get("wall_time", 0)
     )
-    if not events:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No events found for trace '{trace_id}'",
+    registered = ProbeTypes.all()
+    unregistered_probe_types = sorted(
+        {
+            str(event["probe"])
+            for event in events
+            if event.get("probe")
+            and event.get("probe") not in registered
+        }
+    )
+    missing_probe_name_count = sum(
+        not event.get("probe") for event in events
+    )
+    runtime = (
+        repository.get_worker_runtime(
+            customer_id, worker_instance_id
         )
-    registered = list(ProbeTypes.all().keys())
-    filtered = [
-        e for e in events if e.get("probe") in registered
-    ]
-    if not filtered:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Events found for trace '{trace_id}' but none matched "
-                f"registered probe types. Check ProbeTypes registration."
-            ),
+        if worker_instance_id and repository is not None
+        else None
+    )
+    if not events:
+        empty_completeness = _trace_completeness(
+            trace_id,
+            events,
+            {"events_may_be_truncated": False},
+            runtime,
+        )
+        has_trace_diagnostics = empty_completeness.get(
+            "lifecycle_record"
+        ) is not None or empty_completeness.get(
+            "capture_loss", {}
+        ).get(
+            "per_trace_loss_observed"
+        )
+        if not has_trace_diagnostics:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No stored events found for trace '{trace_id}'",
+            )
+
+    warnings = []
+    if not events:
+        warnings.append(
+            {
+                "code": "no_stored_events",
+                "message": (
+                    "No stored event rows were returned for this trace "
+                    "and worker instance. Lifecycle and capture evidence "
+                    "are reported separately when available."
+                ),
+            }
+        )
+    if unregistered_probe_types:
+        warnings.append(
+            {
+                "code": "unregistered_probe_types",
+                "message": (
+                    "Events with unregistered probe types are included "
+                    "using their recorded names."
+                ),
+                "probe_types": unregistered_probe_types,
+            }
+        )
+        logger.warning(
+            "Trace %s includes unregistered probe types for worker %s: %s",
+            trace_id,
+            worker_instance_id or selected_pid or "unspecified",
+            ", ".join(unregistered_probe_types),
+        )
+    if missing_probe_name_count:
+        warnings.append(
+            {
+                "code": "missing_probe_name",
+                "message": (
+                    "Some stored events have no probe name; their events "
+                    "are included with a null probe value."
+                ),
+                "event_count": missing_probe_name_count,
+            }
         )
 
     path = []
     last_ts = None
-    total_ms = 0.0
-    for e in filtered:
-        ts = e.get("timestamp") or e.get("wall_time")
-        duration_ms: Optional[float] = (
+    event_duration_sum_ms = 0.0
+    for event in events:
+        ts = event.get("timestamp") or event.get("wall_time")
+        inter_event_gap_ms = (
             round((ts - last_ts) * 1000, 3)
-            if last_ts and ts
+            if last_ts is not None and ts is not None
             else None
         )
-        dur_ns = e.get("duration_ns")
-        dur_ms = round(dur_ns / 1e6, 3) if dur_ns else None
-        if dur_ms:
-            total_ms += dur_ms
+        duration_ns = event.get("duration_ns")
+        recorded_duration_ms = (
+            round(duration_ns / 1e6, 3)
+            if duration_ns is not None
+            else None
+        )
+        if recorded_duration_ms is not None:
+            event_duration_sum_ms += recorded_duration_ms
         path.append(
             {
-                "probe": e.get("probe"),
-                "service": e.get("service"),
-                "name": e.get("name"),
+                "probe": event.get("probe"),
+                "service": event.get("service"),
+                "name": event.get("name"),
+                "trace_id": event.get("trace_id"),
+                "span_id": event.get("span_id"),
+                "parent_span_id": event.get("parent_span_id"),
                 "timestamp": ts,
-                "wall_time": e.get("wall_time"),
-                "duration_ms": duration_ms,
-                "metadata": e.get("metadata"),
+                "wall_time": event.get("wall_time"),
+                "duration_ns": duration_ns,
+                "recorded_duration_ms": recorded_duration_ms,
+                "inter_event_gap_ms": inter_event_gap_ms,
+                "duration_ms": inter_event_gap_ms,
+                "pid": event.get("pid"),
+                "tid": event.get("tid"),
+                "metadata": _ui_observation_metadata(
+                    event.get("metadata") or {}
+                ),
             }
         )
         last_ts = ts
-    return {"data": path, "total_ms": round(total_ms, 3)}
+    timing = _derive_trace_spans(events)
+    trace_completeness = _trace_completeness(
+        trace_id, events, timing, runtime
+    )
+    return {
+        "data": path,
+        "total_ms": round(event_duration_sum_ms, 3),
+        "event_duration_sum_ms": round(event_duration_sum_ms, 3),
+        "timing": timing,
+        "trace_completeness": trace_completeness,
+        "warnings": warnings,
+    }
 
 
 @app.get("/api/v1/traces/{trace_id}/stitch")
@@ -1503,6 +2534,17 @@ def stitch_stored_trace(
             "service": event.get("service"),
             "name": event.get("name"),
             "timestamp": event.get("wall_time"),
+            "span_id": event.get("span_id"),
+            "parent_span_id": event.get("parent_span_id"),
+            "pid": event.get("pid"),
+            "tid": event.get("tid"),
+            "duration_ns": event.get("duration_ns"),
+            "worker_instance_id": (
+                event.get("metadata") or {}
+            ).get("worker_instance_id"),
+            "metadata": _ui_observation_metadata(
+                event.get("metadata") or {}
+            ),
             "duration_ms": (
                 round(event["duration_ns"] / 1e6, 3)
                 if event.get("duration_ns") is not None
@@ -1680,7 +2722,9 @@ async def get_nodes(
                 "avg_duration_ns": node.avg_duration_ns,
                 "first_seen": node.first_seen,
                 "last_seen": node.last_seen,
-                "metadata": node.metadata,
+                "metadata": _ui_observation_metadata(
+                    node.metadata
+                ),
             }
         )
 
@@ -1844,11 +2888,95 @@ async def get_process_snapshot(
     }
 
 
+_UI_OBSERVATION_METADATA_FIELDS = (
+    "probe",
+    "customer_id",
+    "external",
+    "dependency_host",
+    "http_method",
+    "method",
+    "http_version",
+    "status_code",
+    "error_type",
+    "duration_scope",
+    "retry_count",
+    "max_retry_count",
+    "upstream_attempt_count",
+    "upstream_duration_ns",
+    "source",
+    "task_id",
+    "task_name",
+    "state",
+    "retries",
+    "max_retries",
+    "exception_type",
+    "worker_pid",
+    "master_pid",
+    "worker_class",
+    "exitcode",
+    "response_bytes",
+    "reason",
+    "success",
+    "result_type",
+    "command_count",
+    "num_workers",
+    "bind",
+    "investigation_id",
+    "langgraph_kind",
+    "is_langgraph_root",
+    "langgraph_node",
+    "langgraph_step",
+    "langgraph_triggers",
+    "langgraph_path",
+    "langgraph_checkpoint_ns",
+)
+_UI_SAFE_LIFECYCLE_REASONS = {
+    "normal_exit",
+    "SIGINT",
+    "SIGABRT_timeout",
+}
+
+
+def _ui_observation_metadata(metadata: Any) -> Dict[str, Any]:
+    """Return useful probe details while excluding payloads and secrets.
+
+    Event metadata can contain application values, request headers, SQL
+    parameters, exception text, or model content. The UI receives only this
+    explicit operational allowlist; new metadata fields stay private until
+    they are reviewed for safe display.
+    """
+    if not isinstance(metadata, dict):
+        return {}
+    safe: Dict[str, Any] = {}
+    for key in _UI_OBSERVATION_METADATA_FIELDS:
+        value = metadata.get(key)
+        if (
+            key == "reason"
+            and value not in _UI_SAFE_LIFECYCLE_REASONS
+        ):
+            continue
+        if isinstance(value, bool) or value is None:
+            if value is not None:
+                safe[key] = value
+        elif isinstance(value, (int, float)):
+            safe[key] = value
+        elif isinstance(value, str):
+            safe[key] = value[:240]
+        elif key in {
+            "langgraph_triggers",
+            "langgraph_path",
+        } and isinstance(value, (list, tuple)):
+            safe[key] = [
+                item[:120] if isinstance(item, str) else item
+                for item in value[:12]
+                if isinstance(item, (str, int, float, bool))
+            ]
+    return safe
+
+
 # Available in parser and repeated for backend standalone
 def _node_dict(n) -> Dict:
-    """
-    Full node representation - used by SHOW GRAPH.
-    """
+    """Full graph node representation with reviewed operational metadata."""
     return {
         "id": n.id,
         "service": n.service,
@@ -1862,6 +2990,7 @@ def _node_dict(n) -> Dict:
         ),
         "first_seen": n.first_seen,
         "last_seen": n.last_seen,
+        "metadata": _ui_observation_metadata(n.metadata),
     }
 
 

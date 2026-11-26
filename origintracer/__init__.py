@@ -376,7 +376,7 @@ def _init_probes(
 ) -> list:
     """
     1. Import builtin probe modules listed in defaults.yaml under builtin_probes.
-    2. Discover user probes from <app_root>/origintracer/probes/*_probe.py.
+    2. Discover user probes from <app_root>/probes/*_probe.py.
     3. Start probes named in cfg.probes (user origintracer.yaml takes precedence
        over defaults.yaml probes list via _deep_merge).
     """
@@ -464,8 +464,8 @@ def _init_rules(
 ) -> Type[PatternRegistry]:
     """
     1. Import builtin rules modules listed in defaults.yaml under builtin_rules.
-    2. Discover user probes from <app_root>/origintracer/rules/*_rule.py.
-    3. Discover rules named in cfg.rules (user origintracer.yaml takes precedence
+    2. Discover user rules from <app_root>/rules/*_rules.py.
+    3. Filter registered rules using cfg.rules.
     """
     # 1. Builtins - import triggers PatternRegistry.register(...)
     for module_path in cfg.builtin_rules:
@@ -490,7 +490,7 @@ def _init_rules(
 
 def _discover_user_rules(app_root: str) -> None:
     """
-    Auto-discover *_rules.py files from <app_root>/origintracer/rules/.
+    Auto-discover *_rules.py files from <app_root>/rules/.
     Each file must expose register(registry) which adds CausalRule instances.
     """
     rules_dir = os.path.join(app_root, "rules")

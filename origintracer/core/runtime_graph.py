@@ -114,7 +114,30 @@ class RuntimeGraph:
             node = self._nodes[node_id]
             node.touch(duration_ns)
             if metadata:
+                # Retry attempts are observations attached to a shared
+                # operation node. Preserve the highest observed value so a
+                # later successful request cannot erase an earlier retry
+                # storm from the current graph snapshot.
+                previous_max_retries = node.metadata.get(
+                    "max_retry_count", 0
+                )
                 node.metadata.update(metadata)
+                if "retry_count" in metadata:
+                    try:
+                        node.metadata["max_retry_count"] = max(
+                            int(previous_max_retries or 0),
+                            int(metadata["retry_count"] or 0),
+                        )
+                    except (
+                        TypeError,
+                        ValueError,
+                        OverflowError,
+                    ):
+                        # Ignore malformed optional metadata rather than
+                        # allowing it to interrupt graph event processing.
+                        node.metadata.pop(
+                            "max_retry_count", None
+                        )
             self.last_updated = time.time()
             return node
 

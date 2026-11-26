@@ -110,8 +110,14 @@ function parseJsonPrefix(source) {
       while (index < source.length) {
         skipSpace();
         if (source[index] === "]") { index += 1; break; }
+        if (index >= source.length) break;
         const before = index;
-        result.push(readValue());
+        const item = readValue();
+        // A Markdown link such as `[Causal Rules](...)` is not a JSON array.
+        // Reject an unexpected token instead of returning an empty array and
+        // causing the renderer to discard the rest of the response.
+        if (item === undefined) return undefined;
+        result.push(item);
         skipSpace();
         if (source[index] === ",") { index += 1; continue; }
         if (source[index] === "]") { index += 1; break; }

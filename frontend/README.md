@@ -59,3 +59,45 @@ instrumented applications as long as it can reach FastAPI. For durable storage
 across backend restarts and hosts, configure PostgreSQL; the in-memory
 repository is intended for development. Live in-memory DSL queries remain
 available through the OriginTracer REPL and local query server.
+
+## Production build under a URL path
+
+The static dashboard can be hosted below a domain path such as `/chat-react/`.
+Copy `.env.production.example` to `.env.production`, then set `VITE_BASE_PATH`
+before building:
+
+```bash
+cp .env.production.example .env.production
+npm ci
+npm run build
+```
+
+Vite writes the static site to `dist/`; serve that directory from Nginx at the
+configured path. `VITE_API_URL` should point to a same-origin Nginx proxy for
+the FastAPI backend. The dashboard is a browser app, so any `VITE_*` value is
+public in the built files. Leave `VITE_API_KEY` empty in production. Nginx should forward the browser
+Authorization header to FastAPI; it must not inject one shared user credential.
+
+
+## Sign-in and worker API keys
+
+For the complete Keycloak client, audience, issuer, and worker-key setup, see the [authentication guide](../docs/getting-started/authentication.md).
+
+
+The dashboard can use Keycloak OpenID Connect. Configure a public Keycloak client
+with authorization-code flow and PKCE, and register both redirect URIs
+`https://your-domain/chat-react/auth/callback` and
+`https://your-domain/chat-react/auth/silent-callback`, plus the matching post-logout URL.
+Enable account registration in the realm if users should be able to create accounts.
+For Google sign-in, configure Google as a Keycloak identity provider; the dashboard
+button sends Keycloak's `kc_idp_hint=google` parameter.
+
+Set `VITE_OIDC_AUTHORITY` and `VITE_OIDC_CLIENT_ID` in `.env.production` before
+building. The browser sends its short-lived OIDC access token to the same-origin
+`VITE_API_URL` proxy, which must forward the Authorization header to FastAPI. Do
+not put a production API key in a `VITE_*` variable. Signed-in users can create,
+list, and revoke per-worker API keys from the **api keys** view. A new key is
+shown only once and should be stored in the instrumented worker's environment.
+Without OIDC settings, local development can use the configured development
+API key. See [Run OriginTracer locally](../docs/getting-started/run-locally.md)
+for the full startup sequence.

@@ -3,9 +3,14 @@
 # Place this file in the project root (same directory as manage.py).
 
 probes:
+  - nginx
+  - gunicorn
+  - uvicorn
   - asyncio
   - django
   - langgraph
+  # Opt in to outbound HTTP client instrumentation from the core package.
+  - external_http
 
 rules:
   - new_sync_call_after_deployment
@@ -14,6 +19,14 @@ rules:
   - db_query_hotspot
   - loop_runaway
   - agent_latency_hotspot
+  - request_duration_anomaly
+  - traffic_spike
+  - external_dependency_timeout
+  - post_deployment_regression
+  - write_call_amplification
+  - cascade_failure
+  - worker_imbalance
+  - retry_amplification
 
 semantic:
   - label: http
