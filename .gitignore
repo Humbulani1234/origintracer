@@ -66,3 +66,6 @@ build/
 agent/
 applications/django/probes/
 applications/django/rules/
+test_nginx.py
+test_gunicorn.py
+test_uvicorn.py
